@@ -144,6 +144,78 @@ func TestListTicketsScopesAndPages(t *testing.T) {
 	}
 }
 
+func TestListTicketsSearchPages(t *testing.T) {
+	page := func(cursor string, next bool) string {
+		return fmt.Sprintf(`{"data":{"repository":{"isPrivate":true},"search":{"nodes":[%s}],"pageInfo":{"hasNextPage":%v,"endCursor":%q}}}}`,
+			ticketSpec{number: 1, project: "go-tui", status: "Todo"}.json(), next, cursor)
+	}
+	c, gh := newClient(t, fakegithub.Route{Match: "search(query: $search", Body: page("c1", true), Times: 1}, fakegithub.Route{Match: "search(query: $search", Body: page("", false)})
+	tickets, err := c.ListTickets(ctx, ListOptions{Search: "crash", State: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 2 {
+		t.Fatalf("tickets = %+v", tickets)
+	}
+	requests := gh.Requests()
+	if requests[0].Variables["search"] != "repo:o/tracker is:issue sort:created-asc crash" || requests[1].Variables["after"] != "c1" {
+		t.Fatalf("variables = %v / %v", requests[0].Variables, requests[1].Variables)
+	}
+
+	failing, _ := newClient(t, fakegithub.Route{Match: "search(query", Status: 500, Body: "{}"})
+	_, err = failing.ListTickets(ctx, ListOptions{Search: "crash"})
+	wantError(t, err, "listing tickets")
+}
+
+func TestLabels(t *testing.T) {
+	c, gh := newClient(t,
+		fakegithub.Route{Match: "POST api.github.com/repos/o/tracker/issues/3/labels", Body: "[]"},
+		fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/issues/3/labels/needs%20info", Body: "[]"},
+		fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/issues/3/labels/bug", Body: "[]"})
+	if err := c.AddLabels(ctx, 3, []string{"blocked"}); err != nil {
+		t.Fatal(err)
+	}
+	if body := gh.Requests()[0].Body; body != `{"labels":["blocked"]}` {
+		t.Fatalf("body = %s", body)
+	}
+	if err := c.RemoveLabels(ctx, 3, []string{"bug"}); err != nil {
+		t.Fatal(err)
+	}
+	wantCount(t, gh, 2)
+	wantError(t, c.AddLabels(ctx, 3, []string{"repo:lib"}), "use issue move")
+	wantError(t, c.RemoveLabels(ctx, 3, []string{"repo:lib"}), "use issue move")
+	wantCount(t, gh, 2)
+
+	failing, _ := newClient(t, fakegithub.Route{Match: "issues/3/labels", Status: 500, Body: "{}"})
+	wantError(t, failing.AddLabels(ctx, 3, []string{"x"}), "labeling ticket")
+	wantError(t, failing.RemoveLabels(ctx, 3, []string{"x"}), "removing label")
+}
+
+func TestCreateTicketLabels(t *testing.T) {
+	c, gh := newClient(t, createRoute(), okRoute("updateProjectV2ItemFieldValue"), fakegithub.Route{Match: "POST api.github.com/repos/o/tracker/issues/50/labels", Body: "[]"})
+	if _, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t", Labels: []string{"bug", "needs info"}}); err != nil {
+		t.Fatal(err)
+	}
+	wantCount(t, gh, 3)
+	if body := gh.Requests()[2].Body; body != `{"labels":["bug","needs info"]}` {
+		t.Fatalf("body = %s", body)
+	}
+	_, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t", Labels: []string{"repo:lib"}})
+	wantError(t, err, "use issue move")
+	wantCount(t, gh, 3)
+}
+
+func TestTicketKeepsPlainLabels(t *testing.T) {
+	c, _ := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui"}))
+	ticket, err := c.readTicket(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket.Project != "go-tui" || fmt.Sprint(ticket.Labels) != "[bug]" {
+		t.Fatalf("ticket = %+v", ticket)
+	}
+}
+
 func TestListTicketsErrors(t *testing.T) {
 	c, _ := newClient(t)
 	_, err := c.ListTickets(ctx, ListOptions{State: "paused"})

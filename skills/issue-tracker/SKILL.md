@@ -70,12 +70,14 @@ Unregisters a project with no open tickets. Deletes its board and keeps the labe
 
 ### issue-tracker issue list
 
-Prints one tab-separated line per ticket, oldest first: number, status, project, title. A stale ticket's status is followed by ` (stale)`.
+Prints one tab-separated line per ticket, oldest first: number, status, project, comma-separated labels, title. A stale ticket's status is followed by ` (stale)`.
 
 - `--project` string: limit to a project. Defaults to the current repository's project.
 - `--all-projects` bool: list every project from inside a registered repository.
 - `--state` string: `open`, `closed`, or `all`. Default: open.
 - `--status` string: `Todo`, `Doing`, or `Done`.
+- `--label` string: only tickets with this label.
+- `--search` string: only tickets matching this GitHub search text in their title, body, or comments.
 - `--ready` bool: only tickets that can be picked up now: open, with no open blockers, no blocked parent or grandparent, and not in Doing or Done. A parent stays ready while its sub-issues are open.
 - `--stale` bool: only Doing tickets with no ticket or board activity within the stale window.
 - `--stale-days` int: stale window in days, overriding the configured value.
@@ -83,7 +85,7 @@ Prints one tab-separated line per ticket, oldest first: number, status, project,
 
 ### issue-tracker issue inspect <number>
 
-Prints `number`, `title`, `state`, `status`, `project`, `url`, then `parent`, `blocked_by`, `blocking`, `sub_issue`, and `attachment` lines when present, then `body:` followed by the body, then each comment as `comment: <author> <time>` followed by its text.
+Prints `number`, `title`, `state`, `status`, `project`, `url`, then `labels`, `parent`, `blocked_by`, `blocking`, `sub_issue`, and `attachment` lines when present, then `body:` followed by the body, then each comment as `comment: <author> <time>` followed by its text.
 
 ### issue-tracker issue create
 
@@ -94,6 +96,7 @@ Creates a ticket on its project's board with status Todo. If a later step fails,
 - `--body-file` string: file holding the text; `-` reads standard input.
 - `--project` string: project. Defaults to the current repository's project.
 - `--attach` stringArray: image or video to upload. Repeatable.
+- `--label` stringArray: label to apply. Repeatable.
 - `--parent` int: parent ticket number.
 - `--discovered-from` int: adds a line naming the ticket that surfaced this work. It does not block anything.
 - `--blocked-by` intSlice: tickets that must close first. Repeatable.
@@ -130,6 +133,14 @@ Reopens a ticket and sets it to Todo.
 ### issue-tracker issue move <number> <project>
 
 Reassigns a ticket to another project and keeps its status.
+
+### issue-tracker issue label add <number> <label...>
+
+Adds labels. GitHub creates a label it does not know yet. `repo:` labels are refused, because `issue move` owns them.
+
+### issue-tracker issue label rm <number> <label...>
+
+Removes labels.
 
 ### issue-tracker issue status set <number> <status>
 

@@ -67,11 +67,13 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | --- | --- | --- |
 | `issue list`, any filter, up to 100 tickets | 1 | One query, about 4 points with parent checks |
 | `issue inspect <number>` | 1 | One query, plus one per extra 100 comments |
-| `issue create` | 2 | Create with label and board, then set Todo. Add 1 when relating tickets |
+| `issue create` | 2 | Create with routing label and board, then set Todo. Add 1 when relating tickets, and 1 for `--label` |
 | `issue claim <number>` | 3 | Read the ticket, create the claim ref, set Doing |
 | `issue release <number>` | 3 | Read the ticket, delete the claim ref, set Todo |
 | `issue close <number> --pr <n>` | 3 | Read the ticket, read the PRs, then one write combining comment, close, and Done. Add 1 when a claim exists |
 | `issue status set <number> <status>` | 2 | Read the ticket, then write |
+| `issue label add <number> <label...>` | 1 | One REST write |
+| `issue label rm <number> <label...>` | 1 per label | One REST delete each |
 | `issue comment add`, `edit`, `blocker`, `sub` | 2 | Resolve IDs, then write |
 | `issue attachment add` | Unmeasured | Runs `gh issue edit --attach` |
 

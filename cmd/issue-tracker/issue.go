@@ -20,7 +20,7 @@ func newIssueCommand(open opener) *cobra.Command {
 		newIssueEditCommand(open), newIssueInspectCommand(open), newIssueListCommand(open),
 		newIssueMoveCommand(open), newIssueReleaseCommand(open), newIssueReopenCommand(open),
 		newAttachmentCommand(open), newBlockerCommand(open), newCommentCommand(open),
-		newStatusCommand(open), newSubCommand(open),
+		newLabelCommand(open), newStatusCommand(open), newSubCommand(open),
 	)
 	return cmd
 }
@@ -215,6 +215,7 @@ func newIssueCreateCommand(open opener) *cobra.Command {
 	addBodyFlags(cmd, &opts.Body, &bodyFile)
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Project for the ticket; defaults to the current repository's project")
 	cmd.Flags().StringArrayVar(&opts.Attachments, "attach", nil, "Image or video to upload; repeatable")
+	cmd.Flags().StringArrayVar(&opts.Labels, "label", nil, "Label to apply; repeatable")
 	cmd.Flags().IntVar(&opts.Parent, "parent", 0, "Parent ticket number")
 	cmd.Flags().IntVar(&opts.DiscoveredFrom, "discovered-from", 0, "Ticket that surfaced this work; does not block anything")
 	cmd.Flags().IntSliceVar(&blockedBy, "blocked-by", nil, "Tickets that must close first; repeatable")
@@ -304,6 +305,8 @@ func newIssueListCommand(open opener) *cobra.Command {
 	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "List every project from inside a registered repository")
 	cmd.Flags().StringVar(&opts.State, "state", "open", "Ticket state: open, closed, or all")
 	cmd.Flags().StringVar(&opts.Status, "status", "", "Board status: Todo, Doing, or Done")
+	cmd.Flags().StringVar(&opts.Label, "label", "", "Only tickets with this label")
+	cmd.Flags().StringVar(&opts.Search, "search", "", "Only tickets matching this GitHub search text")
 	cmd.Flags().BoolVar(&opts.Ready, "ready", false, "Only tickets that can be picked up now")
 	cmd.Flags().BoolVar(&opts.Stale, "stale", false, "Only Doing tickets with no recent activity")
 	cmd.Flags().IntVar(&opts.StaleDays, "stale-days", 0, "Days without activity before a Doing ticket is stale; overrides the configured value")
@@ -445,6 +448,29 @@ func newCommentCommand(open opener) *cobra.Command {
 	addBodyFlags(add, &body, &bodyFile)
 	cmd := &cobra.Command{Use: "comment", Short: "Manage comments"}
 	cmd.AddCommand(add)
+	return cmd
+}
+
+func newLabelCommand(open opener) *cobra.Command {
+	build := func(verb, short string, write func(*cobra.Command, *session, int, []string) error) *cobra.Command {
+		return &cobra.Command{
+			Use:   verb + " <number> <label...>",
+			Short: short,
+			Args:  cobra.MinimumNArgs(2),
+			RunE: withTicket(open, func(cmd *cobra.Command, s *session, number int) (string, error) {
+				return fmt.Sprintf("updated labels on #%d", number), write(cmd, s, number, cmd.Flags().Args()[1:])
+			}),
+		}
+	}
+	cmd := &cobra.Command{Use: "label", Short: "Manage a ticket's labels"}
+	cmd.AddCommand(
+		build("add", "Add labels", func(cmd *cobra.Command, s *session, number int, labels []string) error {
+			return s.client.AddLabels(cmd.Context(), number, labels)
+		}),
+		build("rm", "Remove labels", func(cmd *cobra.Command, s *session, number int, labels []string) error {
+			return s.client.RemoveLabels(cmd.Context(), number, labels)
+		}),
+	)
 	return cmd
 }
 

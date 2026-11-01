@@ -61,7 +61,7 @@ func printTickets(w io.Writer, tickets []tracker.Ticket, staleDays int, now time
 		if ticket.Stale(staleDays, now) {
 			status += " (stale)"
 		}
-		rows = append(rows, []string{strconv.Itoa(ticket.Number), status, ticket.Project, ticket.Title})
+		rows = append(rows, []string{strconv.Itoa(ticket.Number), status, ticket.Project, strings.Join(ticket.Labels, ","), ticket.Title})
 	}
 	if cobrahelptree.IsAgentMode() {
 		return tsv(w, rows)
@@ -70,7 +70,7 @@ func printTickets(w io.Writer, tickets []tracker.Ticket, staleDays int, now time
 		_, err := fmt.Fprintln(w, "No tickets found.")
 		return err
 	}
-	return table(w, []string{"Ticket", "Status", "Project", "Title"}, rows)
+	return table(w, []string{"Ticket", "Status", "Project", "Labels", "Title"}, rows)
 }
 
 func printProjects(w io.Writer, projects []tracker.Project) error {
@@ -119,6 +119,9 @@ func printDetail(w io.Writer, detail tracker.TicketDetail) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "number: %d\ntitle: %s\nstate: %s\nstatus: %s\nproject: %s\nurl: %s\n",
 		detail.Number, detail.Title, detail.State, detail.Status, detail.Project, detail.URL)
+	if len(detail.Labels) > 0 {
+		fmt.Fprintf(&b, "labels: %s\n", strings.Join(detail.Labels, ","))
+	}
 	if detail.Parent != 0 {
 		fmt.Fprintf(&b, "parent: %d\n", detail.Parent)
 	}

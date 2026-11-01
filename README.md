@@ -99,6 +99,8 @@ require_private = true
 | `--all-projects` | | `false` | List every project from inside a registered repository |
 | `--state <state>` | | `open` | `open`, `closed`, or `all` |
 | `--status <status>` | | | `Todo`, `Doing`, or `Done` |
+| `--label <label>` | | | Only tickets with this label |
+| `--search <text>` | | | Only tickets matching this search text |
 | `--ready` | | `false` | Only tickets that can start now |
 | `--stale` | | `false` | Only Doing tickets with no recent activity |
 | `--stale-days <days>` | | Configured value | Stale window |
@@ -113,6 +115,7 @@ require_private = true
 | `--body-file <path>` | | | File holding the text; `-` reads standard input |
 | `--project <name>` | | Current repository's project | Project for the ticket |
 | `--attach <file>` | | | Image or video to upload; repeatable |
+| `--label <label>` | | | Label to apply; repeatable |
 | `--parent <number>` | | | Parent ticket |
 | `--discovered-from <number>` | | | Note the ticket that surfaced this work |
 | `--blocked-by <numbers>` | | | Tickets that must close first |

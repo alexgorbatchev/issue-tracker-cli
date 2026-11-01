@@ -120,6 +120,8 @@ func TestWriteCommandsReportResults(t *testing.T) {
 		{"edit body", []fakegithub.Route{idsRoute(), ok("updateIssue")}, []string{"issue", "edit", "1", "--body", "New"}, "OK: edited #1"},
 		{"comment", []fakegithub.Route{idsRoute(), ok("addComment")}, []string{"issue", "comment", "add", "1", "--body", "Hi"}, "OK: commented on #1"},
 		{"status", []fakegithub.Route{ticketRoute("go-tui", "Todo"), status}, []string{"issue", "status", "set", "1", "Done"}, "OK: set #1 to Done"},
+		{"label add", []fakegithub.Route{{Match: "POST api.github.com/repos/o/tracker/issues/1/labels", Body: "[]"}}, []string{"issue", "label", "add", "1", "bug"}, "OK: updated labels on #1"},
+		{"label rm", []fakegithub.Route{{Match: "DELETE api.github.com/repos/o/tracker/issues/1/labels/bug", Body: "[]"}}, []string{"issue", "label", "rm", "1", "bug"}, "OK: updated labels on #1"},
 		{"blocker add", []fakegithub.Route{idsRoute(), ok("addBlockedBy")}, []string{"issue", "blocker", "add", "1", "2"}, "OK: updated #1"},
 		{"blocker rm", []fakegithub.Route{idsRoute(), ok("removeBlockedBy")}, []string{"issue", "blocker", "rm", "1", "2"}, "OK: updated #1"},
 		{"sub add", []fakegithub.Route{idsRoute(), ok("addSubIssue")}, []string{"issue", "sub", "add", "1", "2"}, "OK: updated #1"},
@@ -154,7 +156,7 @@ func TestIssueListOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := "1\tDoing (stale)\tgo-tui\tCrash\n"; stdout != want {
+		if want := "1\tDoing (stale)\tgo-tui\t\tCrash\n"; stdout != want {
 			t.Fatalf("stdout = %q, want %q", stdout, want)
 		}
 	})
@@ -204,6 +206,27 @@ func TestCurrentRepositorySelectsProject(t *testing.T) {
 	}
 	if labels := gh.Requests()[2].Variables["labels"].([]any); labels[0] != "repo:lib" {
 		t.Fatalf("an explicit project must win: %v", labels)
+	}
+}
+
+func TestLabelAndSearchFlags(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	outsideRepository(t)
+	search := fakegithub.Route{Match: "search(query: $search", Body: `{"data":{"repository":{"isPrivate":true},"search":{"nodes":[` + ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z") + `}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`}
+	gh := fakegithub.New(search)
+	if _, _, err := execute(t, fakeOpener(t, gh), "issue", "list", "--search", "crash resize", "--project", "go-tui"); err != nil {
+		t.Fatal(err)
+	}
+	if got := gh.Requests()[0].Variables["search"]; got != `repo:o/tracker is:issue sort:created-asc is:open label:"repo:go-tui" crash resize` {
+		t.Fatalf("search = %v", got)
+	}
+	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")))), "issue", "list", "--label", "bug")
+	if err != nil || stdout != "" {
+		t.Fatalf("stdout = %q, err = %v", stdout, err)
+	}
+	_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "label", "add", "1", "repo:lib")
+	if err == nil || !strings.Contains(err.Error(), "use issue move") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -262,12 +285,13 @@ func TestIssueInspectPrintsDetail(t *testing.T) {
 	body := ticketJSON(1, "lib", "Todo", "2026-10-01T00:00:00Z")
 	body = strings.Replace(body, `"parent":null`, `"parent":{"number":5,"state":"OPEN","blockedBy":{"nodes":[]},"parent":null}`, 1)
 	body = strings.Replace(body, `"blockedBy":{"nodes":[]},"parent":{`, `"blockedBy":{"nodes":[{"number":3,"state":"OPEN"}]},"parent":{`, 1)
+	body = strings.Replace(body, `{"name":"repo:lib"}`, `{"name":"repo:lib"},{"name":"bug"}`, 1)
 	route := fakegithub.Route{Match: "subIssues(first", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + body + `,"body":"Text https://github.com/user-attachments/assets/abc","blocking":{"nodes":[{"number":4,"state":"OPEN"}]},"subIssues":{"nodes":[{"number":6,"title":"Child","state":"OPEN"}]},"comments":{"nodes":[{"author":{"login":"a"},"createdAt":"2026-01-01T00:00:00Z","body":"Note"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`}
 	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(route)), "issue", "inspect", "1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"WARN: lib is public", "status: Todo", "parent: 5", "blocked_by: 3", "blocking: 4", "sub_issue: 6 OPEN Child", "attachment: https://github.com/user-attachments/assets/abc", "body:\nText", "comment: a 2026-01-01T00:00:00Z\nNote"} {
+	for _, want := range []string{"labels: bug", "WARN: lib is public", "status: Todo", "parent: 5", "blocked_by: 3", "blocking: 4", "sub_issue: 6 OPEN Child", "attachment: https://github.com/user-attachments/assets/abc", "body:\nText", "comment: a 2026-01-01T00:00:00Z\nNote"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
@@ -359,6 +383,7 @@ func TestArgumentErrors(t *testing.T) {
 		{"close rejects both", []string{"issue", "close", "1", "--pr", "1", "--reason", "duplicate"}, "none of the others"},
 		{"create needs a title", []string{"issue", "create"}, "title"},
 		{"create needs a project", []string{"issue", "create", "--title", "T"}, "not in a registered repository"},
+		{"label number", []string{"issue", "label", "add", "x", "bug"}, "invalid ticket number"},
 		{"body conflict", []string{"issue", "comment", "add", "1", "--body", "a", "--body-file", "b"}, "none of the others"},
 		{"empty comment", []string{"issue", "comment", "add", "1"}, "comment is empty"},
 		{"missing body file", []string{"issue", "comment", "add", "1", "--body-file", "/missing"}, "reading body file"},

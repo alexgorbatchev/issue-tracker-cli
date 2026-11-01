@@ -1,11 +1,16 @@
 package tracker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -85,6 +90,7 @@ type Ticket struct {
 	State         string
 	URL           string
 	Project       string
+	Labels        []string
 	Status        string
 	Parent        int
 	Blockers      []int
@@ -116,8 +122,9 @@ func (n ticketNode) ticket() Ticket {
 	for _, label := range n.Labels.Nodes {
 		if name, ok := strings.CutPrefix(label.Name, labelPrefix); ok {
 			t.Project = name
-			break
+			continue
 		}
+		t.Labels = append(t.Labels, label.Name)
 	}
 	if n.Parent != nil {
 		t.Parent = n.Parent.Number
@@ -182,6 +189,8 @@ type ListOptions struct {
 	Project   string
 	State     string
 	Status    string
+	Label     string
+	Search    string
 	Ready     bool
 	Stale     bool
 	StaleDays int
@@ -192,6 +201,8 @@ type ListOptions struct {
 func (o ListOptions) matches(t Ticket) bool {
 	switch {
 	case o.Status != "" && !strings.EqualFold(t.Status, o.Status):
+		return false
+	case o.Label != "" && !slices.Contains(t.Labels, o.Label):
 		return false
 	case o.Ready && !t.Ready():
 		return false
@@ -213,19 +224,63 @@ func listStates(state string) ([]string, error) {
 	return nil, fmt.Errorf("invalid state %q: expected open, closed, or all", state)
 }
 
+// ticketPage is one page of tickets from either listing query.
+type ticketPage struct {
+	IsPrivate bool
+	Nodes     []ticketNode
+	PageInfo  pageInfo
+}
+
+// pageReader fetches the page after a cursor, with nil for the first page.
+type pageReader func(context.Context, any) (ticketPage, error)
+
 // ListTickets returns matching tickets, oldest first, in as few pages as Limit allows.
 func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, error) {
 	states, err := listStates(opts.State)
 	if err != nil {
 		return nil, err
 	}
-	var labels []string
+	label := ""
 	if opts.Project != "" {
 		project, err := c.lookupProject(ctx, opts.Project)
 		if err != nil {
 			return nil, err
 		}
-		labels = []string{project.Label()}
+		label = project.Label()
+	}
+	read := c.issuesPage(states, label)
+	if opts.Search != "" {
+		read = c.searchPage(states, label, opts.Search)
+	}
+	tickets := []Ticket{}
+	var cursor any
+	for {
+		page, err := read(ctx, cursor)
+		if err != nil {
+			return nil, fmt.Errorf("listing tickets: %w", err)
+		}
+		if err := c.checkPrivate(page.IsPrivate); err != nil {
+			return nil, err
+		}
+		for _, node := range page.Nodes {
+			if ticket := node.ticket(); opts.matches(ticket) {
+				tickets = append(tickets, ticket)
+			}
+			if opts.Limit > 0 && len(tickets) == opts.Limit {
+				return tickets, nil
+			}
+		}
+		if !page.PageInfo.HasNextPage {
+			return tickets, nil
+		}
+		cursor = page.PageInfo.EndCursor
+	}
+}
+
+func (c *Client) issuesPage(states []string, label string) pageReader {
+	var labels []string
+	if label != "" {
+		labels = []string{label}
 	}
 	query := `query($owner: String!, $name: String!, $states: [IssueState!], $labels: [String!], $after: String) {
   repository(owner: $owner, name: $name) {
@@ -236,9 +291,7 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, e
     }
   }
 }`
-	tickets := []Ticket{}
-	variables := c.variables(map[string]any{"states": states, "labels": labels, "after": nil})
-	for {
+	return func(ctx context.Context, cursor any) (ticketPage, error) {
 		var response struct {
 			Repository struct {
 				IsPrivate bool
@@ -248,25 +301,45 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, e
 				}
 			}
 		}
+		variables := c.variables(map[string]any{"states": states, "labels": labels, "after": cursor})
 		if err := c.do(ctx, query, variables, &response); err != nil {
-			return nil, fmt.Errorf("listing tickets: %w", err)
+			return ticketPage{}, err
 		}
-		if err := c.checkPrivate(response.Repository.IsPrivate); err != nil {
-			return nil, err
-		}
-		for _, node := range response.Repository.Issues.Nodes {
-			if ticket := node.ticket(); opts.matches(ticket) {
-				tickets = append(tickets, ticket)
+		issues := response.Repository.Issues
+		return ticketPage{IsPrivate: response.Repository.IsPrivate, Nodes: issues.Nodes, PageInfo: issues.PageInfo}, nil
+	}
+}
+
+// searchPage matches ticket text with GitHub search, which the issues connection lacks.
+func (c *Client) searchPage(states []string, label, text string) pageReader {
+	terms := []string{"repo:" + c.repo.String(), "is:issue", "sort:created-asc"}
+	if len(states) == 1 {
+		terms = append(terms, "is:"+strings.ToLower(states[0]))
+	}
+	if label != "" {
+		terms = append(terms, fmt.Sprintf(`label:"%s"`, label))
+	}
+	search := strings.Join(append(terms, text), " ")
+	query := `query($owner: String!, $name: String!, $search: String!, $after: String) {
+  repository(owner: $owner, name: $name) { isPrivate }
+  search(query: $search, type: ISSUE, first: ` + strconv.Itoa(listPageSize) + `, after: $after) {
+    nodes { ... on Issue { ` + ticketFields + ` } }
+    pageInfo { hasNextPage endCursor }
+  }
+}`
+	return func(ctx context.Context, cursor any) (ticketPage, error) {
+		var response struct {
+			Repository struct{ IsPrivate bool }
+			Search     struct {
+				Nodes    []ticketNode
+				PageInfo pageInfo
 			}
-			if opts.Limit > 0 && len(tickets) == opts.Limit {
-				return tickets, nil
-			}
 		}
-		page := response.Repository.Issues.PageInfo
-		if !page.HasNextPage {
-			return tickets, nil
+		variables := c.variables(map[string]any{"search": search, "after": cursor})
+		if err := c.do(ctx, query, variables, &response); err != nil {
+			return ticketPage{}, err
 		}
-		variables["after"] = page.EndCursor
+		return ticketPage{IsPrivate: response.Repository.IsPrivate, Nodes: response.Search.Nodes, PageInfo: response.Search.PageInfo}, nil
 	}
 }
 
@@ -410,10 +483,10 @@ func findAttachments(body string, comments []Comment) []string {
 	seen := map[string]bool{}
 	urls := []string{}
 	add := func(text string) {
-		for _, url := range attachmentURL.FindAllString(text, -1) {
-			if !seen[url] {
-				seen[url] = true
-				urls = append(urls, url)
+		for _, link := range attachmentURL.FindAllString(text, -1) {
+			if !seen[link] {
+				seen[link] = true
+				urls = append(urls, link)
 			}
 		}
 	}
@@ -477,6 +550,7 @@ type CreateOptions struct {
 	Parent         int
 	BlockedBy      []int
 	Blocking       []int
+	Labels         []string
 	Attachments    []string
 }
 
@@ -487,6 +561,9 @@ func (c *Client) CreateTicket(ctx context.Context, opts CreateOptions) (Ticket, 
 		if _, err := os.Stat(path); err != nil {
 			return Ticket{}, fmt.Errorf("attachment: %w", err)
 		}
+	}
+	if err := checkPlainLabels(opts.Labels); err != nil {
+		return Ticket{}, err
 	}
 	project, err := c.lookupProject(ctx, opts.Project)
 	if err != nil {
@@ -578,7 +655,13 @@ func (c *Client) linkCreated(ctx context.Context, project Project, created creat
 	for i, number := range opts.Blocking {
 		fields = append(fields, blockMutation("blocking"+strconv.Itoa(i), ids[number], created.ID))
 	}
-	return c.write(ctx, fields)
+	if err := c.write(ctx, fields); err != nil {
+		return err
+	}
+	if len(opts.Labels) == 0 {
+		return nil
+	}
+	return c.AddLabels(ctx, created.Number, opts.Labels)
 }
 
 func blockMutation(alias, issueID, blockerID string) string {
@@ -717,6 +800,46 @@ func (c *Client) addToBoard(ctx context.Context, project Project, contentID stri
 		return "", fmt.Errorf("adding ticket to board: %w", err)
 	}
 	return response.AddProjectV2ItemById.Item.ID, nil
+}
+
+// AddLabels adds labels to a ticket. GitHub creates a name it does not know yet.
+func (c *Client) AddLabels(ctx context.Context, number int, labels []string) error {
+	if err := checkPlainLabels(labels); err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string][]string{"labels": labels})
+	if err != nil {
+		return fmt.Errorf("encoding labels: %w", err)
+	}
+	path := fmt.Sprintf("repos/%s/issues/%d/labels", c.repo, number)
+	if err := c.rest.DoWithContext(ctx, http.MethodPost, path, bytes.NewReader(body), nil); err != nil {
+		return fmt.Errorf("labeling ticket #%d: %w", number, describeError(err))
+	}
+	return nil
+}
+
+// RemoveLabels removes labels from a ticket, one request per label.
+func (c *Client) RemoveLabels(ctx context.Context, number int, labels []string) error {
+	if err := checkPlainLabels(labels); err != nil {
+		return err
+	}
+	for _, label := range labels {
+		path := fmt.Sprintf("repos/%s/issues/%d/labels/%s", c.repo, number, url.PathEscape(label))
+		if err := c.rest.DoWithContext(ctx, http.MethodDelete, path, nil, nil); err != nil {
+			return fmt.Errorf("removing label %q from ticket #%d: %w", label, number, describeError(err))
+		}
+	}
+	return nil
+}
+
+// checkPlainLabels keeps routing labels under project add and issue move.
+func checkPlainLabels(labels []string) error {
+	for _, label := range labels {
+		if strings.HasPrefix(label, labelPrefix) {
+			return fmt.Errorf("label %q routes a ticket: use issue move instead", label)
+		}
+	}
+	return nil
 }
 
 // MoveTicket reassigns a ticket to another project and keeps its status.
