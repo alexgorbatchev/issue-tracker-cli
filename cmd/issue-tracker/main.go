@@ -21,7 +21,11 @@ func main() {
 }
 
 func run(ctx context.Context, cmd *cobra.Command) int {
-	if err := cmd.ExecuteContext(ctx); err != nil {
+	err := cmd.ExecuteContext(ctx)
+	if err == nil {
+		err = helpWriteError
+	}
+	if err != nil {
 		if cobrahelptree.IsAgentMode() {
 			fmt.Fprintf(cmd.ErrOrStderr(), "ERR: %v\n", err)
 		} else {

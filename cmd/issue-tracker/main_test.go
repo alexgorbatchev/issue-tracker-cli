@@ -586,3 +586,39 @@ func TestSkillDocumentsCommandInterface(t *testing.T) {
 		t.Fatalf("SKILL.md is missing:\n%s", strings.Join(omissions, "\n"))
 	}
 }
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("disk full")
+}
+
+func TestRunFailsWhenHelpCannotBeWritten(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		mode string
+		args []string
+		want string
+	}{
+		{"human flag", "0", []string{"--help"}, "[ERROR] "},
+		{"agent flag", "1", []string{"--help"}, "ERR: "},
+		{"bare invocation", "0", nil, "[ERROR] "},
+		{"help command", "0", []string{"help", "issue"}, "[ERROR] "},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AGENT", tt.mode)
+			t.Cleanup(func() { helpWriteError = nil })
+			stderr := new(bytes.Buffer)
+			cmd := newRootCommand(noSession)
+			cmd.SetOut(failingWriter{})
+			cmd.SetErr(stderr)
+			cmd.SetArgs(tt.args)
+			if code := run(context.Background(), cmd); code != 1 {
+				t.Fatalf("exit code = %d, want 1", code)
+			}
+			if !strings.HasPrefix(stderr.String(), tt.want) || strings.Count(stderr.String(), "disk full") != 1 {
+				t.Fatalf("stderr = %q", stderr)
+			}
+		})
+	}
+}

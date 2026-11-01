@@ -58,11 +58,18 @@ var techCatalog = cobrahelptree.TechCatalog{
 	"issue-tracker issue sub rm":          withArgs(true, arg("<parent>", "Parent ticket"), arg("<child...>", "Tickets to detach")),
 }
 
+// helpWriteError keeps a failed help write for run, because cobra's help
+// function cannot return an error.
+var helpWriteError error
+
 func setupHelp(cmd *cobra.Command) {
 	err := cobrahelptree.SetupWithOptions(cmd, cobrahelptree.HelpOptions{
 		Catalog: techCatalog,
 		Skill:   cobrahelptree.SkillSource{Repository: skillRepository, Branch: skillBranch},
 		Tree:    cobrahelptree.TreeOptions{HideGeneratedCommands: true},
+		OnHelpWriteError: func(_ *cobra.Command, err error) {
+			helpWriteError = err
+		},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
