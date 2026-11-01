@@ -4,6 +4,10 @@ set dotenv-load := false
 default:
     @just --list
 
+# Download project dependencies for local development
+setup:
+    go mod download
+
 # Run CLI in human mode (default)
 run *args:
     go run ./cmd/issue-tracker {{args}}
@@ -14,7 +18,7 @@ run-ai *args:
 
 # Run test suite
 test:
-    go test -v ./...
+    go test -race -cover ./...
 
 # Build binary into bin/
 build:
@@ -27,6 +31,7 @@ install:
 
 # Run static analysis and vet
 lint:
+    go mod tidy -diff
     go vet ./...
 
 # Alias for lint
@@ -37,9 +42,7 @@ fmt:
     go fmt ./...
 
 # Run static analysis and test suite in sequence
-check:
-    go vet ./...
-    go test -v ./...
+check: lint test
 
 # Clean up build binaries and temporary files
 clean:

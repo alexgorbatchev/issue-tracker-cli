@@ -1,72 +1,151 @@
-issue-tracker-cli is a command-line tool for CLI for managing projects and tickets in a private GitHub issue tracker.
+`issue-tracker` keeps tickets for all your GitHub repositories in one private repository, so coding agents take their work from a place strangers cannot write to. It is for people running several agents across many repositories, where public issue trackers are a prompt injection path and shared accounts make it hard to tell agents apart.
 
 # What It Does
 
-- Provides fast and intuitive command-line workflows.
-- Supports dual-mode human-friendly and token-conservative agent output via `AGENT=1`.
-- Prints a complete embedded command and option guide with `issue-tracker skill`.
-- Offers structured subject-verb command hierarchies and aligned tree-view help screens.
+- **Single tracker:** Stores every ticket in one private repository, with one board per code repository.
+- **Atomic claims:** Lets any number of agents race for a ticket, with exactly one winner.
+- **Ready work:** Shows tickets that can start now, skipping blocked, claimed, and finished work.
+- **Attachments:** Uploads and downloads screenshots and videos using only your GitHub login.
+- **Merge checks:** Closes a ticket only after confirming its pull requests merged.
+- **Stale reporting:** Flags claimed tickets with no recent activity.
+- **Project detection:** Works out the project from the repository you are in, so most commands need few arguments.
 
 # How It Works
 
-- Parses command-line flags and subcommands using [Cobra](https://github.com/spf13/cobra).
-- Formats visual tree hierarchies and status summaries for terminal users.
-- Adjusts verbosity and formatting automatically when invoked by automated AI agents.
+- Register a repository with `issue-tracker project add`, which creates its board and label.
+- Create tickets with `issue-tracker issue create`, from that repository or anywhere else with `--project`.
+- An agent runs `issue-tracker issue claim --next` to take the oldest ready ticket.
+- The agent reads the ticket and its attachments, then does the work in the ticket's repository.
+- After the pull request merges, `issue-tracker issue close <number> --pr <pull-request>` closes the ticket.
 
 # How it Really Works
 
-- Detects the `AGENT` environment variable to switch between human TTY output and structured agent output.
-- Utilizes [cobra-help-tree](https://github.com/alexgorbatchev/cobra-help-tree) to render terminal-width-aware command tree listings.
-- Follows XDG Base Directory specifications for persistent data and configuration storage.
-
-# Prerequisites
-
-- [Go](https://go.dev/) 1.26.2 or higher (for development)
-- [Just](https://github.com/casey/just) task runner (for project automation)
+- Each project is a `repo:<name>` label and a private GitHub Project board in the tracker repository. Boards are never linked to your code repositories, and nothing is written to them, so a public repository shows no trace of the tracker.
+- A claim is a Git ref named `refs/claims/<number>` in the tracker repository. GitHub refuses to create a ref that exists, so a second claimant fails at once. Refs do not appear on the Tags or Branches pages.
+- Claims never expire on their own. A Doing ticket with no ticket or board activity for `stale_days` is reported as stale and is left for you to release.
+- A ticket is ready when it is open, has no open blockers, has no blocked parent or grandparent, and is not in Doing or Done. A parent stays ready while its sub-issues are open.
+- Closing a ticket adds a link to each pull request. On a public pull request, the back-reference is visible to people with access to the tracker, and anonymous visitors did not see it in testing.
+- Project and board IDs are cached in `~/.cache/issue-tracker/` with owner-only permissions. Ticket data is read live and never stored, and each command makes few GitHub requests, as listed in [GITHUB-RATE-LIMITING.md](GITHUB-RATE-LIMITING.md). When GitHub rate limits a request, the command waits as GitHub asks, or stops and prints when to retry.
+- Attachments download to `~/.cache/issue-tracker/attachments/<number>/`. A `--dir` inside a Git worktree must be ignored by it, so a pulled screenshot cannot reach a commit by accident.
+- Lists print a table for people, and tab-separated rows when `AGENT=1` is set. Results go to stdout, errors go to stderr, and failures exit with status 1.
 
 # Installation
 
-Download the latest prebuilt binary from GitHub Releases:
+Download the prebuilt binary for your platform from the [latest release](https://github.com/alexgorbatchev/issue-tracker-cli/releases/latest), replacing `X.X.X` with the version shown on that page.
 
 ```bash
-# Using GitHub CLI
-gh release download --repo github.com/alexgorbatchev/issue-tracker-cli --pattern 'issue-tracker_*_darwin_arm64.tar.gz'
-tar -xzf issue-tracker_*_darwin_arm64.tar.gz
-chmod +x issue-tracker
-mv issue-tracker ~/.local/bin/
+# macOS (Apple Silicon)
+curl -sSL https://github.com/alexgorbatchev/issue-tracker-cli/releases/latest/download/issue-tracker_X.X.X_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin
 ```
 
-Or via direct download:
+# Setup
 
-```bash
-curl -fsSL https://github.com/alexgorbatchev/issue-tracker-cli/releases/latest/download/issue-tracker_darwin_arm64.tar.gz | tar -xz
-chmod +x issue-tracker
-mv issue-tracker ~/.local/bin/
-```
+- [GitHub CLI](https://cli.github.com/) - Provides your GitHub login, and uploads attachments. Run `gh auth login`, then `gh auth refresh -s project` to allow board access.
+- Private tracker repository - Create an empty private repository with at least one commit, then set `repo` in the configuration below.
 
 # Quick Start
 
 ```bash
-# Show help and available commands
-issue-tracker --help
+# Register the repository you are in
+issue-tracker project add
 
-# Check binary version
-issue-tracker --version
+# Create a ticket with a screenshot
+issue-tracker issue create --title "Crash on resize" --body-file bug.md --attach ./crash.png
 
-# Run status check
-issue-tracker status
+# See what can start now
+issue-tracker issue list --ready
 
-# Read the complete guide before agent operations
-AGENT=1 issue-tracker skill
+# Claim the next ticket and read it
+issue-tracker issue claim --next
+issue-tracker issue inspect 12
+
+# Close it after the pull request merges
+issue-tracker issue close 12 --pr 88
 ```
+
+Sample Output:
+```
+[OK] claimed #12 in go-tui: Crash on resize
+```
+
+# Configuration
+
+Settings come from flags, then environment variables, then `~/.config/issue-tracker/config.toml`, then defaults. `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are respected.
+
+```toml
+repo = "owner/issues"
+stale_days = 3
+require_private = true
+```
+
+| Setting | Environment Variable | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `repo` | `ISSUE_TRACKER_REPO` | None, required | Tracker repository as `owner/name` |
+| `stale_days` | `ISSUE_TRACKER_STALE_DAYS` | `3` | Days without activity before a Doing ticket is stale |
+| `require_private` | `ISSUE_TRACKER_REQUIRE_PRIVATE` | `false` | Refuse to read a tracker that is not private |
 
 # Options & Flags
 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--help` | `-h` | `false` | Display help and command tree |
-| `--version` | `-v` | `false` | Display binary version |
+| `--version` | `-v` | `false` | Print the version |
+| `--help` | `-h` | `false` | Print help for any command |
+
+`issue-tracker issue list`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--project <name>` | | Current repository's project | Limit to a project |
+| `--all-projects` | | `false` | List every project from inside a registered repository |
+| `--state <state>` | | `open` | `open`, `closed`, or `all` |
+| `--status <status>` | | | `Todo`, `Doing`, or `Done` |
+| `--ready` | | `false` | Only tickets that can start now |
+| `--stale` | | `false` | Only Doing tickets with no recent activity |
+| `--stale-days <days>` | | Configured value | Stale window |
+| `--limit <count>` | | `100` | Maximum tickets; `0` shows all |
+
+`issue-tracker issue create`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--title <title>` | | Required | Ticket title |
+| `--body <text>` | | | Ticket text |
+| `--body-file <path>` | | | File holding the text; `-` reads standard input |
+| `--project <name>` | | Current repository's project | Project for the ticket |
+| `--attach <file>` | | | Image or video to upload; repeatable |
+| `--parent <number>` | | | Parent ticket |
+| `--discovered-from <number>` | | | Note the ticket that surfaced this work |
+| `--blocked-by <numbers>` | | | Tickets that must close first |
+| `--blocking <numbers>` | | | Tickets waiting on this one |
+
+`issue-tracker issue claim`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--next` | | `false` | Claim the oldest ready ticket |
+| `--project <name>` | | Current repository's project | Limit `--next` to a project |
+
+`issue-tracker issue close`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--pr <ref>` | | | Merged pull request as `88` or `project#88`; repeatable |
+| `--reason <reason>` | | | Close without a pull request: `not-planned` or `duplicate` |
+
+`issue-tracker issue attachment pull`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--dir <path>` | | `~/.cache/issue-tracker/attachments/<number>/` | Download directory |
+
+`issue-tracker project rm`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--yes` | | `false` | Confirm deleting the project's board |
+
+Run `issue-tracker --help` for every command.
 
 # License
 
-MIT License. Copyright (c) 2026 Alex Gorbatchev.
+[MIT](LICENSE) (c) 2026 Alex Gorbatchev

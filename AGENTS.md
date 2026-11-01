@@ -1,42 +1,52 @@
 ---
 created_on: 2026-11-01 10:52
-last_modified: 2026-11-01 10:52
+last_modified: 2026-11-01 12:20
 status: current
 ---
 
 # issue-tracker-cli
 
-CLI for managing projects and tickets in a private GitHub issue tracker
+CLI that manages projects and tickets held in one private GitHub repository, with boards, atomic claims, and attachments.
 
 ## Commands
+- **Prepare Dependencies:** `just setup`
 - **Build Local Binary:** `just build` (compiles to `bin/issue-tracker`)
 - **Run CLI with Arguments:** `just run [args...]`
 - **Run CLI in Agent Mode:** `just run-ai [args...]` (`AGENT=1`)
-- **Run Tests:** `just test` (`go test -v ./...`)
-- **Run Static Analysis & Tests:** `just check` (`go vet ./... && go test -v ./...`)
-- **Run Linter / Static Analysis:** `just vet` or `just lint` (`go vet ./...`)
+- **Run Tests:** `just test` (`go test -race -cover ./...`)
+- **Run Static Analysis & Tests:** `just check`
+- **Run Linter / Static Analysis:** `just vet` or `just lint`
 - **Format Source Code:** `just fmt` (`go fmt ./...`)
 
 ## Setup & Environment
-- **Prerequisites:** Go 1.26.2+, `just`.
+- **Prerequisites:** Go 1.26.7+, `just`, and `gh` for attachment uploads.
 - **Temporary Files:** Temporary file operations use `.tmp/` within the project root.
+- **Layout:** `cmd/issue-tracker/` holds commands and output, `internal/tracker/` holds GitHub operations, `internal/config/` resolves settings, `internal/fakegithub/` is the test double, and `skills/issue-tracker/` holds the agent skill.
 
 ## Conventions
 - **Output Formatting & No Decorative Headers:** All CLI output must be plain text without emojis across all modes.
-- **Help Screens & Terminal Width:** CLI help output (`--help`) must display an aligned hierarchical tree view with `├─` and `╰─` glyphs powered by `github.com/alexgorbatchev/cobra-help-tree/v2` (`cobrahelptree.Setup(rootCmd)`), with command descriptions automatically trimmed to the terminal width using ellipsis (`...`).
-- **Agent Mode (`AGENT=1`):** When `AGENT=1` is set, output compact key-value pairs or bullets.
-- **Hermetic Unit Tests:** All unit tests must remain 100% offline and hermetic.
+- **Help Screens & Terminal Width:** Help must use `github.com/alexgorbatchev/cobra-help-tree/v3` through `SetupWithOptions`, with positional arguments and environment variables documented in `techCatalog`.
+- **Agent Mode (`AGENT=1`):** Lists print tab-separated rows and results print `OK:`, `WARN:`, or `ERR:` prefixes. Use `cobrahelptree.IsAgentMode`.
+- **Displayed Paths:** Print every path through `displaypath.Fold`.
+- **API Budget:** Make the fewest GitHub calls that give a correct result, and follow [GITHUB-RATE-LIMITING.md](GITHUB-RATE-LIMITING.md). Batch reads into one GraphQL request. Assert a request count in tests for every command that calls GitHub.
+- **Never Enable the go-gh Cache:** It can replay mutations and stored 429 responses. Cache only the IDs in `metadata`, never ticket data.
+- **Claims:** A claim is the ref `refs/claims/<number>` in the tracker repository, created through REST. GitHub rejects a second create, which makes it the only atomic operation this tool has; labels, assignees, milestones, and project fields accept concurrent writers. GraphQL cannot see this namespace.
+- **Readiness Follows Beads:** A ticket is ready when it is open, has no open blockers and no blocked parent or grandparent, and is not in Doing or Done. A parent stays ready while its sub-issues are open.
+- **Project Registration:** A project exists when a `repo:<name>` label's description holds `owner/name`. Write the label last so a failed `project add` can simply be repeated. Link boards to the tracker repository only, never to a code repository.
+- **Secrets on the Wire:** Send the GitHub token only to URLs matching `attachmentURL`.
+- **Hermetic Unit Tests:** All unit tests must remain offline. Use `internal/fakegithub` as the transport.
 
-## Embedded Agent Skill
-
-- `issue-tracker skill` prints `cmd/issue-tracker/SKILL.md` verbatim, embedded with `//go:embed`.
-- Every agent-mode help screen starts with an alert to read `AGENT=1 issue-tracker skill` first.
-- Keep the skill in sync in the same change whenever public commands, arguments, flags, shorthands, types, defaults, accepted values, environment variables, outputs, errors, or side effects change. Include generated help and completion commands.
-- Verify against the implementation and pinned dependencies, update `last_modified`, and run `just check`. Maintain `TestSkillDocumentsCommandInterface` coverage of the live command tree.
-- Write affirmative usage instructions and factual contracts in the skill. Keep development instructions and negative prohibitions in this file.
-- Do not use the usage skill for developing the Go implementation, invent unsupported operations, read repository files at runtime to print the skill, or maintain a second copy of its text.
+## Agent Skill
+- The skill lives only at `skills/issue-tracker/SKILL.md`. Never embed it in the binary.
+- `issue-tracker skill` prints install instructions through `HelpOptions.Skill`, and every agent help screen starts with an alert to read it.
+- Update the skill in the same change as any command, argument, flag, default, environment variable, output, error, or side-effect change. Verify it against the implementation, update `last_modified`, and run `just check`. `TestSkillDocumentsCommandInterface` compares it with the live command tree.
+- Write affirmative usage instructions and factual contracts in the skill. Keep development instructions and prohibitions in this file.
 
 ## Boundaries
-- **Always:** Maintain >= 90% statement code coverage across Go packages.
-- **Always:** Run `just test` and `just vet` before committing changes.
+- **Always:** For code changes that alter executable behavior, add or update meaningful behavioral tests. Require at least 90% line coverage and 90% function coverage across the non-test source of each affected first-party package, including unexecuted files and excluding `scripts/` directories. Measure with `go test -coverprofile`. Do not weaken coverage gates or make token test edits.
+- **Always:** Run `just check` before committing changes.
+- **Always:** Persist standing project instructions in this file and update the relevant rule in place.
+- **Never:** Record task history, progress, handoffs, or dated user amendments in `AGENTS.md`.
+- **Never:** Name a private tracker repository, or include ticket content, in this public repository.
 - **Never:** Commit compiled Go binaries (e.g. `bin/issue-tracker`) to git.
+- **Never:** Publish releases, tags, packages, or production deployments automatically without explicit user authorization.
