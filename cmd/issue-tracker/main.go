@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v3"
+	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/config"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"
 	"github.com/spf13/cobra"

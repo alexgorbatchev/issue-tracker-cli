@@ -3,7 +3,7 @@ module github.com/alexgorbatchev/issue-tracker-cli
 go 1.26.7
 
 require (
-	github.com/alexgorbatchev/cobra-help-tree/v3 v3.0.0
+	github.com/alexgorbatchev/cobra-help-tree/v4 v4.0.0
 	github.com/cli/go-gh/v2 v2.17.0
 	github.com/olekukonko/tablewriter v1.1.5
 	github.com/pelletier/go-toml/v2 v2.4.3

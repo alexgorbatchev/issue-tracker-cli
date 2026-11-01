@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v3"
+	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/config"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/fakegithub"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"

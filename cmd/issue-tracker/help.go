@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v3"
+	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/config"
 	"github.com/spf13/cobra"
 )

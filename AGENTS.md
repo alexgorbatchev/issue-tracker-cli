@@ -25,7 +25,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 
 ## Conventions
 - **Output Formatting & No Decorative Headers:** All CLI output must be plain text without emojis across all modes.
-- **Help Screens & Terminal Width:** Help must use `github.com/alexgorbatchev/cobra-help-tree/v3` through `SetupWithOptions`, with positional arguments and environment variables documented in `techCatalog`.
+- **Help Screens & Terminal Width:** Help must use `github.com/alexgorbatchev/cobra-help-tree/v4` through `SetupWithOptions`, with positional arguments and environment variables documented in `techCatalog`.
 - **Agent Mode (`AGENT=1`):** Lists print tab-separated rows and results print `OK:`, `WARN:`, or `ERR:` prefixes. Use `cobrahelptree.IsAgentMode`.
 - **Displayed Paths:** Print every path through `displaypath.Fold`.
 - **API Budget:** Make the fewest GitHub calls that give a correct result, and follow [GITHUB-RATE-LIMITING.md](GITHUB-RATE-LIMITING.md). Batch reads into one GraphQL request. Assert a request count in tests for every command that calls GitHub.

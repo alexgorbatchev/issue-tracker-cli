@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v3"
+	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/displaypath"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"
 	"github.com/olekukonko/tablewriter"
