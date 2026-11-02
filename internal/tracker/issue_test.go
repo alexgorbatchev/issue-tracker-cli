@@ -505,7 +505,7 @@ func TestMoveTicket(t *testing.T) {
 		t.Fatalf("status must survive a move: %s", lastDescription(gh))
 	}
 
-	same, gh := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui"}))
+	same, gh := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui", status: StatusTodo}))
 	if err := same.MoveTicket(ctx, 1, "go-tui"); err != nil {
 		t.Fatal(err)
 	}
@@ -651,4 +651,16 @@ func TestCloseReasonCompletedClosesAsCompleted(t *testing.T) {
 	}
 	_, err = stateReason("finished")
 	wantError(t, err, "expected completed, not-planned, or duplicate")
+}
+
+func TestMoveFinishesAnImportThatLostItsStatus(t *testing.T) {
+	route := ticketRoute(ticketSpec{number: 12, project: "go-tui"})
+	add := fakegithub.Route{Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"ITEM"}}}}`}
+	c, gh := newClient(t, route, add, okRoute("updateProjectV2ItemFieldValue"))
+	if err := c.MoveTicket(ctx, 12, "go-tui"); err != nil {
+		t.Fatal(err)
+	}
+	if last := lastDescription(gh); !strings.Contains(last, `singleSelectOptionId: "opt-todo"`) {
+		t.Fatalf("last write = %s", last)
+	}
 }

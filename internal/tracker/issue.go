@@ -857,7 +857,11 @@ func (c *Client) MoveTicket(ctx context.Context, number int, target string) erro
 		return err
 	}
 	if ticket.Project == target {
-		return nil
+		if ticket.Status != "" {
+			return nil
+		}
+		// A failed import can leave the label without a board status.
+		return c.writeStatus(ctx, ticket, StatusTodo)
 	}
 	project, err := c.lookupProject(ctx, target)
 	if err != nil {

@@ -316,8 +316,8 @@ func TestImportRequestBudget(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantCount(t, gh, tt.want)
-			if countRequests(gh, "mutation") != importWrites {
-				t.Fatalf("writes = %d, want %d", countRequests(gh, "mutation"), importWrites)
+			if writes := countRequests(gh, "mutation"); writes != 3 {
+				t.Fatalf("write requests = %d, want 3", writes)
 			}
 		})
 	}
