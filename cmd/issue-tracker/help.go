@@ -37,6 +37,7 @@ var techCatalog = cobrahelptree.TechCatalog{
 	},
 	"issue-tracker project add":           withArgs(true, arg("[owner/repo]", "Repository to register; defaults to the current repository")),
 	"issue-tracker project inspect":       withArgs(false, arg("[project]", "Project name; defaults to the current repository")),
+	"issue-tracker project import":        withArgs(true, arg("<owner/repo>", "Repository whose open issues move into the tracker")),
 	"issue-tracker project rm":            withArgs(true, arg("<project>", "Project to unregister")),
 	"issue-tracker issue claim":           withArgs(true, arg("[number]", "Ticket to claim; omit when using --next")),
 	"issue-tracker issue close":           withArgs(true, numberArg),

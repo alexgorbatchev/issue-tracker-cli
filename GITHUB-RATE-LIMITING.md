@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:46
-last_modified: 2026-11-01 12:20
+last_modified: 2026-11-01 23:45
 status: current
 ---
 
@@ -78,6 +78,8 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | `issue attachment add` | Unmeasured | Runs `gh issue edit --attach` |
 
 Claim refs use REST because GraphQL cannot see `refs/claims/`. Deleting one is therefore always a separate request.
+
+`project import` costs about three writes per issue and waits 8 seconds between issues. Each move spends one content creation request, so a run stays near 450 an hour. `project scan` costs one point per 100 repositories, plus one for each page of 100 issues in a repository with open issues.
 
 ## Cache
 

@@ -60,7 +60,7 @@ func TestAddProjectCreatesBoardThenLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project.Name != "new" || project.LabelID != "LN" || project.BoardID != "BN" || project.StatusOptions[StatusDoing] != "g" {
+	if project.Name != "new" || project.Repo != "o/new" || project.LabelID != "LN" || project.BoardID != "BN" || project.StatusOptions[StatusDoing] != "g" {
 		t.Fatalf("project = %+v", project)
 	}
 	var columns, label int

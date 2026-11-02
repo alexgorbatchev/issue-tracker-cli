@@ -407,6 +407,7 @@ func TestSessionFailureStopsCommands(t *testing.T) {
 	failed := func() (*session, error) { return nil, errors.New("no session") }
 	for _, args := range [][]string{
 		{"project", "add", "o/r"}, {"project", "inspect", "x"}, {"project", "list"}, {"project", "rm", "x", "--yes"},
+		{"project", "scan"}, {"project", "import", "o/r"},
 		{"issue", "claim", "1"}, {"issue", "create", "--title", "T"}, {"issue", "inspect", "1"}, {"issue", "list"},
 		{"issue", "attachment", "pull", "1"}, {"issue", "release", "1"},
 	} {
@@ -425,6 +426,7 @@ func TestGitHubFailuresPropagate(t *testing.T) {
 		{"issue", "attachment", "pull", "1", "--dir", t.TempDir()},
 		{"issue", "create", "--project", "go-tui", "--title", "T"},
 		{"project", "inspect", "go-tui"}, {"project", "list"}, {"project", "add", "o/r"},
+		{"project", "scan"}, {"project", "import", "o/r"},
 	} {
 		if _, _, err := execute(t, fakeOpener(t, fakegithub.New(fail)), args...); err == nil {
 			t.Fatalf("%v: want an error", args)
@@ -620,5 +622,48 @@ func TestRunFailsWhenHelpCannotBeWritten(t *testing.T) {
 				t.Fatalf("stderr = %q", stderr)
 			}
 		})
+	}
+}
+
+func TestProjectScanOutput(t *testing.T) {
+	outsideRepository(t)
+	repositories := fakegithub.Route{Match: "repositoryOwner(login", Body: `{"data":{"repositoryOwner":{"repositories":{"nodes":[{"nameWithOwner":"o/code","issues":{"totalCount":2}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
+	issues := fakegithub.Route{Match: "issues(states: OPEN, first: 100", Body: `{"data":{"repository":{"isPrivate":false,"issues":{"nodes":[
+{"id":"A","number":1,"author":{"login":"o"},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}}},
+{"id":"B","number":2,"author":{"login":"stranger"},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
+	tests := []struct {
+		name  string
+		agent string
+		want  string
+	}{
+		{"agent", "1", "o/code\tpublic\t2\t1\t1\n"},
+		{"human", "0", "FROM OTHERS"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AGENT", tt.agent)
+			stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(repositories, issues)), "project", "scan")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(strings.ToUpper(stdout), strings.ToUpper(tt.want)) {
+				t.Fatalf("stdout = %q, want %q", stdout, tt.want)
+			}
+		})
+	}
+	t.Run("nothing open", func(t *testing.T) {
+		t.Setenv("AGENT", "0")
+		empty := fakegithub.Route{Match: "repositoryOwner(login", Body: `{"data":{"repositoryOwner":{"repositories":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
+		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(empty)), "project", "scan")
+		if err != nil || !strings.Contains(stdout, "No open issues found.") {
+			t.Fatalf("stdout = %q, err = %v", stdout, err)
+		}
+	})
+}
+
+func TestProjectImportRejectsBadRepository(t *testing.T) {
+	outsideRepository(t)
+	if _, _, err := execute(t, fakeOpener(t, fakegithub.New()), "project", "import", "bad"); err == nil || !strings.Contains(err.Error(), "invalid repository") {
+		t.Fatalf("err = %v", err)
 	}
 }
