@@ -114,7 +114,14 @@ type Ticket struct {
 // The blocked label covers waits with no ticket to name, such as a person's input.
 func (t Ticket) Ready() bool {
 	return t.State == stateOpen && len(t.Blockers) == 0 && !t.ParentBlocked &&
-		t.Status != StatusDoing && t.Status != StatusDone && !slices.Contains(t.Labels, labelBlocked)
+		t.Status != StatusDoing && t.Status != StatusDone && !t.labelled(labelBlocked)
+}
+
+// labelled compares the way GitHub does, because label names ignore case there.
+func (t Ticket) labelled(name string) bool {
+	return slices.ContainsFunc(t.Labels, func(label string) bool {
+		return strings.EqualFold(label, name)
+	})
 }
 
 // Stale reports a Doing ticket with no activity for the given number of days.

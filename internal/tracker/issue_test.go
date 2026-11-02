@@ -37,6 +37,7 @@ func TestReady(t *testing.T) {
 		{"unblocked parent", ticketSpec{number: 1, parent: openParent}, true},
 		{"closed parent keeps child ready", ticketSpec{number: 1, parent: closedParent}, true},
 		{"labelled blocked", ticketSpec{number: 1, status: "Todo", label: "blocked"}, false},
+		{"labelled blocked in another case", ticketSpec{number: 1, status: "Todo", label: "Blocked"}, false},
 		{"unrelated label", ticketSpec{number: 1, status: "Todo", label: "blocked-upstream"}, true},
 	}
 	for _, tt := range tests {
