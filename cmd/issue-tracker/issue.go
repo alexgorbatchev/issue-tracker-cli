@@ -497,9 +497,12 @@ func closeParent(cmd *cobra.Command, s *session, parent tracker.Ticket, dryRun b
 	if dryRun {
 		return report(cmd.OutOrStdout(), "would close #%d in %s: %s", parent.Number, parent.Project, parent.Title)
 	}
-	opts := tracker.CloseOptions{Reason: tracker.ReasonCompleted}
-	if err := s.client.CloseTicket(cmd.Context(), parent.Number, opts); err != nil {
+	closed, err := s.client.CloseParent(cmd.Context(), parent.Number)
+	if err != nil {
 		return err
+	}
+	if !closed {
+		return report(cmd.OutOrStdout(), "skipped #%d: no longer eligible", parent.Number)
 	}
 	return report(cmd.OutOrStdout(), "closed #%d in %s: %s", parent.Number, parent.Project, parent.Title)
 }

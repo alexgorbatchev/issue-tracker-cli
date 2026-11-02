@@ -30,6 +30,8 @@ func TestClosable(t *testing.T) {
 		{"no sub-issues", ticketSpec{number: 1, status: "Todo"}, false},
 		{"claimed", ticketSpec{number: 1, status: "Doing", subs: closedSub}, false},
 		{"already closed", ticketSpec{number: 1, state: "CLOSED", subs: closedSub}, false},
+		{"open blocker", ticketSpec{number: 1, status: "Todo", subs: closedSub, blockers: `{"number":9,"state":"OPEN"}`}, false},
+		{"labelled blocked", ticketSpec{number: 1, status: "Todo", subs: closedSub, label: "blocked"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

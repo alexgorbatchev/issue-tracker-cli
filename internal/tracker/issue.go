@@ -129,9 +129,11 @@ func (t Ticket) Ready() bool {
 }
 
 // Closable reports an open parent whose sub-issues are all closed. A claimed parent
-// stays open, because closing it would take the ticket from whoever holds it.
+// stays open, because closing it would take the ticket from whoever holds it, and so
+// does a blocked one, because something still has to happen first.
 func (t Ticket) Closable() bool {
-	return t.State == stateOpen && t.SubIssues > 0 && t.OpenSubIssues == 0 && t.Status != StatusDoing
+	return t.State == stateOpen && t.SubIssues > 0 && t.OpenSubIssues == 0 && t.Status != StatusDoing &&
+		len(t.Blockers) == 0 && !t.labelled(labelBlocked)
 }
 
 // labelled compares the way GitHub does, because label names ignore case there.
@@ -1051,6 +1053,23 @@ func (c *Client) CloseTicket(ctx context.Context, number int, opts CloseOptions)
 	if err != nil {
 		return err
 	}
+	return c.closeTicket(ctx, ticket, opts)
+}
+
+// CloseParent closes a parent as completed and reports whether it did. The list that
+// found the parent can be out of date, so this decides from a fresh read.
+func (c *Client) CloseParent(ctx context.Context, number int) (bool, error) {
+	ticket, err := c.readTicket(ctx, number)
+	if err != nil {
+		return false, err
+	}
+	if !ticket.Closable() {
+		return false, nil
+	}
+	return true, c.closeTicket(ctx, ticket, CloseOptions{Reason: ReasonCompleted})
+}
+
+func (c *Client) closeTicket(ctx context.Context, ticket Ticket, opts CloseOptions) error {
 	reason, err := stateReason(opts.Reason)
 	if err != nil {
 		return err
@@ -1075,10 +1094,10 @@ func (c *Client) CloseTicket(ctx context.Context, number int, opts CloseOptions)
 		}
 	}
 	if err := c.write(ctx, fields); err != nil {
-		return fmt.Errorf("closing ticket #%d: %w", number, err)
+		return fmt.Errorf("closing ticket #%d: %w", ticket.Number, err)
 	}
 	if ticket.Status == StatusDoing {
-		return c.deleteClaim(ctx, number)
+		return c.deleteClaim(ctx, ticket.Number)
 	}
 	return nil
 }

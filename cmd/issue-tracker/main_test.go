@@ -237,22 +237,26 @@ func parentJSON(number int, subs string) string {
 	return strings.Replace(ticketJSON(number, "go-tui", "Todo", "2026-10-01T00:00:00Z"), `"parent":null,`, `"parent":null,"subIssueStates":{"nodes":[`+subs+`]},`, 1)
 }
 
+func parentRoute(json string) fakegithub.Route {
+	return fakegithub.Route{Match: "isPrivate issue(number: $number)", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + json + `}}}}`}
+}
+
 func TestSubCloseEligible(t *testing.T) {
 	closed, open := `{"state":"CLOSED"}`, `{"state":"OPEN"}`
 	list := func() fakegithub.Route { return listRoute(parentJSON(1, closed), parentJSON(2, closed+","+open)) }
-	closeRoutes := func() []fakegithub.Route {
-		return []fakegithub.Route{ticketRoute("go-tui", "Todo"), ok("closeIssue")}
-	}
+	claimed := strings.Replace(parentJSON(1, closed), `"name":"Todo"`, `"name":"Doing"`, 1)
 	tests := []struct {
-		name   string
-		routes []fakegithub.Route
-		args   []string
-		want   string
-		writes int
+		name     string
+		routes   []fakegithub.Route
+		args     []string
+		want     string
+		writes   int
+		requests int
 	}{
-		{"dry run", []fakegithub.Route{list()}, []string{"--dry-run", "--project", "go-tui"}, "OK: would close #1 in go-tui: Crash\n", 0},
-		{"closes", append([]fakegithub.Route{list()}, closeRoutes()...), []string{"--project", "go-tui"}, "OK: closed #1 in go-tui: Crash\n", 1},
-		{"nothing eligible", []fakegithub.Route{listRoute(parentJSON(2, open))}, []string{"--all-projects"}, "OK: no eligible parents\n", 0},
+		{"dry run", []fakegithub.Route{list()}, []string{"--dry-run", "--project", "go-tui"}, "OK: would close #1 in go-tui: Crash\n", 0, 1},
+		{"closes", []fakegithub.Route{list(), parentRoute(parentJSON(1, closed)), ok("closeIssue")}, []string{"--project", "go-tui"}, "OK: closed #1 in go-tui: Crash\n", 1, 3},
+		{"claimed after the list", []fakegithub.Route{list(), parentRoute(claimed)}, []string{"--project", "go-tui"}, "OK: skipped #1: no longer eligible\n", 0, 2},
+		{"nothing eligible", []fakegithub.Route{listRoute(parentJSON(2, open))}, []string{"--all-projects"}, "OK: no eligible parents\n", 0, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -273,8 +277,8 @@ func TestSubCloseEligible(t *testing.T) {
 					writes++
 				}
 			}
-			if writes != tt.writes {
-				t.Fatalf("close writes = %d, want %d", writes, tt.writes)
+			if writes != tt.writes || gh.Count() != tt.requests {
+				t.Fatalf("close writes = %d, want %d; requests = %d, want %d", writes, tt.writes, gh.Count(), tt.requests)
 			}
 		})
 	}

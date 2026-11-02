@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-02 14:28
+  last_modified: 2026-11-02 14:33
   status: current
 ---
 
@@ -205,7 +205,7 @@ Shows a parent's sub-issues and progress. Prints one tab-separated line per sub-
 
 ### issue-tracker issue sub close-eligible
 
-Closes open parents whose sub-issues are all closed, as completed, with no pull request check. Prints `closed #<number> in <project>: <title>` for each, or `no eligible parents`. Skips a parent in Doing, because closing it would take the ticket from whoever holds it. A failed close stops the command. Inside a registered repository it covers that project.
+Closes open parents whose sub-issues are all closed, as completed, with no pull request check. Prints `closed #<number> in <project>: <title>` for each, or `no eligible parents`. Skips a parent that is in Doing, has open blockers, or has the `blocked` label. Each parent is read again just before closing; one that stopped being eligible prints `skipped #<number>: no longer eligible`. A failed close stops the command. Inside a registered repository it covers that project.
 
 - `--all-projects` bool: cover every project from inside a registered repository.
 - `--dry-run` bool: print `would close #<number> in <project>: <title>` for each parent and close nothing.
