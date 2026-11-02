@@ -294,11 +294,23 @@ func newIssueListCommand(open opener) *cobra.Command {
 				opts.StaleDays = s.cfg.StaleDays
 			}
 			opts.Now = time.Now()
-			tickets, err := s.client.ListTickets(cmd.Context(), opts)
+			// Reading one past the limit shows whether anything was left out.
+			shown := opts
+			if opts.Limit > 0 {
+				shown.Limit++
+			}
+			tickets, err := s.client.ListTickets(cmd.Context(), shown)
 			if err != nil {
 				return err
 			}
-			return printTickets(cmd.OutOrStdout(), tickets, opts.StaleDays, opts.Now)
+			truncated := opts.Limit > 0 && len(tickets) > opts.Limit
+			if truncated {
+				tickets = tickets[:opts.Limit]
+			}
+			if err := printTickets(cmd.OutOrStdout(), tickets, opts.StaleDays, opts.Now); err != nil || !truncated {
+				return err
+			}
+			return warn(cmd.ErrOrStderr(), "showing the first %d tickets, and more match: pass --limit 0 to list them all", opts.Limit)
 		},
 	}
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Limit to a project; defaults to the current repository's project")

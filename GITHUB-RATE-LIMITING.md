@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:46
-last_modified: 2026-11-02 12:30
+last_modified: 2026-11-02 14:10
 status: current
 ---
 
@@ -65,7 +65,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 
 | Command | Requests | Reads and writes |
 | --- | --- | --- |
-| `issue list`, any filter, up to 100 tickets | 1 | One query, about 4 points with parent checks |
+| `issue list`, any filter, up to 100 tickets | 1 | One query, about 4 points with parent checks. A listing that fills `--limit` reads one ticket past it, which adds a page when that ticket is on the next one |
 | `issue inspect <number>` | 1 | One query, plus one per extra 100 comments |
 | `issue create` | 3 | Create with routing label, add to the board, set Todo. Add 1 when relating tickets, 1 for `--label`, and 1 to 3 when GitHub has already added the item, which its sub-issue workflow can do. Passing the board to `createIssue` would save a request but makes that collision routine |
 | `issue claim <number>` | 3 | Read the ticket, create the claim ref, set Doing |

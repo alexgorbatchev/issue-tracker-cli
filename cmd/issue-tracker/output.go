@@ -23,13 +23,17 @@ func report(w io.Writer, format string, args ...any) error {
 	return err
 }
 
-func warnPublic(w io.Writer, project string) error {
+func warn(w io.Writer, format string, args ...any) error {
 	prefix := "[WARN] "
 	if cobrahelptree.IsAgentMode() {
 		prefix = "WARN: "
 	}
-	_, err := fmt.Fprintf(w, "%s%s is public: keep ticket text, attachments, numbers, and the tracker name out of its commits, PRs, and branch names\n", prefix, project)
+	_, err := fmt.Fprintf(w, prefix+format+"\n", args...)
 	return err
+}
+
+func warnPublic(w io.Writer, project string) error {
+	return warn(w, "%s is public: keep ticket text, attachments, numbers, and the tracker name out of its commits, PRs, and branch names", project)
 }
 
 func table(w io.Writer, header []string, rows [][]string) error {

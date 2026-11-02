@@ -95,6 +95,36 @@ func idsRoute() fakegithub.Route {
 	return fakegithub.Route{Match: "n1: issue(number: 1)", Body: `{"data":{"repository":{"isPrivate":true,"n1":{"id":"I1"},"n2":{"id":"I2"}}}}`}
 }
 
+func TestListReportsTruncation(t *testing.T) {
+	tests := []struct {
+		name    string
+		limit   string
+		rows    int
+		warning string
+	}{
+		{"more match", "2", 2, "WARN: showing the first 2 tickets, and more match: pass --limit 0 to list them all\n"},
+		{"exactly the limit", "3", 3, ""},
+		{"no limit", "0", 3, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AGENT", "1")
+			const updated = "2026-10-01T00:00:00Z"
+			tickets := []string{ticketJSON(1, "go-tui", "Todo", updated), ticketJSON(2, "go-tui", "Todo", updated), ticketJSON(3, "go-tui", "Todo", updated)}
+			stdout, stderr, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(tickets...))), "issue", "list", "--project", "go-tui", "--limit", tt.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rows := strings.Count(stdout, "\n"); rows != tt.rows {
+				t.Fatalf("rows = %d, stdout = %q", rows, stdout)
+			}
+			if stderr != tt.warning {
+				t.Fatalf("stderr = %q", stderr)
+			}
+		})
+	}
+}
+
 func TestWriteCommandsReportResults(t *testing.T) {
 	merged := fakegithub.Route{Match: "pullRequest(number: 88)", Body: `{"data":{"r0":{"pullRequest":{"merged":true,"url":"https://p/88"}}}}`}
 	claimRef := fakegithub.Route{Match: "POST api.github.com/repos/o/tracker/git/refs", Status: 201, Body: "{}"}
