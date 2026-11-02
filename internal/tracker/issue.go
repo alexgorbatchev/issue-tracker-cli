@@ -259,8 +259,11 @@ type pageReader func(context.Context, any) (ticketPage, error)
 // ListTickets returns matching tickets, oldest first, and how many tickets match
 // in all, which exceeds the tickets returned when Limit cuts the list. GitHub
 // counts what it filters on the first page. A client-side filter has no such
-// count, so a limit it fills still reads every remaining page.
+// count, so it reads every page whatever the limit.
 func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, int, error) {
+	if opts.Limit < 0 {
+		return nil, 0, fmt.Errorf("invalid limit %d: expected 0 or more", opts.Limit)
+	}
 	states, err := listStates(opts.State)
 	if err != nil {
 		return nil, 0, err

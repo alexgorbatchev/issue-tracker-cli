@@ -161,6 +161,13 @@ func TestListTicketsTakesTheSearchTotalFromTheFirstPage(t *testing.T) {
 	wantCount(t, gh, 1)
 }
 
+func TestListTicketsRejectsANegativeLimit(t *testing.T) {
+	c, gh := newClient(t)
+	_, _, err := c.ListTickets(ctx, ListOptions{Limit: -1})
+	wantError(t, err, "invalid limit -1: expected 0 or more")
+	wantCount(t, gh, 0)
+}
+
 func TestListTicketsSearchPages(t *testing.T) {
 	page := func(cursor string, next bool) string {
 		return fmt.Sprintf(`{"data":{"repository":{"isPrivate":true},"search":{"nodes":[%s}],"pageInfo":{"hasNextPage":%v,"endCursor":%q}}}}`,

@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-02 14:10
+  last_modified: 2026-11-02 14:50
   status: current
 ---
 
@@ -99,7 +99,7 @@ Prints one tab-separated line per ticket, oldest first: number, status, project,
 - `--ready` bool: only tickets that can be picked up now: open, without the `blocked` label, with no open blockers, no blocked parent or grandparent, and not in Doing or Done. A parent stays ready while its sub-issues are open. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers.
 - `--stale` bool: only Doing tickets with no ticket or board activity within the stale window.
 - `--stale-days` int: stale window in days, overriding the configured value.
-- `--limit` int: maximum tickets. 0 shows all. Default: 100. When more tickets match, stdout holds the first `<limit>` and stderr gets `WARN: showing the first <limit> of <total> tickets: pass --limit 0 to list them all`.
+- `--limit` int: maximum tickets. 0 shows all, and a negative value is an error. Default: 100. `--status`, `--label`, `--ready`, and `--stale` read every ticket whatever the limit, at one request per 100 tickets. When more tickets match, stdout holds the first `<limit>` and stderr gets `WARN: showing the first <limit> of <total> tickets: pass --limit 0 to list them all`.
 
 ### issue-tracker issue inspect <number>
 
