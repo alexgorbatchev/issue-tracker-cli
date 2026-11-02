@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-01 23:45
+  last_modified: 2026-11-02 12:45
   status: current
 ---
 
@@ -225,3 +225,4 @@ Prints help for a command. `--help`, `-h` bool prints help on any command, and `
 - `GitHub rate limit reached: retry after <time>`: wait until that time.
 - `grant board access with gh auth refresh -s project`: the token lacks the `project` scope.
 - `tracker <repo> is not private`: `require_private` is on and the tracker is not private.
+- `ticket #<number> was created but linking it failed: ticket is on the board, but its item cannot be read yet`: the ticket exists and has no status, and its `--blocked-by`, `--blocking`, `--label`, and `--attach` values were not applied. Keep that ticket instead of running `issue create` again. Wait a few seconds, run `issue status set <number> Todo`, then apply the rest with `issue blocker add`, `issue label add`, and `issue attachment add`.
