@@ -32,7 +32,7 @@ func (c *Client) ClaimTicket(ctx context.Context, number int) (Ticket, error) {
 // ClaimNext claims the oldest ready ticket, moving on when another agent wins a
 // candidate. It reports false when no ticket is ready. Project may be empty.
 func (c *Client) ClaimNext(ctx context.Context, project string) (Ticket, bool, error) {
-	candidates, err := c.ListTickets(ctx, ListOptions{Project: project, Ready: true})
+	candidates, _, err := c.ListTickets(ctx, ListOptions{Project: project, Ready: true})
 	if err != nil {
 		return Ticket{}, false, err
 	}

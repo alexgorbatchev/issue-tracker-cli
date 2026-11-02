@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -70,7 +72,7 @@ func outsideRepository(t *testing.T) {
 }
 
 func ticketJSON(number int, project, status, updated string) string {
-	blob := `{"id":"I1","number":1,"title":"Crash","state":"OPEN","url":"https://t/1","updatedAt":"UPDATED",` +
+	blob := `{"id":"I1","number":` + strconv.Itoa(number) + `,"title":"Crash","state":"OPEN","url":"https://t/1","updatedAt":"UPDATED",` +
 		`"labels":{"nodes":[{"name":"repo:PROJECT"}]},"blockedBy":{"nodes":[]},"parent":null,` +
 		`"projectItems":{"nodes":[{"id":"ITEM","updatedAt":"UPDATED","project":{"id":"B1"},"fieldValueByName":{"name":"STATUS"}}]}`
 	return strings.NewReplacer("UPDATED", updated, "PROJECT", project, "STATUS", status).Replace(blob)
@@ -95,31 +97,56 @@ func idsRoute() fakegithub.Route {
 	return fakegithub.Route{Match: "n1: issue(number: 1)", Body: `{"data":{"repository":{"isPrivate":true,"n1":{"id":"I1"},"n2":{"id":"I2"}}}}`}
 }
 
+func listPage(next bool, total int, nodes ...string) fakegithub.Route {
+	page := listRoute(nodes...)
+	page.Body = strings.Replace(page.Body, `"nodes":[`, fmt.Sprintf(`"totalCount":%d,"nodes":[`, total), 1)
+	page.Body = strings.Replace(page.Body, `"hasNextPage":false,"endCursor":""`, fmt.Sprintf(`"hasNextPage":%v,"endCursor":"c"`, next), 1)
+	page.Times = 1
+	return page
+}
+
 func TestListReportsTruncation(t *testing.T) {
+	ticket := func(number int, status string) string {
+		return ticketJSON(number, "go-tui", status, "2026-10-01T00:00:00Z")
+	}
+	fullPage := []string{}
+	for number := 1; number <= 100; number++ {
+		fullPage = append(fullPage, ticket(number, "Todo"))
+	}
 	tests := []struct {
-		name    string
-		limit   string
-		rows    int
-		warning string
+		name     string
+		args     []string
+		pages    []fakegithub.Route
+		rows     int
+		lastRow  string
+		requests int
+		warning  string
 	}{
-		{"more match", "2", 2, "WARN: showing the first 2 tickets, and more match: pass --limit 0 to list them all\n"},
-		{"exactly the limit", "3", 3, ""},
-		{"no limit", "0", 3, ""},
+		{"GitHub reports the total", []string{"--limit", "2"}, []fakegithub.Route{listPage(true, 500, ticket(1, "Todo"), ticket(2, "Todo"), ticket(3, "Todo"))}, 2, "2\t", 1, "WARN: showing the first 2 of 500 tickets: pass --limit 0 to list them all\n"},
+		{"default limit stays on one page", nil, []fakegithub.Route{listPage(true, 533, fullPage...)}, 100, "100\t", 1, "WARN: showing the first 100 of 533 tickets: pass --limit 0 to list them all\n"},
+		{"exactly the limit", []string{"--limit", "3"}, []fakegithub.Route{listPage(false, 3, ticket(1, "Todo"), ticket(2, "Todo"), ticket(3, "Todo"))}, 3, "3\t", 1, ""},
+		{"no limit reads every page", []string{"--limit", "0"}, []fakegithub.Route{listPage(true, 3, ticket(1, "Todo"), ticket(2, "Todo")), listPage(false, 3, ticket(3, "Todo"))}, 3, "3\t", 2, ""},
+		{"client filter counts the rest", []string{"--status", "Todo", "--limit", "1"}, []fakegithub.Route{listPage(true, 4, ticket(1, "Todo"), ticket(2, "Todo")), listPage(false, 4, ticket(3, "Todo"), ticket(4, "Doing"))}, 1, "1\t", 2, "WARN: showing the first 1 of 3 tickets: pass --limit 0 to list them all\n"},
+		{"client filter that fits reads on", []string{"--status", "Doing", "--limit", "1"}, []fakegithub.Route{listPage(true, 2, ticket(1, "Doing")), listPage(false, 2, ticket(2, "Todo"))}, 1, "1\t", 2, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("AGENT", "1")
-			const updated = "2026-10-01T00:00:00Z"
-			tickets := []string{ticketJSON(1, "go-tui", "Todo", updated), ticketJSON(2, "go-tui", "Todo", updated), ticketJSON(3, "go-tui", "Todo", updated)}
-			stdout, stderr, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(tickets...))), "issue", "list", "--project", "go-tui", "--limit", tt.limit)
+			outsideRepository(t)
+			gh := fakegithub.New(tt.pages...)
+			stdout, stderr, err := execute(t, fakeOpener(t, gh), append([]string{"issue", "list"}, tt.args...)...)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if rows := strings.Count(stdout, "\n"); rows != tt.rows {
-				t.Fatalf("rows = %d, stdout = %q", rows, stdout)
+			rows := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+			if len(rows) != tt.rows || !strings.HasPrefix(rows[len(rows)-1], tt.lastRow) {
+				t.Fatalf("stdout = %q", stdout)
 			}
 			if stderr != tt.warning {
 				t.Fatalf("stderr = %q", stderr)
+			}
+			if got := len(gh.Requests()); got != tt.requests {
+				t.Fatalf("requests = %d, want %d", got, tt.requests)
 			}
 		})
 	}

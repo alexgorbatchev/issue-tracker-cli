@@ -104,7 +104,7 @@ require_private = true
 | `--ready` | | `false` | Only tickets that can start now |
 | `--stale` | | `false` | Only Doing tickets with no recent activity |
 | `--stale-days <days>` | | Configured value | Stale window |
-| `--limit <count>` | | `100` | Maximum tickets; `0` shows all. A warning says when more tickets match |
+| `--limit <count>` | | `100` | Maximum tickets; `0` shows all. A warning gives the total when more tickets match |
 
 `issue-tracker issue create`
 

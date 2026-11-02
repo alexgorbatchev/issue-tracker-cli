@@ -110,7 +110,7 @@ func TestListTicketsFilters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, gh := newClient(t, listRoute(specs...))
-			tickets, err := c.ListTickets(ctx, tt.opts)
+			tickets, _, err := c.ListTickets(ctx, tt.opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +131,7 @@ func TestListTicketsScopesAndPages(t *testing.T) {
 	first.Body = strings.Replace(first.Body, `"hasNextPage":false,"endCursor":""`, `"hasNextPage":true,"endCursor":"c1"`, 1)
 	first.Times = 1
 	c, gh := newClient(t, first, listRoute(ticketSpec{number: 2, project: "go-tui"}))
-	tickets, err := c.ListTickets(ctx, ListOptions{Project: "go-tui", State: "all"})
+	tickets, _, err := c.ListTickets(ctx, ListOptions{Project: "go-tui", State: "all"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,13 +147,27 @@ func TestListTicketsScopesAndPages(t *testing.T) {
 	}
 }
 
+func TestListTicketsTakesTheSearchTotalFromTheFirstPage(t *testing.T) {
+	page := fmt.Sprintf(`{"data":{"repository":{"isPrivate":true},"search":{"issueCount":40,"nodes":[%s}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}`,
+		ticketSpec{number: 1, project: "go-tui", status: "Todo"}.json())
+	c, gh := newClient(t, fakegithub.Route{Match: "search(query: $search", Body: page})
+	tickets, total, err := c.ListTickets(ctx, ListOptions{Search: "crash", Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 1 || total != 40 {
+		t.Fatalf("tickets = %d, total = %d", len(tickets), total)
+	}
+	wantCount(t, gh, 1)
+}
+
 func TestListTicketsSearchPages(t *testing.T) {
 	page := func(cursor string, next bool) string {
 		return fmt.Sprintf(`{"data":{"repository":{"isPrivate":true},"search":{"nodes":[%s}],"pageInfo":{"hasNextPage":%v,"endCursor":%q}}}}`,
 			ticketSpec{number: 1, project: "go-tui", status: "Todo"}.json(), next, cursor)
 	}
 	c, gh := newClient(t, fakegithub.Route{Match: "search(query: $search", Body: page("c1", true), Times: 1}, fakegithub.Route{Match: "search(query: $search", Body: page("", false)})
-	tickets, err := c.ListTickets(ctx, ListOptions{Search: "crash", State: "all"})
+	tickets, _, err := c.ListTickets(ctx, ListOptions{Search: "crash", State: "all"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +180,7 @@ func TestListTicketsSearchPages(t *testing.T) {
 	}
 
 	failing, _ := newClient(t, fakegithub.Route{Match: "search(query", Status: 500, Body: "{}"})
-	_, err = failing.ListTickets(ctx, ListOptions{Search: "crash"})
+	_, _, err = failing.ListTickets(ctx, ListOptions{Search: "crash"})
 	wantError(t, err, "listing tickets")
 }
 
@@ -221,11 +235,11 @@ func TestTicketKeepsPlainLabels(t *testing.T) {
 
 func TestListTicketsErrors(t *testing.T) {
 	c, _ := newClient(t)
-	_, err := c.ListTickets(ctx, ListOptions{State: "paused"})
+	_, _, err := c.ListTickets(ctx, ListOptions{State: "paused"})
 	wantError(t, err, "invalid state")
 
 	closed, gh := newClient(t, listRoute())
-	if _, err := closed.ListTickets(ctx, ListOptions{State: "closed"}); err != nil {
+	if _, _, err := closed.ListTickets(ctx, ListOptions{State: "closed"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := gh.Requests()[0].Variables["states"].([]any)[0]; got != "CLOSED" {
@@ -237,11 +251,11 @@ func TestListTicketsErrors(t *testing.T) {
 	gh = fakegithub.New(public)
 	c = clientWith(t, gh, testMetadata())
 	c.requirePrivate = true
-	_, err = c.ListTickets(ctx, ListOptions{})
+	_, _, err = c.ListTickets(ctx, ListOptions{})
 	wantError(t, err, "not private")
 
 	failing, _ := newClient(t, fakegithub.Route{Match: "issues(first", Status: 500, Body: "{}"})
-	_, err = failing.ListTickets(ctx, ListOptions{})
+	_, _, err = failing.ListTickets(ctx, ListOptions{})
 	wantError(t, err, "listing tickets")
 }
 

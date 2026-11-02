@@ -214,6 +214,11 @@ type ListOptions struct {
 	Now       time.Time
 }
 
+// clientFiltered reports a filter GitHub does not apply, so its count excludes it.
+func (o ListOptions) clientFiltered() bool {
+	return o.Status != "" || o.Label != "" || o.Ready || o.Stale
+}
+
 func (o ListOptions) matches(t Ticket) bool {
 	switch {
 	case o.Status != "" && !strings.EqualFold(t.Status, o.Status):
@@ -245,22 +250,26 @@ type ticketPage struct {
 	IsPrivate bool
 	Nodes     []ticketNode
 	PageInfo  pageInfo
+	Total     int
 }
 
 // pageReader fetches the page after a cursor, with nil for the first page.
 type pageReader func(context.Context, any) (ticketPage, error)
 
-// ListTickets returns matching tickets, oldest first, in as few pages as Limit allows.
-func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, error) {
+// ListTickets returns matching tickets, oldest first, and how many tickets match
+// in all, which exceeds the tickets returned when Limit cuts the list. GitHub
+// counts what it filters on the first page. A client-side filter has no such
+// count, so a limit it fills still reads every remaining page.
+func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, int, error) {
 	states, err := listStates(opts.State)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	label := ""
 	if opts.Project != "" {
 		project, err := c.lookupProject(ctx, opts.Project)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		label = project.Label()
 	}
@@ -269,25 +278,31 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, e
 		read = c.searchPage(states, label, opts.Search)
 	}
 	tickets := []Ticket{}
+	matched := 0
 	var cursor any
 	for {
 		page, err := read(ctx, cursor)
 		if err != nil {
-			return nil, fmt.Errorf("listing tickets: %w", err)
+			return nil, 0, fmt.Errorf("listing tickets: %w", err)
 		}
 		if err := c.checkPrivate(page.IsPrivate); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		for _, node := range page.Nodes {
-			if ticket := node.ticket(); opts.matches(ticket) {
+			ticket := node.ticket()
+			if !opts.matches(ticket) {
+				continue
+			}
+			matched++
+			if opts.Limit == 0 || len(tickets) < opts.Limit {
 				tickets = append(tickets, ticket)
 			}
-			if opts.Limit > 0 && len(tickets) == opts.Limit {
-				return tickets, nil
-			}
+		}
+		if opts.Limit > 0 && len(tickets) == opts.Limit && !opts.clientFiltered() {
+			return tickets, page.Total, nil
 		}
 		if !page.PageInfo.HasNextPage {
-			return tickets, nil
+			return tickets, matched, nil
 		}
 		cursor = page.PageInfo.EndCursor
 	}
@@ -302,6 +317,7 @@ func (c *Client) issuesPage(states []string, label string) pageReader {
   repository(owner: $owner, name: $name) {
     isPrivate
     issues(first: ` + strconv.Itoa(listPageSize) + `, after: $after, states: $states, labels: $labels, orderBy: {field: CREATED_AT, direction: ASC}) {
+      totalCount
       nodes { ` + ticketFields + ` }
       pageInfo { hasNextPage endCursor }
     }
@@ -312,8 +328,9 @@ func (c *Client) issuesPage(states []string, label string) pageReader {
 			Repository struct {
 				IsPrivate bool
 				Issues    struct {
-					Nodes    []ticketNode
-					PageInfo pageInfo
+					TotalCount int
+					Nodes      []ticketNode
+					PageInfo   pageInfo
 				}
 			}
 		}
@@ -322,7 +339,7 @@ func (c *Client) issuesPage(states []string, label string) pageReader {
 			return ticketPage{}, err
 		}
 		issues := response.Repository.Issues
-		return ticketPage{IsPrivate: response.Repository.IsPrivate, Nodes: issues.Nodes, PageInfo: issues.PageInfo}, nil
+		return ticketPage{IsPrivate: response.Repository.IsPrivate, Nodes: issues.Nodes, PageInfo: issues.PageInfo, Total: issues.TotalCount}, nil
 	}
 }
 
@@ -339,6 +356,7 @@ func (c *Client) searchPage(states []string, label, text string) pageReader {
 	query := `query($owner: String!, $name: String!, $search: String!, $after: String) {
   repository(owner: $owner, name: $name) { isPrivate }
   search(query: $search, type: ISSUE, first: ` + strconv.Itoa(listPageSize) + `, after: $after) {
+    issueCount
     nodes { ... on Issue { ` + ticketFields + ` } }
     pageInfo { hasNextPage endCursor }
   }
@@ -347,15 +365,16 @@ func (c *Client) searchPage(states []string, label, text string) pageReader {
 		var response struct {
 			Repository struct{ IsPrivate bool }
 			Search     struct {
-				Nodes    []ticketNode
-				PageInfo pageInfo
+				IssueCount int
+				Nodes      []ticketNode
+				PageInfo   pageInfo
 			}
 		}
 		variables := c.variables(map[string]any{"search": search, "after": cursor})
 		if err := c.do(ctx, query, variables, &response); err != nil {
 			return ticketPage{}, err
 		}
-		return ticketPage{IsPrivate: response.Repository.IsPrivate, Nodes: response.Search.Nodes, PageInfo: response.Search.PageInfo}, nil
+		return ticketPage{IsPrivate: response.Repository.IsPrivate, Total: response.Search.IssueCount, Nodes: response.Search.Nodes, PageInfo: response.Search.PageInfo}, nil
 	}
 }
 
