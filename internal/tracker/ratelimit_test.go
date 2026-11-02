@@ -186,8 +186,8 @@ func TestDescribeError(t *testing.T) {
 func TestDescribeErrorReportsMissingScopeOnce(t *testing.T) {
 	item := api.GraphQLErrorItem{Type: graphQLScopesType, Message: "needs read:project"}
 	err := describeError(&api.GraphQLError{Errors: []api.GraphQLErrorItem{item, item, item}})
-	want := ErrNoBoardAccess.Error() + ": needs read:project"
-	if err.Error() != want || !errors.Is(err, ErrNoBoardAccess) {
-		t.Fatalf("error = %q, want %q", err, want)
+	var access *BoardAccessError
+	if !errors.As(err, &access) || access.Detail != "needs read:project" || strings.Contains(err.Error(), access.Detail) {
+		t.Fatalf("error = %#v", err)
 	}
 }

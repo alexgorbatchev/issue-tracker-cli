@@ -28,21 +28,22 @@ func run(ctx context.Context, cmd *cobra.Command) int {
 	}
 	if err != nil {
 		if cobrahelptree.IsAgentMode() {
-			fmt.Fprintf(cmd.ErrOrStderr(), "ERR: %v\n", err)
+			fmt.Fprintf(cmd.ErrOrStderr(), "ERR: %s\n", forAgents(err))
 		} else {
-			fmt.Fprintf(cmd.ErrOrStderr(), "[ERROR] %v\n", forPeople(err))
+			fmt.Fprintf(cmd.ErrOrStderr(), "[ERROR] %v\n", err)
 		}
 		return 1
 	}
 	return 0
 }
 
-// forPeople drops GitHub's scope list, which the fix does not need.
-func forPeople(err error) error {
-	if errors.Is(err, tracker.ErrNoBoardAccess) {
-		return tracker.ErrNoBoardAccess
+// forAgents adds GitHub's explanation of a missing scope, which people do not need.
+func forAgents(err error) string {
+	var access *tracker.BoardAccessError
+	if errors.As(err, &access) {
+		return err.Error() + " (" + access.Detail + ")"
 	}
-	return err
+	return err.Error()
 }
 
 // session is the configured client for one command.
