@@ -604,15 +604,14 @@ func (c *Client) CreateTicket(ctx context.Context, opts CreateOptions) (Ticket, 
 }
 
 type createdTicket struct {
-	ID, URL      string
-	Number       int
-	ProjectItems struct{ Nodes []struct{ ID string } }
+	ID, URL string
+	Number  int
 }
 
 func (c *Client) insertTicket(ctx context.Context, meta *metadata, project Project, opts CreateOptions, ids map[int]string) (createdTicket, error) {
 	input := map[string]any{
 		"repositoryId": meta.RepositoryID, "title": opts.Title, "body": createBody(opts),
-		"labelIds": []string{project.LabelID}, "projectV2Ids": []string{project.BoardID},
+		"labelIds": []string{project.LabelID},
 	}
 	if opts.Parent != 0 {
 		input["parentIssueId"] = ids[opts.Parent]
@@ -621,7 +620,7 @@ func (c *Client) insertTicket(ctx context.Context, meta *metadata, project Proje
 		CreateIssue struct{ Issue createdTicket }
 	}
 	mutation := `mutation($input: CreateIssueInput!) {
-  createIssue(input: $input) { issue { id number url projectItems(first: 1) { nodes { id } } } }
+  createIssue(input: $input) { issue { id number url } }
 }`
 	if err := c.do(ctx, mutation, map[string]any{"input": input}, &response); err != nil {
 		return createdTicket{}, fmt.Errorf("creating ticket: %w", err)
@@ -641,16 +640,11 @@ func createBody(opts CreateOptions) string {
 }
 
 func (c *Client) linkCreated(ctx context.Context, project Project, created createdTicket, opts CreateOptions, ids map[int]string) error {
-	// createIssue can return before GitHub has created the board item. Adding it
-	// again is safe and returns the same item.
-	var itemID string
-	if items := created.ProjectItems.Nodes; len(items) > 0 {
-		itemID = items[0].ID
-	} else {
-		var err error
-		if itemID, err = c.addToBoard(ctx, project, created.ID); err != nil {
-			return err
-		}
+	// createIssue is not given the board: it adds the item asynchronously, so a
+	// second add here would race it and fail with "Content already exists".
+	itemID, err := c.addToBoard(ctx, project, created.ID)
+	if err != nil {
+		return err
 	}
 	field, err := statusMutation("status", project, itemID, StatusTodo)
 	if err != nil {

@@ -67,7 +67,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | --- | --- | --- |
 | `issue list`, any filter, up to 100 tickets | 1 | One query, about 4 points with parent checks |
 | `issue inspect <number>` | 1 | One query, plus one per extra 100 comments |
-| `issue create` | 2 to 3 | Create with routing label and board, then set Todo. Add 1 when GitHub has not created the board item yet, which live runs always did, 1 when relating tickets, and 1 for `--label` |
+| `issue create` | 3 | Create with routing label, add to the board, set Todo. Passing the board to `createIssue` instead saves a request but adds the item asynchronously, so the next step races it |
 | `issue claim <number>` | 3 | Read the ticket, create the claim ref, set Doing |
 | `issue release <number>` | 3 | Read the ticket, delete the claim ref, set Todo |
 | `issue close <number> --pr <n>` | 3 | Read the ticket, read the PRs, then one write combining comment, close, and Done. Add 1 when a claim exists |

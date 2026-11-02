@@ -192,17 +192,17 @@ func TestLabels(t *testing.T) {
 }
 
 func TestCreateTicketLabels(t *testing.T) {
-	c, gh := newClient(t, createRoute(), okRoute("updateProjectV2ItemFieldValue"), fakegithub.Route{Match: "POST api.github.com/repos/o/tracker/issues/50/labels", Body: "[]"})
+	c, gh := newClient(t, createRoute(), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"), fakegithub.Route{Match: "POST api.github.com/repos/o/tracker/issues/50/labels", Body: "[]"})
 	if _, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t", Labels: []string{"bug", "needs info"}}); err != nil {
 		t.Fatal(err)
 	}
-	wantCount(t, gh, 3)
-	if body := gh.Requests()[2].Body; body != `{"labels":["bug","needs info"]}` {
+	wantCount(t, gh, 4)
+	if body := gh.Requests()[3].Body; body != `{"labels":["bug","needs info"]}` {
 		t.Fatalf("body = %s", body)
 	}
 	_, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t", Labels: []string{"repo:lib"}})
 	wantError(t, err, "use issue move")
-	wantCount(t, gh, 3)
+	wantCount(t, gh, 4)
 }
 
 func TestTicketKeepsPlainLabels(t *testing.T) {
@@ -309,24 +309,15 @@ func TestReadTicketErrors(t *testing.T) {
 }
 
 func createRoute() fakegithub.Route {
-	return fakegithub.Route{Match: "createIssue(input", Body: `{"data":{"createIssue":{"issue":{"id":"NEW","number":50,"url":"https://t/50","projectItems":{"nodes":[{"id":"ITEM50"}]}}}}}`}
+	return fakegithub.Route{Match: "createIssue(input", Body: `{"data":{"createIssue":{"issue":{"id":"NEW","number":50,"url":"https://t/50"}}}}`}
 }
 
-func TestCreateTicketWritesTodoWhenCreateReturnsNoBoardItem(t *testing.T) {
-	create := fakegithub.Route{Match: "createIssue(input", Body: `{"data":{"createIssue":{"issue":{"id":"NEW","number":50,"url":"https://t/50","projectItems":{"nodes":[]}}}}}`}
-	add := fakegithub.Route{Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"ITEM50"}}}}`}
-	c, gh := newClient(t, create, add, okRoute("updateProjectV2ItemFieldValue"))
-	if _, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "Crash"}); err != nil {
-		t.Fatal(err)
-	}
-	wantCount(t, gh, 3)
-	if last := lastDescription(gh); !strings.Contains(last, `itemId: "ITEM50"`) || !strings.Contains(last, `singleSelectOptionId: "opt-todo"`) {
-		t.Fatalf("status write = %s", last)
-	}
+func addToBoardRoute() fakegithub.Route {
+	return fakegithub.Route{Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"ITEM50"}}}}`}
 }
 
-func TestCreateTicketUsesTwoRequests(t *testing.T) {
-	c, gh := newClient(t, createRoute(), okRoute("updateProjectV2ItemFieldValue"))
+func TestCreateTicketAddsItToTheBoardItself(t *testing.T) {
+	c, gh := newClient(t, createRoute(), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))
 	ticket, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "Crash", Body: "Details", DiscoveredFrom: 12})
 	if err != nil {
 		t.Fatal(err)
@@ -334,26 +325,30 @@ func TestCreateTicketUsesTwoRequests(t *testing.T) {
 	if ticket.Number != 50 || ticket.Status != StatusTodo {
 		t.Fatalf("ticket = %+v", ticket)
 	}
-	wantCount(t, gh, 2)
+	wantCount(t, gh, 3)
 	input := gh.Requests()[0].Variables["input"].(map[string]any)
 	if input["body"] != "Details\n\nDiscovered while working on #12" {
 		t.Fatalf("body = %q", input["body"])
 	}
-	if fmt.Sprint(input["labelIds"]) != "[L1]" || fmt.Sprint(input["projectV2Ids"]) != "[B1]" {
+	if _, racesTheBoardAdd := input["projectV2Ids"]; fmt.Sprint(input["labelIds"]) != "[L1]" || racesTheBoardAdd {
 		t.Fatalf("input = %v", input)
 	}
-	if !strings.Contains(lastDescription(gh), `singleSelectOptionId: "opt-todo"`) {
-		t.Fatalf("status write = %s", lastDescription(gh))
+	add := gh.Requests()[1].Variables
+	if add["board"] != "B1" || add["content"] != "NEW" {
+		t.Fatalf("board add = %v", add)
+	}
+	if last := lastDescription(gh); !strings.Contains(last, `itemId: "ITEM50"`) || !strings.Contains(last, `singleSelectOptionId: "opt-todo"`) {
+		t.Fatalf("status write = %s", last)
 	}
 }
 
 func TestCreateTicketRelations(t *testing.T) {
 	ids := fakegithub.Route{Match: "n1: issue(number: 1)", Body: `{"data":{"repository":{"isPrivate":true,"n1":{"id":"I1"},"n2":{"id":"I2"},"n3":{"id":"I3"}}}}`}
-	c, gh := newClient(t, ids, createRoute(), okRoute("addBlockedBy"))
+	c, gh := newClient(t, ids, createRoute(), addToBoardRoute(), okRoute("addBlockedBy"))
 	if _, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t", DiscoveredFrom: 4, BlockedBy: []int{1}, Blocking: []int{2}, Parent: 3}); err != nil {
 		t.Fatal(err)
 	}
-	wantCount(t, gh, 3)
+	wantCount(t, gh, 4)
 	input := gh.Requests()[1].Variables["input"].(map[string]any)
 	if input["parentIssueId"] != "I3" || input["body"] != "Discovered while working on #4" {
 		t.Fatalf("input = %v", input)
@@ -361,6 +356,15 @@ func TestCreateTicketRelations(t *testing.T) {
 	links := lastDescription(gh)
 	if !strings.Contains(links, `issueId: "NEW", blockingIssueId: "I1"`) || !strings.Contains(links, `issueId: "I2", blockingIssueId: "NEW"`) {
 		t.Fatalf("links = %s", links)
+	}
+}
+
+func TestCreateTicketReportsAFailedBoardAdd(t *testing.T) {
+	c, _ := newClient(t, createRoute(), fakegithub.Route{Match: "addProjectV2ItemById", Status: 500, Body: "{}"})
+	ticket, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t"})
+	wantError(t, err, "ticket #50 was created but linking it failed: adding ticket to board")
+	if ticket.Number != 50 {
+		t.Fatalf("ticket = %+v", ticket)
 	}
 }
 
@@ -377,7 +381,7 @@ func TestCreateTicketFailures(t *testing.T) {
 	_, err = c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t"})
 	wantError(t, err, "creating ticket")
 
-	c, _ = newClient(t, createRoute(), fakegithub.Route{Match: "updateProjectV2ItemFieldValue", Status: 500, Body: "{}"})
+	c, _ = newClient(t, createRoute(), addToBoardRoute(), fakegithub.Route{Match: "updateProjectV2ItemFieldValue", Status: 500, Body: "{}"})
 	ticket, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t"})
 	wantError(t, err, "#50 was created")
 	if ticket.Number != 50 {
@@ -632,7 +636,7 @@ func TestAttachmentsOnCreate(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c, _ := newClient(t, createRoute(), okRoute("updateProjectV2ItemFieldValue"))
+	c, _ := newClient(t, createRoute(), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))
 	if _, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t", Attachments: []string{file}}); err != nil {
 		t.Fatal(err)
 	}

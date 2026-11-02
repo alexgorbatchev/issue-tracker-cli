@@ -100,7 +100,7 @@ func TestWriteCommandsReportResults(t *testing.T) {
 	claimRef := fakegithub.Route{Match: "POST api.github.com/repos/o/tracker/git/refs", Status: 201, Body: "{}"}
 	drop := fakegithub.Route{Match: "DELETE", Status: 204}
 	status := ok("updateProjectV2ItemFieldValue")
-	created := fakegithub.Route{Match: "createIssue(input", Body: `{"data":{"createIssue":{"issue":{"id":"N","number":50,"url":"https://t/50","projectItems":{"nodes":[{"id":"IT"}]}}}}}`}
+	created := fakegithub.Route{Match: "createIssue(input", Body: `{"data":{"createIssue":{"issue":{"id":"N","number":50,"url":"https://t/50"}}}}`}
 	tests := []struct {
 		name   string
 		routes []fakegithub.Route
@@ -115,7 +115,7 @@ func TestWriteCommandsReportResults(t *testing.T) {
 		{"close", []fakegithub.Route{ticketRoute("go-tui", "Todo"), merged, ok("closeIssue")}, []string{"issue", "close", "1", "--pr", "88"}, "OK: closed #1"},
 		{"close reason", []fakegithub.Route{ticketRoute("go-tui", "Todo"), ok("closeIssue")}, []string{"issue", "close", "1", "--reason", "not-planned"}, "OK: closed #1"},
 		{"reopen", []fakegithub.Route{ticketRoute("go-tui", "Done"), ok("reopenIssue"), status}, []string{"issue", "reopen", "1"}, "OK: reopened #1"},
-		{"create", []fakegithub.Route{created, status}, []string{"issue", "create", "--project", "go-tui", "--title", "T", "--body", "B"}, "OK: created #50 in go-tui"},
+		{"create", []fakegithub.Route{created, {Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"IT"}}}}`}, status}, []string{"issue", "create", "--project", "go-tui", "--title", "T", "--body", "B"}, "OK: created #50 in go-tui"},
 		{"edit title", []fakegithub.Route{idsRoute(), ok("updateIssue")}, []string{"issue", "edit", "1", "--title", "New"}, "OK: edited #1"},
 		{"edit body", []fakegithub.Route{idsRoute(), ok("updateIssue")}, []string{"issue", "edit", "1", "--body", "New"}, "OK: edited #1"},
 		{"comment", []fakegithub.Route{idsRoute(), ok("addComment")}, []string{"issue", "comment", "add", "1", "--body", "Hi"}, "OK: commented on #1"},
