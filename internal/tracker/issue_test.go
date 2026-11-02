@@ -746,6 +746,18 @@ func TestCloseReasonCompletedClosesAsCompleted(t *testing.T) {
 	wantError(t, err, "expected completed, not-planned, or duplicate")
 }
 
+func TestMoveSetsTheStatusOfAnItemAlreadyOnTheBoard(t *testing.T) {
+	body := strings.Replace(ticketRoute(ticketSpec{number: 12, project: "go-tui", status: StatusTodo}).Body, `"fieldValueByName":{"name":"Todo"}`, `"fieldValueByName":null`, 1)
+	route := fakegithub.Route{Match: ticketRoute(ticketSpec{}).Match, Body: body}
+	c, gh := newClient(t, route, okRoute("updateProjectV2ItemFieldValue"))
+	if err := c.MoveTicket(ctx, 12, "go-tui"); err != nil {
+		t.Fatal(err)
+	}
+	if last := lastDescription(gh); !strings.Contains(last, `singleSelectOptionId: "opt-todo"`) || countRequests(gh, "addProjectV2ItemById") != 0 {
+		t.Fatalf("last write = %s", last)
+	}
+}
+
 func TestMoveFinishesAnImportThatLostItsStatus(t *testing.T) {
 	route := ticketRoute(ticketSpec{number: 12, project: "go-tui"})
 	add := fakegithub.Route{Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"ITEM"}}}}`}

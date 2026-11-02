@@ -376,10 +376,15 @@ func (c *Client) fileTicket(ctx context.Context, project Project, contentID stri
   item: addProjectV2ItemById(input: {projectId: $board, contentId: $content}) { item { id } }
 }`
 	variables := map[string]any{"content": contentID, "label": project.LabelID, "board": project.BoardID}
-	if err := c.do(ctx, mutation, variables, &response); err != nil {
+	err := c.do(ctx, mutation, variables, &response)
+	itemID := response.Item.Item.ID
+	if isOnBoard(err) {
+		itemID, err = c.readBoardItem(ctx, project, contentID)
+	}
+	if err != nil {
 		return err
 	}
-	field, err := statusMutation("status", project, response.Item.Item.ID, StatusTodo)
+	field, err := statusMutation("status", project, itemID, StatusTodo)
 	if err != nil {
 		return err
 	}

@@ -848,10 +848,11 @@ func (c *Client) addToBoard(ctx context.Context, project Project, contentID stri
 
 // isOnBoard reports an add that lost to GitHub adding the same item, as its
 // built-in sub-issue workflow does for a new ticket whose parent is on the board.
+// Any other error in the same response is a real failure.
 func isOnBoard(err error) bool {
 	var gqlErr *api.GraphQLError
-	return errors.As(err, &gqlErr) && slices.ContainsFunc(gqlErr.Errors, func(item api.GraphQLErrorItem) bool {
-		return strings.Contains(item.Message, boardItemTaken)
+	return errors.As(err, &gqlErr) && len(gqlErr.Errors) > 0 && !slices.ContainsFunc(gqlErr.Errors, func(item api.GraphQLErrorItem) bool {
+		return !strings.Contains(item.Message, boardItemTaken)
 	})
 }
 

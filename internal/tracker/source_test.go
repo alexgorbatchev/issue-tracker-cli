@@ -441,6 +441,31 @@ func TestImportNamesTheTicketWhenSetupFails(t *testing.T) {
 	}
 }
 
+func TestImportReadsTheItemWhenTheBoardAddCollides(t *testing.T) {
+	source := sourceRoute(true, sourceSpec{number: 1, author: "o"})
+	collision := fakegithub.Route{Match: "item: addProjectV2ItemById", Body: `{"errors":[{"message":"` + boardItemTaken + `"}]}`}
+	item := fakegithub.Route{Match: "projectItems(first: 100)", Body: `{"data":{"node":{"projectItems":{"nodes":[{"id":"existing-item","project":{"id":"B1"}}]}}}}`}
+	c, gh, _ := importClient(t, append([]fakegithub.Route{collision, item}, importRoutes(source, 71)...)...)
+	result, err := c.ImportIssues(ctx, ImportOptions{Repo: Repo{"o", "go-tui"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := lastDescription(gh); result.Moved != 1 || !strings.Contains(last, "existing-item") {
+		t.Fatalf("result = %+v, last write = %s", result, last)
+	}
+}
+
+func TestImportFailsWhenACollisionComesWithAnotherError(t *testing.T) {
+	source := sourceRoute(true, sourceSpec{number: 1, author: "o"})
+	both := fakegithub.Route{Match: "item: addProjectV2ItemById", Body: `{"errors":[{"message":"label rejected"},{"message":"` + boardItemTaken + `"}]}`}
+	c, gh, _ := importClient(t, append([]fakegithub.Route{both}, importRoutes(source, 71)...)...)
+	_, err := c.ImportIssues(ctx, ImportOptions{Repo: Repo{"o", "go-tui"}})
+	wantError(t, err, "finish it with issue move")
+	if reads := countRequests(gh, "projectItems(first: 100)"); reads != 0 {
+		t.Fatalf("item reads = %d, want 0", reads)
+	}
+}
+
 func TestImportStops(t *testing.T) {
 	source := sourceRoute(true, sourceSpec{number: 1, author: "o"}, sourceSpec{number: 2, author: "o"})
 	boom := errors.New("boom")
