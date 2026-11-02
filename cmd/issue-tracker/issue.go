@@ -173,7 +173,7 @@ func newIssueCloseCommand(open opener) *cobra.Command {
 		}),
 	}
 	cmd.Flags().StringArrayVar(&opts.PRs, "pr", nil, "Merged pull request as a number or project#number; repeatable")
-	cmd.Flags().StringVar(&opts.Reason, "reason", "", "Close without a pull request: not-planned or duplicate")
+	cmd.Flags().StringVar(&opts.Reason, "reason", "", "Close without a pull request: completed, not-planned, or duplicate")
 	cmd.MarkFlagsOneRequired("pr", "reason")
 	cmd.MarkFlagsMutuallyExclusive("pr", "reason")
 	return cmd

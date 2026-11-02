@@ -119,7 +119,7 @@ func (c *Client) AddProject(ctx context.Context, repo Repo) (Project, error) {
 		return Project{}, err
 	}
 	project, _ = meta.project(repo.Name)
-	project.LabelID, project.Name = labelID, repo.Name
+	project.LabelID, project.Name, project.Repo = labelID, repo.Name, repo.String()
 	project.attach(item)
 	return project, nil
 }

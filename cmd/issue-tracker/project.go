@@ -9,7 +9,7 @@ import (
 
 func newProjectCommand(open opener) *cobra.Command {
 	cmd := &cobra.Command{Use: "project", Short: "Manage the repositories registered with the tracker"}
-	cmd.AddCommand(newProjectAddCommand(open), newProjectInspectCommand(open), newProjectListCommand(open), newProjectRmCommand(open))
+	cmd.AddCommand(newProjectAddCommand(open), newProjectInspectCommand(open), newProjectListCommand(open), newProjectRmCommand(open), newProjectScanCommand(open), newProjectImportCommand(open))
 	return cmd
 }
 
@@ -114,6 +114,61 @@ func newProjectRmCommand(open opener) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&confirmed, "yes", false, "Confirm deleting the project's board")
+	return cmd
+}
+
+func newProjectScanCommand(open opener) *cobra.Command {
+	var authors []string
+	cmd := &cobra.Command{
+		Use:   "scan",
+		Short: "Count open issues across your repositories by who wrote them",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := open()
+			if err != nil {
+				return err
+			}
+			scans, err := s.client.ScanRepos(cmd.Context(), authors)
+			if err != nil {
+				return err
+			}
+			return printScans(cmd.OutOrStdout(), scans)
+		},
+	}
+	cmd.Flags().StringArrayVar(&authors, "author", nil, "Also trust text from this login. Repeatable")
+	return cmd
+}
+
+func newProjectImportCommand(open opener) *cobra.Command {
+	opts := tracker.ImportOptions{}
+	cmd := &cobra.Command{
+		Use:   "import <owner/repo>",
+		Short: "Move a repository's open issues into the tracker",
+		Long:  "Moves every open issue of a private repository, and each issue of a public repository written entirely by trusted authors. A public issue cannot be moved back.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, err := tracker.ParseRepo(args[0])
+			if err != nil {
+				return err
+			}
+			s, err := open()
+			if err != nil {
+				return err
+			}
+			opts.Repo = repo
+			opts.OnMove = func(source, ticket int) error {
+				return report(cmd.OutOrStdout(), "moved %s#%d to #%d", repo, source, ticket)
+			}
+			result, err := s.client.ImportIssues(cmd.Context(), opts)
+			if err != nil {
+				return err
+			}
+			return report(cmd.OutOrStdout(), "%s: moved %d, %d left to move, skipped %d with text from other people", repo, result.Moved, result.Remaining, result.Skipped)
+		},
+	}
+	cmd.Flags().StringArrayVar(&opts.Authors, "author", nil, "Also trust text from this login. Repeatable")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Report what would move without changing anything")
+	cmd.Flags().IntVar(&opts.Limit, "limit", 0, "Maximum issues to move in this run. 0 moves all")
 	return cmd
 }
 

@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-01 12:10
+  last_modified: 2026-11-01 23:45
   status: current
 ---
 
@@ -68,6 +68,24 @@ Unregisters a project with no open tickets. Deletes its board and keeps the labe
 
 - `--yes` bool: confirm deleting the board. Required.
 
+### issue-tracker project scan
+
+Prints one tab-separated line for each of the tracker owner's unarchived, non-fork repositories with open issues: repository, visibility, open, can move, from others. Reads logins and counts only, never issue text, and leaves out the tracker repository.
+
+- `--author` stringArray: also trust text from this login. Repeatable. The tracker's owner is always trusted.
+
+An issue can move when its repository is private, or when the issue and all its comments come from trusted authors. A deleted author, or more than 100 comments, counts as text from other people.
+
+### issue-tracker project import <owner/repo>
+
+Moves a repository's open issues into the tracker, oldest first, registering the project when needed. Prints `moved owner/repo#<source> to #<ticket>` for each issue, then a summary with the counts moved, left to move, and skipped. Issues from other people stay where they are. Writes one issue every 8 seconds, so a large repository takes a while. Rerunning continues with what is left. Fails when the tracker is not private, or when the repository is the tracker.
+
+GitHub redirects a moved issue's old URL to the private tracker, and a public issue cannot be moved back.
+
+- `--author` stringArray: also trust text from this login. Repeatable. The tracker's owner is always trusted.
+- `--dry-run` bool: report the counts without changing anything.
+- `--limit` int: maximum issues to move in this run. 0 moves all. Default: 0.
+
 ### issue-tracker issue list
 
 Prints one tab-separated line per ticket, oldest first: number, status, project, comma-separated labels, title. A stale ticket's status is followed by ` (stale)`.
@@ -124,7 +142,7 @@ Gives up a claim and returns the ticket to Todo.
 Closes a ticket, sets it to Done, and removes its claim. Pass `--pr` or `--reason`.
 
 - `--pr` stringArray: merged pull request. Repeatable. A bare number belongs to the ticket's project; `project#number` names another registered project. The command refuses to close when any pull request is unmerged. Links to the pull requests are added to the ticket.
-- `--reason` string: close without a pull request: `not-planned` or `duplicate`.
+- `--reason` string: close without a pull request: `completed`, `not-planned`, or `duplicate`.
 
 ### issue-tracker issue reopen <number>
 

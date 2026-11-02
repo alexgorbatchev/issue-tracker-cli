@@ -133,7 +133,7 @@ require_private = true
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--pr <ref>` | | | Merged pull request as `88` or `project#88`; repeatable |
-| `--reason <reason>` | | | Close without a pull request: `not-planned` or `duplicate` |
+| `--reason <reason>` | | | Close without a pull request: `completed`, `not-planned`, or `duplicate` |
 
 `issue-tracker issue attachment pull`
 
@@ -146,6 +146,20 @@ require_private = true
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--yes` | | `false` | Confirm deleting the project's board |
+
+`issue-tracker project scan`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--author <login>` | | | Also trust text from this login. Repeatable |
+
+`issue-tracker project import <owner/repo>`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--author <login>` | | | Also trust text from this login. Repeatable |
+| `--dry-run` | | `false` | Report what would move without changing anything |
+| `--limit <n>` | | `0` | Maximum issues to move in this run. `0` moves all |
 
 Run `issue-tracker --help` for every command.
 

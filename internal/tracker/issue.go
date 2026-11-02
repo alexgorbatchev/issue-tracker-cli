@@ -641,14 +641,22 @@ func createBody(opts CreateOptions) string {
 }
 
 func (c *Client) linkCreated(ctx context.Context, project Project, created createdTicket, opts CreateOptions, ids map[int]string) error {
-	var fields []string
+	// createIssue can return before GitHub has created the board item. Adding it
+	// again is safe and returns the same item.
+	var itemID string
 	if items := created.ProjectItems.Nodes; len(items) > 0 {
-		field, err := statusMutation("status", project, items[0].ID, StatusTodo)
-		if err != nil {
+		itemID = items[0].ID
+	} else {
+		var err error
+		if itemID, err = c.addToBoard(ctx, project, created.ID); err != nil {
 			return err
 		}
-		fields = append(fields, field)
 	}
+	field, err := statusMutation("status", project, itemID, StatusTodo)
+	if err != nil {
+		return err
+	}
+	fields := []string{field}
 	for i, number := range opts.BlockedBy {
 		fields = append(fields, blockMutation("blockedBy"+strconv.Itoa(i), created.ID, ids[number]))
 	}
@@ -895,6 +903,7 @@ func (c *Client) ReopenTicket(ctx context.Context, number int) error {
 
 // CloseReason values for closing a ticket without a pull request.
 const (
+	ReasonCompleted  = "completed"
 	ReasonNotPlanned = "not-planned"
 	ReasonDuplicate  = "duplicate"
 )
@@ -945,14 +954,14 @@ func (c *Client) CloseTicket(ctx context.Context, number int, opts CloseOptions)
 
 func stateReason(reason string) (string, error) {
 	switch reason {
-	case "":
+	case "", ReasonCompleted:
 		return "COMPLETED", nil
 	case ReasonNotPlanned:
 		return "NOT_PLANNED", nil
 	case ReasonDuplicate:
 		return "DUPLICATE", nil
 	}
-	return "", fmt.Errorf("invalid reason %q: expected %s or %s", reason, ReasonNotPlanned, ReasonDuplicate)
+	return "", fmt.Errorf("invalid reason %q: expected %s, %s, or %s", reason, ReasonCompleted, ReasonNotPlanned, ReasonDuplicate)
 }
 
 type pullRef struct {

@@ -312,6 +312,19 @@ func createRoute() fakegithub.Route {
 	return fakegithub.Route{Match: "createIssue(input", Body: `{"data":{"createIssue":{"issue":{"id":"NEW","number":50,"url":"https://t/50","projectItems":{"nodes":[{"id":"ITEM50"}]}}}}}`}
 }
 
+func TestCreateTicketWritesTodoWhenCreateReturnsNoBoardItem(t *testing.T) {
+	create := fakegithub.Route{Match: "createIssue(input", Body: `{"data":{"createIssue":{"issue":{"id":"NEW","number":50,"url":"https://t/50","projectItems":{"nodes":[]}}}}}`}
+	add := fakegithub.Route{Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"ITEM50"}}}}`}
+	c, gh := newClient(t, create, add, okRoute("updateProjectV2ItemFieldValue"))
+	if _, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "Crash"}); err != nil {
+		t.Fatal(err)
+	}
+	wantCount(t, gh, 3)
+	if last := lastDescription(gh); !strings.Contains(last, `itemId: "ITEM50"`) || !strings.Contains(last, `singleSelectOptionId: "opt-todo"`) {
+		t.Fatalf("status write = %s", last)
+	}
+}
+
 func TestCreateTicketUsesTwoRequests(t *testing.T) {
 	c, gh := newClient(t, createRoute(), okRoute("updateProjectV2ItemFieldValue"))
 	ticket, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "Crash", Body: "Details", DiscoveredFrom: 12})

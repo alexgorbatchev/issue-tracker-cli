@@ -153,3 +153,22 @@ func printPaths(w io.Writer, paths []string) error {
 	}
 	return nil
 }
+
+func printScans(w io.Writer, scans []tracker.RepoScan) error {
+	rows := make([][]string, 0, len(scans))
+	for _, scan := range scans {
+		visibility := "public"
+		if scan.Private {
+			visibility = "private"
+		}
+		rows = append(rows, []string{scan.Repo, visibility, strconv.Itoa(scan.Open), strconv.Itoa(scan.Movable), strconv.Itoa(scan.Others)})
+	}
+	if cobrahelptree.IsAgentMode() {
+		return tsv(w, rows)
+	}
+	if len(rows) == 0 {
+		_, err := fmt.Fprintln(w, "No open issues found.")
+		return err
+	}
+	return table(w, []string{"Repository", "Visibility", "Open", "Can move", "From others"}, rows)
+}

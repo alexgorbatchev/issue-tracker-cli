@@ -54,6 +54,7 @@ type Client struct {
 	cacheDir       string
 	requirePrivate bool
 	meta           *metadata
+	pause          func(context.Context, time.Duration) error
 }
 
 // New builds a Client. It leaves go-gh's response cache disabled because that
@@ -88,6 +89,7 @@ func New(opts Options) (*Client, error) {
 		token:          token,
 		cacheDir:       opts.CacheDir,
 		requirePrivate: opts.RequirePrivate,
+		pause:          sleepContext,
 	}, nil
 }
 
