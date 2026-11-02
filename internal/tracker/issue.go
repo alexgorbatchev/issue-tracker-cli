@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cli/go-gh/v2/pkg/api"
 )
 
 const (
@@ -22,6 +24,10 @@ const (
 	stateClosed   = "CLOSED"
 	nestedLimit   = 20
 	commentsLimit = 100
+
+	boardItemTaken = "Content already exists in this project"
+	boardItemReads = 3
+	boardItemWait  = 2 * time.Second
 )
 
 // ticketFields is the shared selection for one ticket. Reading blockers, parents,
@@ -640,8 +646,8 @@ func createBody(opts CreateOptions) string {
 }
 
 func (c *Client) linkCreated(ctx context.Context, project Project, created createdTicket, opts CreateOptions, ids map[int]string) error {
-	// createIssue is not given the board: it adds the item asynchronously, so a
-	// second add here would race it and fail with "Content already exists".
+	// createIssue is not given the board because it adds the item asynchronously,
+	// which would race this add on every ticket.
 	itemID, err := c.addToBoard(ctx, project, created.ID)
 	if err != nil {
 		return err
@@ -798,10 +804,57 @@ func (c *Client) addToBoard(ctx context.Context, project Project, contentID stri
 	mutation := `mutation($board: ID!, $content: ID!) {
   addProjectV2ItemById(input: {projectId: $board, contentId: $content}) { item { id } }
 }`
-	if err := c.do(ctx, mutation, map[string]any{"board": project.BoardID, "content": contentID}, &response); err != nil {
+	err := c.do(ctx, mutation, map[string]any{"board": project.BoardID, "content": contentID}, &response)
+	if isOnBoard(err) {
+		return c.readBoardItem(ctx, project, contentID)
+	}
+	if err != nil {
 		return "", fmt.Errorf("adding ticket to board: %w", err)
 	}
 	return response.AddProjectV2ItemById.Item.ID, nil
+}
+
+// isOnBoard reports an add that lost to GitHub adding the same item, as its
+// built-in sub-issue workflow does for a new ticket whose parent is on the board.
+func isOnBoard(err error) bool {
+	var gqlErr *api.GraphQLError
+	return errors.As(err, &gqlErr) && slices.ContainsFunc(gqlErr.Errors, func(item api.GraphQLErrorItem) bool {
+		return strings.Contains(item.Message, boardItemTaken)
+	})
+}
+
+// readBoardItem finds an item GitHub reports as added. The read can briefly lag
+// behind that report, so it retries before giving up.
+func (c *Client) readBoardItem(ctx context.Context, project Project, contentID string) (string, error) {
+	query := `query($content: ID!) {
+  node(id: $content) { ... on Issue { projectItems(first: 100) { nodes { id project { id } } } } }
+}`
+	for attempt := range boardItemReads {
+		if attempt > 0 {
+			if err := c.pause(ctx, boardItemWait); err != nil {
+				return "", err
+			}
+		}
+		var response struct {
+			Node struct {
+				ProjectItems struct {
+					Nodes []struct {
+						ID      string
+						Project struct{ ID string }
+					}
+				}
+			}
+		}
+		if err := c.do(ctx, query, map[string]any{"content": contentID}, &response); err != nil {
+			return "", fmt.Errorf("reading board item: %w", err)
+		}
+		for _, item := range response.Node.ProjectItems.Nodes {
+			if item.Project.ID == project.BoardID {
+				return item.ID, nil
+			}
+		}
+	}
+	return "", errors.New("ticket is on the board, but its item cannot be read yet")
 }
 
 // AddLabels adds labels to a ticket. GitHub creates a name it does not know yet.

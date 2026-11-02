@@ -312,6 +312,10 @@ func createRoute() fakegithub.Route {
 	return fakegithub.Route{Match: "createIssue(input", Body: `{"data":{"createIssue":{"issue":{"id":"NEW","number":50,"url":"https://t/50"}}}}`}
 }
 
+func boardCollisionRoute() fakegithub.Route {
+	return fakegithub.Route{Match: "addProjectV2ItemById", Body: `{"errors":[{"message":"Content already exists in this project."}]}`}
+}
+
 func addToBoardRoute() fakegithub.Route {
 	return fakegithub.Route{Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"ITEM50"}}}}`}
 }
@@ -365,6 +369,67 @@ func TestCreateTicketReportsAFailedBoardAdd(t *testing.T) {
 	wantError(t, err, "ticket #50 was created but linking it failed: adding ticket to board")
 	if ticket.Number != 50 {
 		t.Fatalf("ticket = %+v", ticket)
+	}
+}
+
+func TestCreateTicketContinuesWhenTheBoardAlreadyHasIt(t *testing.T) {
+	const onBoard = `{"data":{"node":{"projectItems":{"nodes":[{"id":"OTHER","project":{"id":"B9"}},{"id":"ITEM50","project":{"id":"B1"}}]}}}}`
+	const notYet = `{"data":{"node":{"projectItems":{"nodes":[{"id":"OTHER","project":{"id":"B9"}}]}}}}`
+	tests := []struct {
+		name  string
+		reads []string
+		want  int
+	}{
+		{"item readable at once", []string{onBoard}, 4},
+		{"item readable after a delay", []string{notYet, onBoard}, 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			routes := []fakegithub.Route{createRoute(), boardCollisionRoute()}
+			for _, body := range tt.reads {
+				routes = append(routes, fakegithub.Route{Match: "projectItems(first: 100)", Body: body, Times: 1})
+			}
+			c, gh := newClient(t, append(routes, okRoute("updateProjectV2ItemFieldValue"))...)
+			var waits int
+			c.pause = func(context.Context, time.Duration) error {
+				waits++
+				return nil
+			}
+			if _, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t"}); err != nil {
+				t.Fatal(err)
+			}
+			wantCount(t, gh, tt.want)
+			if waits != len(tt.reads)-1 {
+				t.Fatalf("waits = %d", waits)
+			}
+			if last := lastDescription(gh); !strings.Contains(last, `itemId: "ITEM50"`) {
+				t.Fatalf("status write = %s", last)
+			}
+		})
+	}
+}
+
+func TestCreateTicketGivesUpOnAnUnreadableBoardItem(t *testing.T) {
+	missing := fakegithub.Route{Match: "projectItems(first: 100)", Body: `{"data":{"node":{"projectItems":{"nodes":[]}}}}`}
+	c, gh := newClient(t, createRoute(), boardCollisionRoute(), missing)
+	c.pause = func(context.Context, time.Duration) error { return nil }
+	ticket, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t"})
+	wantError(t, err, "ticket #50 was created but linking it failed")
+	wantError(t, err, "cannot be read yet")
+	wantCount(t, gh, 2+boardItemReads)
+	if ticket.Number != 50 {
+		t.Fatalf("ticket = %+v", ticket)
+	}
+}
+
+func TestSetStatusContinuesWhenTheBoardAlreadyHasIt(t *testing.T) {
+	read := fakegithub.Route{Match: "projectItems(first: 100)", Body: `{"data":{"node":{"projectItems":{"nodes":[{"id":"ITEM7","project":{"id":"B1"}}]}}}}`}
+	c, gh := newClient(t, boardCollisionRoute(), read, okRoute("updateProjectV2ItemFieldValue"))
+	if err := c.writeStatus(ctx, Ticket{ID: "T7", Number: 7, Project: "go-tui"}, StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	if last := lastDescription(gh); !strings.Contains(last, `itemId: "ITEM7"`) {
+		t.Fatalf("status write = %s", last)
 	}
 }
 

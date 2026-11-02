@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:46
-last_modified: 2026-11-01 23:45
+last_modified: 2026-11-02 12:30
 status: current
 ---
 
@@ -67,7 +67,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | --- | --- | --- |
 | `issue list`, any filter, up to 100 tickets | 1 | One query, about 4 points with parent checks |
 | `issue inspect <number>` | 1 | One query, plus one per extra 100 comments |
-| `issue create` | 3 | Create with routing label, add to the board, set Todo. Passing the board to `createIssue` instead saves a request but adds the item asynchronously, so the next step races it |
+| `issue create` | 3 | Create with routing label, add to the board, set Todo. Add 1 when relating tickets, 1 for `--label`, and 1 when GitHub has already added the item, which its sub-issue workflow can do. Passing the board to `createIssue` would save a request but makes that collision routine |
 | `issue claim <number>` | 3 | Read the ticket, create the claim ref, set Doing |
 | `issue release <number>` | 3 | Read the ticket, delete the claim ref, set Todo |
 | `issue close <number> --pr <n>` | 3 | Read the ticket, read the PRs, then one write combining comment, close, and Done. Add 1 when a claim exists |
