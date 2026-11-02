@@ -25,6 +25,9 @@ const (
 	graphQLScopesType   = "INSUFFICIENT_SCOPES"
 )
 
+// ErrNoBoardAccess reports a GitHub login without the project scope.
+var ErrNoBoardAccess = errors.New("your GitHub login has no access to project boards: run issue-tracker auth refresh")
+
 // ErrRateLimited reports that GitHub refused a request because of a rate limit.
 var ErrRateLimited = errors.New("GitHub rate limit reached")
 
@@ -130,7 +133,8 @@ func sleepContext(ctx context.Context, wait time.Duration) error {
 	}
 }
 
-// describeError turns rate-limit failures into ErrRateLimited with a reset time.
+// describeError turns rate-limit failures into ErrRateLimited with a reset time,
+// and missing scopes into ErrNoBoardAccess.
 func describeError(err error) error {
 	var httpErr *api.HTTPError
 	if errors.As(err, &httpErr) && isLimitStatus(httpErr) {
@@ -145,7 +149,7 @@ func describeError(err error) error {
 	}
 	if item, ok := findGraphQLError(err, graphQLScopesType); ok {
 		// GitHub repeats a scope failure for every field in the query.
-		return fmt.Errorf("%s; grant board access with gh auth refresh -s project", item.Message)
+		return fmt.Errorf("%w: %s", ErrNoBoardAccess, item.Message)
 	}
 	return err
 }

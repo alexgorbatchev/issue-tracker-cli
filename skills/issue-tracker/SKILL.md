@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-02 14:14
+  last_modified: 2026-11-02 14:19
   status: current
 ---
 
@@ -42,13 +42,17 @@ require_private = false
 | `ISSUE_TRACKER_STALE_DAYS` | `stale_days` | Days without activity before a Doing ticket is stale. Default 3. |
 | `ISSUE_TRACKER_REQUIRE_PRIVATE` | `require_private` | When true, commands that read the tracker fail if it is not private. Default false. |
 
-Authentication reuses the GitHub CLI login. Boards need the `project` scope: `gh auth refresh -s project`. Project IDs are cached in `$XDG_CACHE_HOME/issue-tracker/` (default `~/.cache/issue-tracker/`). Ticket data is always read live.
+Authentication reuses the GitHub CLI login. Boards need the `project` scope: `issue-tracker auth refresh` grants it. Project IDs are cached in `$XDG_CACHE_HOME/issue-tracker/` (default `~/.cache/issue-tracker/`). Ticket data is always read live.
 
 ## Project resolution
 
 Inside a registered repository, the current repository's git remote selects the project, so `--project` is optional. An explicit `--project` always wins. Outside a registered repository, `issue list` covers all projects, and `issue create` and `project inspect` need an explicit project.
 
 ## Commands
+
+### issue-tracker auth refresh
+
+Runs `gh auth refresh --hostname github.com --scopes project` to add the `project` scope to the GitHub CLI login. It keeps the login's other scopes, and shows a one-time code to approve in a browser. Requires a terminal: it refuses in agent mode and when stdin is not a terminal, without starting `gh`. Prints `project board access granted` on success.
 
 ### issue-tracker project add [owner/repo]
 
@@ -223,7 +227,8 @@ Prints help for a command. `--help`, `-h` bool prints help on any command, and `
 
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
 - `GitHub rate limit reached: retry after <time>`: wait until that time.
-- `grant board access with gh auth refresh -s project`: the token lacks the `project` scope.
+- `your GitHub login has no access to project boards: run issue-tracker auth refresh`: the token lacks the `project` scope. Ask the user to run `issue-tracker auth refresh` in a terminal.
+- `auth refresh needs a person at a terminal to approve the login in a browser`: `auth refresh` ran in agent mode or without a terminal. Ask the user to run it.
 - `tracker <repo> is not private`: `require_private` is on and the tracker is not private.
 - `moved to ticket #<number>, finish it with issue move: ticket is on the board, but its item cannot be read yet`: `project import` moved the issue, and the ticket has its label but no status. Wait a few seconds, run `issue move <number> <project>`, then rerun the import for the rest.
 - `ticket #<number> was created but linking it failed: ticket is on the board, but its item cannot be read yet`: the ticket exists and has no status, and its `--blocked-by`, `--blocking`, `--label`, and `--attach` values were not applied. Keep that ticket instead of running `issue create` again. Wait a few seconds, run `issue status set <number> Todo`, then apply the rest with `issue blocker add`, `issue label add`, and `issue attachment add`.

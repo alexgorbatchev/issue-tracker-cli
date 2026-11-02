@@ -169,7 +169,7 @@ func TestDescribeError(t *testing.T) {
 		{"secondary", &api.HTTPError{StatusCode: 403, Message: "a Secondary Rate Limit", Headers: http.Header{}}, true, "Secondary"},
 		{"forbidden", &api.HTTPError{StatusCode: 403, Message: "no", Headers: http.Header{}}, false, "no"},
 		{"graphql limited", &api.GraphQLError{Errors: []api.GraphQLErrorItem{{Type: graphQLLimitedType, Message: "out"}}}, true, "out"},
-		{"missing scope", &api.GraphQLError{Errors: []api.GraphQLErrorItem{{Type: graphQLScopesType, Message: "scope"}}}, false, "gh auth refresh -s project"},
+		{"missing scope", &api.GraphQLError{Errors: []api.GraphQLErrorItem{{Type: graphQLScopesType, Message: "scope"}}}, false, "issue-tracker auth refresh"},
 		{"other", plain, false, "boom"},
 	}
 	for _, tt := range tests {
@@ -185,9 +185,9 @@ func TestDescribeError(t *testing.T) {
 
 func TestDescribeErrorReportsMissingScopeOnce(t *testing.T) {
 	item := api.GraphQLErrorItem{Type: graphQLScopesType, Message: "needs read:project"}
-	got := describeError(&api.GraphQLError{Errors: []api.GraphQLErrorItem{item, item, item}}).Error()
-	want := "needs read:project; grant board access with gh auth refresh -s project"
-	if got != want {
-		t.Fatalf("error = %q, want %q", got, want)
+	err := describeError(&api.GraphQLError{Errors: []api.GraphQLErrorItem{item, item, item}})
+	want := ErrNoBoardAccess.Error() + ": needs read:project"
+	if err.Error() != want || !errors.Is(err, ErrNoBoardAccess) {
+		t.Fatalf("error = %q, want %q", err, want)
 	}
 }

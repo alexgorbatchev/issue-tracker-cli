@@ -40,7 +40,7 @@ curl -sSL https://github.com/alexgorbatchev/issue-tracker-cli/releases/latest/do
 
 # Setup
 
-- [GitHub CLI](https://cli.github.com/) - Provides your GitHub login, and uploads attachments. Run `gh auth login`, then `gh auth refresh -s project` to allow board access.
+- [GitHub CLI](https://cli.github.com/) - Provides your GitHub login, and uploads attachments. Run `gh auth login`, then `issue-tracker auth refresh` to allow board access.
 - Private tracker repository - Create an empty private repository with at least one commit, then set `repo` in the configuration below.
 
 # Quick Start

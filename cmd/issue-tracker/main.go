@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -29,11 +30,19 @@ func run(ctx context.Context, cmd *cobra.Command) int {
 		if cobrahelptree.IsAgentMode() {
 			fmt.Fprintf(cmd.ErrOrStderr(), "ERR: %v\n", err)
 		} else {
-			fmt.Fprintf(cmd.ErrOrStderr(), "[ERROR] %v\n", err)
+			fmt.Fprintf(cmd.ErrOrStderr(), "[ERROR] %v\n", forPeople(err))
 		}
 		return 1
 	}
 	return 0
+}
+
+// forPeople drops GitHub's scope list, which the fix does not need.
+func forPeople(err error) error {
+	if errors.Is(err, tracker.ErrNoBoardAccess) {
+		return tracker.ErrNoBoardAccess
+	}
+	return err
 }
 
 // session is the configured client for one command.
