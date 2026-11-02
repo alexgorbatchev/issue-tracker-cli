@@ -67,7 +67,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | --- | --- | --- |
 | `issue list`, any filter, up to 100 tickets | 1 | One query, about 4 points with parent checks |
 | `issue inspect <number>` | 1 | One query, plus one per extra 100 comments |
-| `issue create` | 2 | Create with routing label and board, then set Todo. Add 1 when relating tickets, and 1 for `--label` |
+| `issue create` | 2 to 3 | Create with routing label and board, then set Todo. Add 1 when GitHub has not created the board item yet, which live runs always did, 1 when relating tickets, and 1 for `--label` |
 | `issue claim <number>` | 3 | Read the ticket, create the claim ref, set Doing |
 | `issue release <number>` | 3 | Read the ticket, delete the claim ref, set Todo |
 | `issue close <number> --pr <n>` | 3 | Read the ticket, read the PRs, then one write combining comment, close, and Done. Add 1 when a claim exists |
@@ -79,7 +79,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 
 Claim refs use REST because GraphQL cannot see `refs/claims/`. Deleting one is therefore always a separate request.
 
-`project import` costs about three writes per issue and waits 8 seconds between issues. Each move spends one content creation request, so a run stays near 450 an hour. `project scan` costs one point per 100 repositories, plus one for each page of 100 issues in a repository with open issues.
+`project import` makes three writes per issue and waits 24 seconds between issues, which stays near 450 writes an hour. Public issues add one read each to recheck authors. `project scan` costs about 10 points for each 10 repositories with open issues, plus one point for each further page of 100 issues, and one request per 100 repositories to find them.
 
 ## Cache
 

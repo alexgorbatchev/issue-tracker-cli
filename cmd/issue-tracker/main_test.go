@@ -628,21 +628,23 @@ func TestRunFailsWhenHelpCannotBeWritten(t *testing.T) {
 func TestProjectScanOutput(t *testing.T) {
 	outsideRepository(t)
 	repositories := fakegithub.Route{Match: "repositoryOwner(login", Body: `{"data":{"repositoryOwner":{"repositories":{"nodes":[{"nameWithOwner":"o/code","issues":{"totalCount":2}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
-	issues := fakegithub.Route{Match: "issues(states: OPEN, first: 100", Body: `{"data":{"repository":{"isPrivate":false,"issues":{"nodes":[
+	issues := fakegithub.Route{Match: "r0: repository(owner:", Body: `{"data":{"r0":{"isPrivate":false,"issues":{"nodes":[
 {"id":"A","number":1,"author":{"login":"o"},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}}},
 {"id":"B","number":2,"author":{"login":"stranger"},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
 	tests := []struct {
 		name  string
 		agent string
+		args  []string
 		want  string
 	}{
-		{"agent", "1", "o/code\tpublic\t2\t1\t1\n"},
-		{"human", "0", "FROM OTHERS"},
+		{"agent", "1", []string{"project", "scan"}, "o/code\tpublic\t2\t1\t1\n"},
+		{"trusted author", "1", []string{"project", "scan", "--author", "stranger"}, "o/code\tpublic\t2\t2\t0\n"},
+		{"human", "0", []string{"project", "scan"}, "FROM OTHERS"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("AGENT", tt.agent)
-			stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(repositories, issues)), "project", "scan")
+			stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(repositories, issues)), tt.args...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -659,6 +661,51 @@ func TestProjectScanOutput(t *testing.T) {
 			t.Fatalf("stdout = %q, err = %v", stdout, err)
 		}
 	})
+}
+
+func TestProjectImportOutput(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	outsideRepository(t)
+	metadata := fakegithub.Route{Match: "labels(first: 100", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},
+"labels":{"nodes":[{"id":"L1","name":"repo:go-tui","description":"o/go-tui"}],"pageInfo":{"hasNextPage":false,"endCursor":""}},
+"projectsV2":{"nodes":[{"id":"B1","title":"go-tui","url":"https://b/1","field":{"id":"F","options":[{"id":"t","name":"Todo"}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
+	visibility := fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":false}}}`}
+	source := fakegithub.Route{Match: "issues(states: OPEN, first: 100", Body: `{"data":{"repository":{"isPrivate":true,"issues":{"nodes":[
+{"id":"A","number":1,"author":{"login":"o"},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}}},
+{"id":"B","number":2,"author":{"login":"o"},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
+	transfer := fakegithub.Route{Match: "transferIssue(input", Body: `{"data":{"transferIssue":{"issue":{"id":"T","number":71}}}}`}
+	file := fakegithub.Route{Match: "item: addProjectV2ItemById", Body: `{"data":{"label":{"clientMutationId":null},"item":{"item":{"id":"ITEM"}}}}`}
+	status := fakegithub.Route{Match: "updateProjectV2ItemFieldValue", Body: `{"data":{}}`}
+	tests := []struct {
+		name      string
+		args      []string
+		want      string
+		transfers int
+	}{
+		{"dry run", []string{"--dry-run"}, "OK: o/go-tui: moved 0, 2 left to move, skipped 0 with text from other people\n", 0},
+		{"limit", []string{"--limit", "1"}, "OK: moved o/go-tui#1 to #71\nOK: o/go-tui: moved 1, 1 left to move, skipped 0 with text from other people\n", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := fakegithub.New(metadata, visibility, source, transfer, file, status)
+			stdout, _, err := execute(t, fakeOpener(t, gh), append([]string{"project", "import", "o/go-tui"}, tt.args...)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stdout != tt.want {
+				t.Fatalf("stdout = %q, want %q", stdout, tt.want)
+			}
+			transfers := 0
+			for _, req := range gh.Requests() {
+				if strings.Contains(req.Description, "transferIssue(input") {
+					transfers++
+				}
+			}
+			if transfers != tt.transfers {
+				t.Fatalf("transfers = %d, want %d", transfers, tt.transfers)
+			}
+		})
+	}
 }
 
 func TestProjectImportRejectsBadRepository(t *testing.T) {

@@ -74,13 +74,13 @@ Prints one tab-separated line for each of the tracker owner's unarchived, non-fo
 
 - `--author` stringArray: also trust text from this login. Repeatable. The tracker's owner is always trusted.
 
-An issue can move when its repository is private, or when the issue and all its comments come from trusted authors. A deleted author, or more than 100 comments, counts as text from other people.
+An issue can move when its repository is private, or when the issue and all its comments come from trusted authors. A deleted author, or more than 100 comments, counts as text from other people. In a private repository, such an issue counts in both `can move` and `from others`.
 
 ### issue-tracker project import <owner/repo>
 
-Moves a repository's open issues into the tracker, oldest first, registering the project when needed. Prints `moved owner/repo#<source> to #<ticket>` for each issue, then a summary with the counts moved, left to move, and skipped. Issues from other people stay where they are. Writes one issue every 8 seconds, so a large repository takes a while. Rerunning continues with what is left. Fails when the tracker is not private, or when the repository is the tracker.
+Moves a repository's open issues into the tracker, oldest first, registering the project when needed. Prints `moved owner/repo#<source> to #<ticket>` for each issue, then a summary with the counts moved, left to move, and skipped. Issues from other people stay where they are. A public issue's authors are reread just before its transfer, and it stays if someone else has commented since the run began. Moves one issue every 24 seconds, so a large repository takes hours. Rerunning continues with what is left. Fails when the tracker is not private, when the repository is the tracker, or when the repository has a different owner than the tracker.
 
-GitHub redirects a moved issue's old URL to the private tracker, and a public issue cannot be moved back.
+GitHub rewrites `#N` references in a moved issue's body and comments to `owner/repo#N`, so they keep pointing at the source repository. A public issue cannot be moved back.
 
 - `--author` stringArray: also trust text from this login. Repeatable. The tracker's owner is always trusted.
 - `--dry-run` bool: report the counts without changing anything.
