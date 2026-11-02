@@ -182,3 +182,12 @@ func TestDescribeError(t *testing.T) {
 		})
 	}
 }
+
+func TestDescribeErrorReportsMissingScopeOnce(t *testing.T) {
+	item := api.GraphQLErrorItem{Type: graphQLScopesType, Message: "needs read:project"}
+	got := describeError(&api.GraphQLError{Errors: []api.GraphQLErrorItem{item, item, item}}).Error()
+	want := "needs read:project; grant board access with gh auth refresh -s project"
+	if got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}

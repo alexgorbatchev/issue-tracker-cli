@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:52
-last_modified: 2026-11-01 12:20
+last_modified: 2026-11-01 15:55
 status: current
 ---
 
@@ -39,6 +39,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 ## Agent Skill
 - The skill lives only at `skills/issue-tracker/SKILL.md`. Never embed it in the binary.
 - `issue-tracker skill` prints install instructions through `HelpOptions.Skill`, and every agent help screen starts with an alert to read it.
+- Set versions only through `-ldflags` at release time. `currentVersion` falls back to the module version `go install` records, so never hardcode one.
 - Update the skill in the same change as any command, argument, flag, default, environment variable, output, error, or side-effect change. Verify it against the implementation, update `last_modified`, and run `just check`. `TestSkillDocumentsCommandInterface` compares it with the live command tree.
 - Write affirmative usage instructions and factual contracts in the skill. Keep development instructions and prohibitions in this file.
 

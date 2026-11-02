@@ -501,7 +501,7 @@ func TestOpenTracker(t *testing.T) {
 
 func TestVersionPrintsOnlyTheVersion(t *testing.T) {
 	stdout, _, err := execute(t, noSession, "--version")
-	if err != nil || stdout != version+"\n" {
+	if err != nil || stdout != currentVersion()+"\n" {
 		t.Fatalf("stdout = %q, err = %v", stdout, err)
 	}
 }

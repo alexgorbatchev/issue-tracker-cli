@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -142,8 +143,9 @@ func describeError(err error) error {
 	if hasGraphQLType(err, graphQLLimitedType) {
 		return fmt.Errorf("%w: %v", ErrRateLimited, err)
 	}
-	if hasGraphQLType(err, graphQLScopesType) {
-		return fmt.Errorf("%w; grant board access with gh auth refresh -s project", err)
+	if item, ok := findGraphQLError(err, graphQLScopesType); ok {
+		// GitHub repeats a scope failure for every field in the query.
+		return fmt.Errorf("%s; grant board access with gh auth refresh -s project", item.Message)
 	}
 	return err
 }
@@ -157,14 +159,20 @@ func isLimitStatus(err *api.HTTPError) bool {
 }
 
 func hasGraphQLType(err error, errorType string) bool {
+	_, ok := findGraphQLError(err, errorType)
+	return ok
+}
+
+func findGraphQLError(err error, errorType string) (api.GraphQLErrorItem, bool) {
 	var gqlErr *api.GraphQLError
 	if !errors.As(err, &gqlErr) {
-		return false
+		return api.GraphQLErrorItem{}, false
 	}
-	for _, item := range gqlErr.Errors {
-		if item.Type == errorType {
-			return true
-		}
+	index := slices.IndexFunc(gqlErr.Errors, func(item api.GraphQLErrorItem) bool {
+		return item.Type == errorType
+	})
+	if index < 0 {
+		return api.GraphQLErrorItem{}, false
 	}
-	return false
+	return gqlErr.Errors[index], true
 }
