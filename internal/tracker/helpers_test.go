@@ -54,6 +54,7 @@ type ticketSpec struct {
 	blockers string
 	parent   string
 	updated  string
+	label    string
 }
 
 func (s ticketSpec) json() string {
@@ -67,6 +68,9 @@ func (s ticketSpec) json() string {
 	labels := ""
 	if s.project != "" {
 		labels = fmt.Sprintf(`{"name":"repo:%s"},{"name":"bug"}`, s.project)
+	}
+	if s.label != "" {
+		labels = fmt.Sprintf(`{"name":%q}`, s.label)
 	}
 	items := ""
 	if s.status != "" {

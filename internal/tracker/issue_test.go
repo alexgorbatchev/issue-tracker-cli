@@ -36,6 +36,8 @@ func TestReady(t *testing.T) {
 		{"blocked grandparent", ticketSpec{number: 1, parent: blockedGrandparent}, false},
 		{"unblocked parent", ticketSpec{number: 1, parent: openParent}, true},
 		{"closed parent keeps child ready", ticketSpec{number: 1, parent: closedParent}, true},
+		{"labelled blocked", ticketSpec{number: 1, status: "Todo", label: "blocked"}, false},
+		{"unrelated label", ticketSpec{number: 1, status: "Todo", label: "blocked-upstream"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -25,6 +25,8 @@ const (
 	nestedLimit   = 20
 	commentsLimit = 100
 
+	labelBlocked = "blocked"
+
 	boardItemTaken = "Content already exists in this project"
 	boardItemReads = 3
 	boardItemWait  = 2 * time.Second
@@ -109,9 +111,10 @@ type Ticket struct {
 
 // Ready reports whether a ticket can be picked up: open, unblocked, with no blocked
 // ancestor, and not in progress. Parents stay ready while their children are open.
+// The blocked label covers waits with no ticket to name, such as a person's input.
 func (t Ticket) Ready() bool {
 	return t.State == stateOpen && len(t.Blockers) == 0 && !t.ParentBlocked &&
-		t.Status != StatusDoing && t.Status != StatusDone
+		t.Status != StatusDoing && t.Status != StatusDone && !slices.Contains(t.Labels, labelBlocked)
 }
 
 // Stale reports a Doing ticket with no activity for the given number of days.
