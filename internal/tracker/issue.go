@@ -18,12 +18,16 @@ import (
 	"github.com/cli/go-gh/v2/pkg/api"
 )
 
+// StateClosed is GitHub's state of a closed ticket.
+const StateClosed = "CLOSED"
+
 const (
 	listPageSize  = 100
 	stateOpen     = "OPEN"
-	stateClosed   = "CLOSED"
 	nestedLimit   = 20
 	commentsLimit = 100
+	// subIssuesLimit is GitHub's maximum per parent, so one page holds them all.
+	subIssuesLimit = 100
 
 	labelBlocked = "blocked"
 
@@ -41,12 +45,13 @@ var ticketFields = fmt.Sprintf(`id number title state url updatedAt
     number state blockedBy(first: %[1]d) { nodes { state } }
     parent { number state blockedBy(first: %[1]d) { nodes { state } } }
   }
+  subIssueStates: subIssues(first: %[2]d) { nodes { state } }
   projectItems(first: 5) {
     nodes {
       id updatedAt project { id }
       fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
     }
-  }`, nestedLimit)
+  }`, nestedLimit, subIssuesLimit)
 
 type issueRef struct {
 	Number int
@@ -80,7 +85,10 @@ type ticketNode struct {
 		ancestorNode
 		Parent *ancestorNode
 	}
-	ProjectItems struct {
+	// SubIssueStates counts states itself because subIssuesSummary leaves tickets
+	// closed as not planned out of its completed count.
+	SubIssueStates struct{ Nodes []issueRef }
+	ProjectItems   struct {
 		Nodes []struct {
 			ID               string
 			UpdatedAt        time.Time
@@ -103,6 +111,8 @@ type Ticket struct {
 	Parent        int
 	Blockers      []int
 	ParentBlocked bool
+	SubIssues     int
+	OpenSubIssues int
 	Activity      time.Time
 
 	itemID  string
@@ -110,11 +120,18 @@ type Ticket struct {
 }
 
 // Ready reports whether a ticket can be picked up: open, unblocked, with no blocked
-// ancestor, and not in progress. Parents stay ready while their children are open.
-// The blocked label covers waits with no ticket to name, such as a person's input.
+// ancestor and no open sub-issues, and not in progress. A parent waits for its
+// children, so the work gets claimed rather than its container. The blocked label
+// covers waits with no ticket to name, such as a person's input.
 func (t Ticket) Ready() bool {
-	return t.State == stateOpen && len(t.Blockers) == 0 && !t.ParentBlocked &&
+	return t.State == stateOpen && len(t.Blockers) == 0 && !t.ParentBlocked && t.OpenSubIssues == 0 &&
 		t.Status != StatusDoing && t.Status != StatusDone && !t.labelled(labelBlocked)
+}
+
+// Closable reports an open parent whose sub-issues are all closed. A claimed parent
+// stays open, because closing it would take the ticket from whoever holds it.
+func (t Ticket) Closable() bool {
+	return t.State == stateOpen && t.SubIssues > 0 && t.OpenSubIssues == 0 && t.Status != StatusDoing
 }
 
 // labelled compares the way GitHub does, because label names ignore case there.
@@ -134,6 +151,7 @@ func (n ticketNode) ticket() Ticket {
 	t := Ticket{
 		ID: n.ID, Number: n.Number, Title: n.Title, State: n.State, URL: n.URL,
 		Blockers: openNumbers(n.BlockedBy.Nodes), Activity: n.UpdatedAt,
+		SubIssues: len(n.SubIssueStates.Nodes), OpenSubIssues: len(openNumbers(n.SubIssueStates.Nodes)),
 	}
 	for _, label := range n.Labels.Nodes {
 		if name, ok := strings.CutPrefix(label.Name, labelPrefix); ok {
@@ -208,6 +226,7 @@ type ListOptions struct {
 	Label     string
 	Search    string
 	Ready     bool
+	Closable  bool
 	Stale     bool
 	StaleDays int
 	Limit     int
@@ -216,7 +235,7 @@ type ListOptions struct {
 
 // clientFiltered reports a filter GitHub does not apply, so its count excludes it.
 func (o ListOptions) clientFiltered() bool {
-	return o.Status != "" || o.Label != "" || o.Ready || o.Stale
+	return o.Status != "" || o.Label != "" || o.Ready || o.Closable || o.Stale
 }
 
 func (o ListOptions) matches(t Ticket) bool {
@@ -226,6 +245,8 @@ func (o ListOptions) matches(t Ticket) bool {
 	case o.Label != "" && !slices.Contains(t.Labels, o.Label):
 		return false
 	case o.Ready && !t.Ready():
+		return false
+	case o.Closable && !t.Closable():
 		return false
 	case o.Stale && !t.Stale(o.StaleDays, o.Now):
 		return false
@@ -238,9 +259,9 @@ func listStates(state string) ([]string, error) {
 	case "", "open":
 		return []string{stateOpen}, nil
 	case "closed":
-		return []string{stateClosed}, nil
+		return []string{StateClosed}, nil
 	case "all":
-		return []string{stateOpen, stateClosed}, nil
+		return []string{stateOpen, StateClosed}, nil
 	}
 	return nil, fmt.Errorf("invalid state %q: expected open, closed, or all", state)
 }
@@ -760,6 +781,32 @@ func (c *Client) SetBlockers(ctx context.Context, number int, blockers []int, ad
 		}
 		return fmt.Sprintf(`%s: removeBlockedBy(input: {issueId: %q, blockingIssueId: %q}) { clientMutationId }`, alias, issueID, otherID)
 	})
+}
+
+// ListSubIssues returns a ticket's sub-issues.
+func (c *Client) ListSubIssues(ctx context.Context, number int) ([]SubIssue, error) {
+	var response struct {
+		Repository struct {
+			IsPrivate bool
+			Issue     *struct {
+				SubIssues struct{ Nodes []SubIssue }
+			}
+		}
+	}
+	query := fmt.Sprintf(`query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { isPrivate issue(number: $number) { subIssues(first: %d) { nodes { number title state } } } }
+}`, subIssuesLimit)
+	err := c.do(ctx, query, c.variables(map[string]any{"number": number}), &response)
+	if hasGraphQLType(err, graphQLNotFoundType) || (err == nil && response.Repository.Issue == nil) {
+		return nil, fmt.Errorf("ticket #%d not found in %s", number, c.repo)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading sub-issues of #%d: %w", number, err)
+	}
+	if err := c.checkPrivate(response.Repository.IsPrivate); err != nil {
+		return nil, err
+	}
+	return response.Repository.Issue.SubIssues.Nodes, nil
 }
 
 // SetSubIssues attaches or detaches sub-issues of a parent ticket.

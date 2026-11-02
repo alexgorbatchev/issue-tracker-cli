@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:46
-last_modified: 2026-11-02 14:09
+last_modified: 2026-11-02 14:28
 status: current
 ---
 
@@ -65,7 +65,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 
 | Command | Requests | Reads and writes |
 | --- | --- | --- |
-| `issue list`, up to 100 tickets | 1 | One query, about 4 points with parent checks. GitHub reports the total on that page |
+| `issue list`, up to 100 tickets | 1 | One query, about 6 points with parent and sub-issue checks. GitHub reports the total on that page |
 | `issue list` with `--status`, `--label`, `--ready`, or `--stale` | 1 per 100 tickets | Reads every page, whatever `--limit` says, because GitHub cannot count these filters and the total has to be counted here |
 | `issue inspect <number>` | 1 | One query, plus one per extra 100 comments |
 | `issue create` | 3 | Create with routing label, add to the board, set Todo. Add 1 when relating tickets, 1 for `--label`, and 1 to 3 when GitHub has already added the item, which its sub-issue workflow can do. Passing the board to `createIssue` would save a request but makes that collision routine |
@@ -75,7 +75,9 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | `issue status set <number> <status>` | 2 | Read the ticket, then write |
 | `issue label add <number> <label...>` | 1 | One REST write |
 | `issue label rm <number> <label...>` | 1 per label | One REST delete each |
-| `issue comment add`, `edit`, `blocker`, `sub` | 2 | Resolve IDs, then write |
+| `issue comment add`, `edit`, `blocker`, `sub add`, `sub rm` | 2 | Resolve IDs, then write |
+| `issue sub list <parent>` | 1 | One query |
+| `issue sub close-eligible` | 1 per 100 tickets | Reads every page, then 2 for each parent closed. `--dry-run` writes nothing |
 | `issue attachment add` | Unmeasured | Runs `gh issue edit --attach` |
 
 Claim refs use REST because GraphQL cannot see `refs/claims/`. Deleting one is therefore always a separate request.

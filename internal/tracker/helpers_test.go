@@ -55,6 +55,7 @@ type ticketSpec struct {
 	parent   string
 	updated  string
 	label    string
+	subs     string
 }
 
 func (s ticketSpec) json() string {
@@ -81,7 +82,7 @@ func (s ticketSpec) json() string {
 		parent = s.parent
 	}
 	return fmt.Sprintf(`{"id":"I%[1]d","number":%[1]d,"title":"Ticket %[1]d","state":%[2]q,"url":"https://t/%[1]d","updatedAt":%[3]q,
-"labels":{"nodes":[%[4]s]},"blockedBy":{"nodes":[%[5]s]},"parent":%[6]s,"projectItems":{"nodes":[%[7]s]}`, s.number, state, updated, labels, s.blockers, parent, items)
+"labels":{"nodes":[%[4]s]},"blockedBy":{"nodes":[%[5]s]},"parent":%[6]s,"subIssueStates":{"nodes":[%[8]s]},"projectItems":{"nodes":[%[7]s]}`, s.number, state, updated, labels, s.blockers, parent, items, s.subs)
 }
 
 func ticketRoute(spec ticketSpec) fakegithub.Route {

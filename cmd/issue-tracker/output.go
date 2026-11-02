@@ -149,6 +149,31 @@ func printDetail(w io.Writer, detail tracker.TicketDetail) error {
 	return err
 }
 
+func doneCount(subs []tracker.SubIssue) int {
+	done := 0
+	for _, sub := range subs {
+		if sub.State == tracker.StateClosed {
+			done++
+		}
+	}
+	return done
+}
+
+func printSubIssues(w io.Writer, subs []tracker.SubIssue) error {
+	rows := make([][]string, 0, len(subs))
+	for _, sub := range subs {
+		rows = append(rows, []string{strconv.Itoa(sub.Number), sub.State, sub.Title})
+	}
+	if cobrahelptree.IsAgentMode() {
+		return tsv(w, rows)
+	}
+	if len(rows) == 0 {
+		_, err := fmt.Fprintln(w, "No sub-issues.")
+		return err
+	}
+	return table(w, []string{"Ticket", "State", "Title"}, rows)
+}
+
 func printPaths(w io.Writer, paths []string) error {
 	for _, path := range paths {
 		if _, err := fmt.Fprintln(w, displaypath.Fold(path)); err != nil {

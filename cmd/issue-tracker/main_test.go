@@ -204,6 +204,95 @@ func TestWriteCommandsReportResults(t *testing.T) {
 	}
 }
 
+func TestSubListOutput(t *testing.T) {
+	route := fakegithub.Route{Match: "subIssues(first: 100) { nodes", Body: `{"data":{"repository":{"isPrivate":true,"issue":{"subIssues":{"nodes":[{"number":3,"title":"Done one","state":"CLOSED"},{"number":4,"title":"Open one","state":"OPEN"}]}}}}}`}
+	empty := fakegithub.Route{Match: "subIssues(first: 100) { nodes", Body: `{"data":{"repository":{"isPrivate":true,"issue":{"subIssues":{"nodes":[]}}}}}`}
+	tests := []struct {
+		name  string
+		agent string
+		route fakegithub.Route
+		want  []string
+	}{
+		{"agent", "1", route, []string{"3\tCLOSED\tDone one\n4\tOPEN\tOpen one\n", "OK: #1: 1 of 2 done, 1 open\n"}},
+		{"human", "0", route, []string{"Done one", "[OK] #1: 1 of 2 done, 1 open\n"}},
+		{"human empty", "0", empty, []string{"No sub-issues.\n", "[OK] #1: 0 of 0 done, 0 open\n"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AGENT", tt.agent)
+			stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(tt.route)), "issue", "sub", "list", "1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(stdout, want) {
+					t.Fatalf("stdout = %q, want %q", stdout, want)
+				}
+			}
+		})
+	}
+}
+
+func parentJSON(number int, subs string) string {
+	return strings.Replace(ticketJSON(number, "go-tui", "Todo", "2026-10-01T00:00:00Z"), `"parent":null,`, `"parent":null,"subIssueStates":{"nodes":[`+subs+`]},`, 1)
+}
+
+func TestSubCloseEligible(t *testing.T) {
+	closed, open := `{"state":"CLOSED"}`, `{"state":"OPEN"}`
+	list := func() fakegithub.Route { return listRoute(parentJSON(1, closed), parentJSON(2, closed+","+open)) }
+	closeRoutes := func() []fakegithub.Route {
+		return []fakegithub.Route{ticketRoute("go-tui", "Todo"), ok("closeIssue")}
+	}
+	tests := []struct {
+		name   string
+		routes []fakegithub.Route
+		args   []string
+		want   string
+		writes int
+	}{
+		{"dry run", []fakegithub.Route{list()}, []string{"--dry-run", "--project", "go-tui"}, "OK: would close #1 in go-tui: Crash\n", 0},
+		{"closes", append([]fakegithub.Route{list()}, closeRoutes()...), []string{"--project", "go-tui"}, "OK: closed #1 in go-tui: Crash\n", 1},
+		{"nothing eligible", []fakegithub.Route{listRoute(parentJSON(2, open))}, []string{"--all-projects"}, "OK: no eligible parents\n", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AGENT", "1")
+			outsideRepository(t)
+			gh := fakegithub.New(tt.routes...)
+			args := append([]string{"issue", "sub", "close-eligible"}, tt.args...)
+			stdout, _, err := execute(t, fakeOpener(t, gh), args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stdout != tt.want {
+				t.Fatalf("stdout = %q, want %q", stdout, tt.want)
+			}
+			writes := 0
+			for _, req := range gh.Requests() {
+				if strings.Contains(req.Description, "closeIssue") {
+					writes++
+				}
+			}
+			if writes != tt.writes {
+				t.Fatalf("close writes = %d, want %d", writes, tt.writes)
+			}
+		})
+	}
+}
+
+func TestSubCloseEligibleFailures(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	outsideRepository(t)
+	if _, _, err := execute(t, fakeOpener(t, fakegithub.New()), "issue", "sub", "close-eligible", "--project", "x", "--all-projects"); err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("err = %v", err)
+	}
+	list := listRoute(parentJSON(1, `{"state":"CLOSED"}`))
+	gh := fakegithub.New(list, fakegithub.Route{Match: "isPrivate issue(number: $number)", Status: 500, Body: "{}"})
+	if _, _, err := execute(t, fakeOpener(t, gh), "issue", "sub", "close-eligible"); err == nil {
+		t.Fatal("a failed close must fail the command")
+	}
+}
+
 func TestIssueListOutput(t *testing.T) {
 	old := ticketJSON(1, "go-tui", "Doing", "2026-01-01T00:00:00Z")
 	t.Run("agent uses tabs", func(t *testing.T) {

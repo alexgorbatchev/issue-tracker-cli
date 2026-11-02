@@ -14,6 +14,94 @@ import (
 
 var ctx = context.Background()
 
+const (
+	openSub   = `{"state":"OPEN"}`
+	closedSub = `{"state":"CLOSED"}`
+)
+
+func TestClosable(t *testing.T) {
+	tests := []struct {
+		name string
+		spec ticketSpec
+		want bool
+	}{
+		{"every sub-issue closed", ticketSpec{number: 1, status: "Todo", subs: closedSub + "," + closedSub}, true},
+		{"one sub-issue open", ticketSpec{number: 1, status: "Todo", subs: closedSub + "," + openSub}, false},
+		{"no sub-issues", ticketSpec{number: 1, status: "Todo"}, false},
+		{"claimed", ticketSpec{number: 1, status: "Doing", subs: closedSub}, false},
+		{"already closed", ticketSpec{number: 1, state: "CLOSED", subs: closedSub}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := newClient(t, ticketRoute(tt.spec))
+			ticket, err := c.readTicket(ctx, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ticket.Closable() != tt.want {
+				t.Fatalf("Closable() = %v, ticket = %+v", ticket.Closable(), ticket)
+			}
+		})
+	}
+}
+
+func TestListClosableKeepsOnlyParents(t *testing.T) {
+	first := listRoute(ticketSpec{number: 1, status: "Todo"}, ticketSpec{number: 2, status: "Todo", subs: closedSub})
+	c, gh := newClient(t, first)
+	tickets, total, err := c.ListTickets(ctx, ListOptions{Closable: true, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 1 || tickets[0].Number != 2 || total != 1 {
+		t.Fatalf("tickets = %+v, total = %d", tickets, total)
+	}
+	wantCount(t, gh, 1)
+}
+
+func subIssuesRoute(body string) fakegithub.Route {
+	return fakegithub.Route{Match: "subIssues(first: 100) { nodes { number title state } }", Body: body}
+}
+
+func TestListSubIssues(t *testing.T) {
+	body := `{"data":{"repository":{"isPrivate":true,"issue":{"subIssues":{"nodes":[{"number":3,"title":"A","state":"CLOSED"},{"number":4,"title":"B","state":"OPEN"}]}}}}}`
+	c, gh := newClient(t, subIssuesRoute(body))
+	subs, err := c.ListSubIssues(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs) != 2 || subs[0].Number != 3 || subs[1].State != "OPEN" {
+		t.Fatalf("subs = %+v", subs)
+	}
+	wantCount(t, gh, 1)
+}
+
+func TestListSubIssuesFailures(t *testing.T) {
+	public := `{"data":{"repository":{"isPrivate":false,"issue":{"subIssues":{"nodes":[]}}}}}`
+	tests := []struct {
+		name  string
+		route fakegithub.Route
+		want  string
+	}{
+		{"not found", subIssuesRoute(notFoundJSON), "ticket #1 not found"},
+		{"no issue", subIssuesRoute(`{"data":{"repository":{"isPrivate":true,"issue":null}}}`), "ticket #1 not found"},
+		{"server error", fakegithub.Route{Match: "subIssues(first: 100)", Status: 500, Body: "{}"}, "reading sub-issues of #1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := newClient(t, tt.route)
+			_, err := c.ListSubIssues(ctx, 1)
+			wantError(t, err, tt.want)
+		})
+	}
+	gh := fakegithub.New(subIssuesRoute(public))
+	c, err := New(Options{Repo: Repo{Owner: "o", Name: "tracker"}, CacheDir: t.TempDir(), Transport: gh, Token: "tok", RequirePrivate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.ListSubIssues(ctx, 1)
+	wantError(t, err, "not private")
+}
+
 func TestReady(t *testing.T) {
 	openBlocker := `{"number":9,"state":"OPEN"}`
 	blockedParent := `{"number":5,"state":"OPEN","blockedBy":{"nodes":[{"state":"OPEN"}]},"parent":null}`
@@ -39,6 +127,8 @@ func TestReady(t *testing.T) {
 		{"labelled blocked", ticketSpec{number: 1, status: "Todo", label: "blocked"}, false},
 		{"labelled blocked in another case", ticketSpec{number: 1, status: "Todo", label: "Blocked"}, false},
 		{"unrelated label", ticketSpec{number: 1, status: "Todo", label: "blocked-upstream"}, true},
+		{"open sub-issue", ticketSpec{number: 1, status: "Todo", subs: openSub + "," + closedSub}, false},
+		{"all sub-issues closed", ticketSpec{number: 1, status: "Todo", subs: closedSub}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,7 +154,7 @@ func TestStale(t *testing.T) {
 		{"old doing", Ticket{State: stateOpen, Status: StatusDoing, Activity: now.AddDate(0, 0, -4)}, true},
 		{"recent doing", Ticket{State: stateOpen, Status: StatusDoing, Activity: now.AddDate(0, 0, -2)}, false},
 		{"old todo", Ticket{State: stateOpen, Status: StatusTodo, Activity: now.AddDate(0, 0, -30)}, false},
-		{"old closed", Ticket{State: stateClosed, Status: StatusDoing, Activity: now.AddDate(0, 0, -30)}, false},
+		{"old closed", Ticket{State: StateClosed, Status: StatusDoing, Activity: now.AddDate(0, 0, -30)}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

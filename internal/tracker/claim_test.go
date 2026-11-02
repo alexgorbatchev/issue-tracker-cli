@@ -120,6 +120,17 @@ func TestClaimNextSkipsLostTickets(t *testing.T) {
 	wantCount(t, gh, 4)
 }
 
+func TestClaimNextSkipsAParentWithOpenSubIssues(t *testing.T) {
+	c, _ := newClient(t, listRoute(ticketSpec{number: 1, status: "Todo", subs: openSub}))
+	_, ok, err := c.ClaimNext(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("a parent with open sub-issues must not be claimed")
+	}
+}
+
 func TestClaimNextWithNothingReady(t *testing.T) {
 	c, _ := newClient(t, listRoute(ticketSpec{number: 1, status: "Doing"}))
 	if _, ok, err := c.ClaimNext(ctx, ""); ok || err != nil {

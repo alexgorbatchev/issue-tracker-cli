@@ -162,6 +162,14 @@ func (s *session) scope(cmd *cobra.Command, name string, all bool) (string, erro
 	return project.Name, nil
 }
 
+// listScope is scope for commands with both --project and --all-projects.
+func (s *session) listScope(cmd *cobra.Command, name string, all bool) (string, error) {
+	if all && name != "" {
+		return "", errors.New("pass --project or --all-projects, not both")
+	}
+	return s.scope(cmd, name, all)
+}
+
 func newIssueCloseCommand(open opener) *cobra.Command {
 	var opts tracker.CloseOptions
 	cmd := &cobra.Command{
@@ -284,10 +292,7 @@ func newIssueListCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if allProjects && opts.Project != "" {
-				return errors.New("pass --project or --all-projects, not both")
-			}
-			if opts.Project, err = s.scope(cmd, opts.Project, allProjects); err != nil {
+			if opts.Project, err = s.listScope(cmd, opts.Project, allProjects); err != nil {
 				return err
 			}
 			if !cmd.Flags().Changed("stale-days") {
@@ -428,7 +433,75 @@ func newSubCommand(open opener) *cobra.Command {
 	for _, child := range cmd.Commands() {
 		child.Use = child.Name() + " <parent> <child...>"
 	}
+	cmd.AddCommand(newSubListCommand(open), newSubCloseEligibleCommand(open))
 	return cmd
+}
+
+func newSubListCommand(open opener) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list <parent>",
+		Short: "Show a parent's sub-issues and how many are done",
+		Args:  cobra.ExactArgs(1),
+		RunE: withTicket(open, func(cmd *cobra.Command, s *session, number int) (string, error) {
+			subs, err := s.client.ListSubIssues(cmd.Context(), number)
+			if err != nil {
+				return "", err
+			}
+			if err := printSubIssues(cmd.OutOrStdout(), subs); err != nil {
+				return "", err
+			}
+			done := doneCount(subs)
+			return fmt.Sprintf("#%d: %d of %d done, %d open", number, done, len(subs), len(subs)-done), nil
+		}),
+	}
+}
+
+func newSubCloseEligibleCommand(open opener) *cobra.Command {
+	var project string
+	var allProjects, dryRun bool
+	cmd := &cobra.Command{
+		Use:   "close-eligible",
+		Short: "Close parents whose sub-issues are all closed",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := open()
+			if err != nil {
+				return err
+			}
+			name, err := s.listScope(cmd, project, allProjects)
+			if err != nil {
+				return err
+			}
+			parents, _, err := s.client.ListTickets(cmd.Context(), tracker.ListOptions{Project: name, Closable: true})
+			if err != nil {
+				return err
+			}
+			if len(parents) == 0 {
+				return report(cmd.OutOrStdout(), "no eligible parents")
+			}
+			for _, parent := range parents {
+				if err := closeParent(cmd, s, parent, dryRun); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&project, "project", "", "Limit to a project; defaults to the current repository's project")
+	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "Cover every project from inside a registered repository")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "List the parents without closing them")
+	return cmd
+}
+
+func closeParent(cmd *cobra.Command, s *session, parent tracker.Ticket, dryRun bool) error {
+	if dryRun {
+		return report(cmd.OutOrStdout(), "would close #%d in %s: %s", parent.Number, parent.Project, parent.Title)
+	}
+	opts := tracker.CloseOptions{Reason: tracker.ReasonCompleted}
+	if err := s.client.CloseTicket(cmd.Context(), parent.Number, opts); err != nil {
+		return err
+	}
+	return report(cmd.OutOrStdout(), "closed #%d in %s: %s", parent.Number, parent.Project, parent.Title)
 }
 
 func newCommentCommand(open opener) *cobra.Command {
