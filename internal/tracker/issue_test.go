@@ -643,3 +643,12 @@ func TestAttachmentsOnCreate(t *testing.T) {
 		t.Fatalf("ticket = %+v", ticket)
 	}
 }
+
+func TestCloseReasonCompletedClosesAsCompleted(t *testing.T) {
+	reason, err := stateReason(ReasonCompleted)
+	if err != nil || reason != "COMPLETED" {
+		t.Fatalf("reason = %q, err = %v", reason, err)
+	}
+	_, err = stateReason("finished")
+	wantError(t, err, "expected completed, not-planned, or duplicate")
+}
