@@ -241,6 +241,12 @@ func parentRoute(json string) fakegithub.Route {
 	return fakegithub.Route{Match: "isPrivate issue(number: $number)", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + json + `}}}}`}
 }
 
+func firstRead(json string) fakegithub.Route {
+	route := parentRoute(json)
+	route.Times = 1
+	return route
+}
+
 func TestSubCloseEligible(t *testing.T) {
 	closed, open := `{"state":"CLOSED"}`, `{"state":"OPEN"}`
 	list := func() fakegithub.Route { return listRoute(parentJSON(1, closed), parentJSON(2, closed+","+open)) }
@@ -256,6 +262,11 @@ func TestSubCloseEligible(t *testing.T) {
 		{"dry run", []fakegithub.Route{list()}, []string{"--dry-run", "--project", "go-tui"}, "OK: would close #1 in go-tui: Crash\n", 0, 1},
 		{"closes", []fakegithub.Route{list(), parentRoute(parentJSON(1, closed)), ok("closeIssue")}, []string{"--project", "go-tui"}, "OK: closed #1 in go-tui: Crash\n", 1, 3},
 		{"claimed after the list", []fakegithub.Route{list(), parentRoute(claimed)}, []string{"--project", "go-tui"}, "OK: skipped #1: no longer eligible\n", 0, 2},
+		{
+			"continues past a skipped parent",
+			[]fakegithub.Route{listRoute(parentJSON(1, closed), parentJSON(3, closed)), firstRead(claimed), parentRoute(parentJSON(3, closed)), ok("closeIssue")},
+			[]string{"--project", "go-tui"}, "OK: skipped #1: no longer eligible\nOK: closed #3 in go-tui: Crash\n", 1, 4,
+		},
 		{"nothing eligible", []fakegithub.Route{listRoute(parentJSON(2, open))}, []string{"--all-projects"}, "OK: no eligible parents\n", 0, 1},
 	}
 	for _, tt := range tests {
