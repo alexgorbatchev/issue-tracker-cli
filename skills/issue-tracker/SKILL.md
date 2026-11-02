@@ -78,7 +78,7 @@ An issue can move when its repository is private, or when the issue and all its 
 
 ### issue-tracker project import <owner/repo>
 
-Moves a repository's open issues into the tracker, oldest first, registering the project when needed. Prints `moved owner/repo#<source> to #<ticket>` for each issue, then a summary with the counts moved, left to move, and skipped. Issues from other people stay where they are. A public issue's authors are reread just before its transfer, and it stays if someone else has commented since the run began. Moves one issue every 24 seconds, so a large repository takes hours. Rerunning continues with what is left. Fails when the tracker is not private, when the repository is the tracker, or when the repository has a different owner than the tracker.
+Moves a repository's open issues into the tracker, oldest first, registering the project when needed. Prints `moved owner/repo#<source> to #<ticket>` for each issue, then a summary with the counts moved, left to move, and skipped. Issues from other people stay where they are. A public issue's authors are reread just before its transfer, and it stays if someone else has commented since the run began. Moves one issue every 32 seconds, so a large repository takes hours. Rerunning continues with what is left. Fails when the tracker is not private, when the repository is the tracker, or when the repository has a different owner than the tracker.
 
 GitHub rewrites `#N` references in a moved issue's body and comments to `owner/repo#N`, so they keep pointing at the source repository. A public issue cannot be moved back.
 
@@ -150,7 +150,7 @@ Reopens a ticket and sets it to Todo.
 
 ### issue-tracker issue move <number> <project>
 
-Reassigns a ticket to another project and keeps its status.
+Reassigns a ticket to another project and keeps its status. A ticket already in that project with no board status gets Todo, which finishes an import that failed partway.
 
 ### issue-tracker issue label add <number> <label...>
 

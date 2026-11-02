@@ -11,11 +11,12 @@ import (
 )
 
 const (
-	// importWrites is the requests that change GitHub for each moved issue.
-	importWrites = 3
-	// importInterval keeps those writes near 450 an hour, because GitHub allows
+	// importMutations counts each mutation for one moved issue, because GitHub
+	// does not say whether a request holding two counts once.
+	importMutations = 4
+	// importInterval keeps those mutations near 450 an hour, because GitHub allows
 	// about 500 content creation requests an hour.
-	importInterval = time.Hour * importWrites / 450
+	importInterval = time.Hour * importMutations / 450
 	// scanBatchSize bounds one query to about 10 points.
 	scanBatchSize = 10
 )
@@ -337,8 +338,7 @@ func (c *Client) ImportIssues(ctx context.Context, opts ImportOptions) (ImportRe
 	return result, nil
 }
 
-// importIssue transfers one issue and files it under its project in importWrites
-// requests. The returned
+// importIssue transfers one issue and files it under its project. The returned
 // number is set once the transfer succeeded, even when a later step failed.
 func (c *Client) importIssue(ctx context.Context, repositoryID string, project Project, issue sourceIssue) (int, error) {
 	var response struct {

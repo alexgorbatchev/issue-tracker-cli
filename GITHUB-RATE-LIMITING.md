@@ -79,7 +79,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 
 Claim refs use REST because GraphQL cannot see `refs/claims/`. Deleting one is therefore always a separate request.
 
-`project import` makes three writes per issue and waits 24 seconds between issues, which stays near 450 writes an hour. Public issues add one read each to recheck authors. `project scan` costs about 10 points for each 10 repositories with open issues, plus one point for each further page of 100 issues, and one request per 100 repositories to find them.
+`project import` makes three write requests holding four mutations per issue and waits 32 seconds between issues, which stays near 450 mutations an hour. Public issues add one read each to recheck authors. `project scan` costs about 10 points for each 10 repositories with open issues, plus one point for each further page of 100 issues, and one request per 100 repositories to find them.
 
 ## Cache
 
