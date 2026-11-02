@@ -450,9 +450,10 @@ func TestImportReadsTheItemWhenTheBoardAddCollides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if last := lastDescription(gh); result.Moved != 1 || !strings.Contains(last, "existing-item") {
+	if last := lastDescription(gh); result.Moved != 1 || !strings.Contains(last, "existing-item") || !strings.Contains(last, `singleSelectOptionId: "T"`) {
 		t.Fatalf("result = %+v, last write = %s", result, last)
 	}
+	wantCount(t, gh, 7)
 }
 
 func TestImportFailsWhenACollisionComesWithAnotherError(t *testing.T) {
