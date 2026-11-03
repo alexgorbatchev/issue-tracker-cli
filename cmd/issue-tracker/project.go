@@ -14,11 +14,16 @@ func newProjectCommand(open opener) *cobra.Command {
 }
 
 func newProjectAddCommand(open opener) *cobra.Command {
-	return &cobra.Command{
+	var dir, name string
+	cmd := &cobra.Command{
 		Use:   "add [owner/repo]",
-		Short: "Register a repository and create its label and board",
+		Short: "Register a repository, or a directory of one, and create its label and board",
+		Long:  "Registers a repository with its own label and board. With --path, registers a directory of an already registered repository as a component: a project with its own label on the repository's board.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if name != "" && dir == "" {
+				return errors.New("--name names a component: pass --path too")
+			}
 			s, err := open()
 			if err != nil {
 				return err
@@ -27,13 +32,24 @@ func newProjectAddCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := s.client.AddProject(cmd.Context(), repo)
+			var project tracker.Project
+			if dir == "" {
+				project, err = s.client.AddProject(cmd.Context(), repo)
+			} else {
+				project, err = s.client.AddComponent(cmd.Context(), repo, dir, name)
+			}
 			if err != nil {
 				return err
+			}
+			if project.Component() {
+				return report(cmd.OutOrStdout(), "registered project %s for %s in %s", project.Name, project.Path, project.Repo)
 			}
 			return report(cmd.OutOrStdout(), "registered project %s for %s", project.Name, project.Repo)
 		},
 	}
+	cmd.Flags().StringVar(&dir, "path", "", "Register this directory, relative to the top of the repository, as a component")
+	cmd.Flags().StringVar(&name, "name", "", "Component name after the repository's; defaults to the last element of --path")
+	return cmd
 }
 
 func addTarget(args []string) (tracker.Repo, error) {
@@ -97,11 +113,11 @@ func newProjectRmCommand(open opener) *cobra.Command {
 	var confirmed bool
 	cmd := &cobra.Command{
 		Use:   "rm <project>",
-		Short: "Unregister a project with no open tickets and delete its board",
+		Short: "Unregister a project with no open tickets and delete a repository's board",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !confirmed {
-				return errors.New("this deletes the project's board: pass --yes to confirm")
+				return errors.New("this unregisters the project and deletes a repository's board: pass --yes to confirm")
 			}
 			s, err := open()
 			if err != nil {
@@ -113,7 +129,7 @@ func newProjectRmCommand(open opener) *cobra.Command {
 			return report(cmd.OutOrStdout(), "removed project %s", args[0])
 		},
 	}
-	cmd.Flags().BoolVar(&confirmed, "yes", false, "Confirm deleting the project's board")
+	cmd.Flags().BoolVar(&confirmed, "yes", false, "Confirm the removal")
 	return cmd
 }
 

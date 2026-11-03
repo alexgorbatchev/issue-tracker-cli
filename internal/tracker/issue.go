@@ -185,7 +185,10 @@ func (n ticketNode) ticket() Ticket {
 	}
 	for _, label := range n.Labels.Nodes {
 		if name, ok := strings.CutPrefix(label.Name, labelPrefix); ok {
-			t.Project = name
+			// A component's label is more specific than its repository's.
+			if !strings.HasPrefix(t.Project, name+"/") {
+				t.Project = name
+			}
 			continue
 		}
 		t.Labels = append(t.Labels, label.Name)
@@ -286,7 +289,8 @@ func (c *Client) routed(ctx context.Context, t Ticket) (Ticket, error) {
 
 func (t *Ticket) routeTo(meta *metadata) bool {
 	for _, project := range meta.Projects {
-		if t.useBoard(project.BoardID) {
+		// A component shares its repository's board, which routes to the repository.
+		if !project.Component() && t.useBoard(project.BoardID) {
 			t.Project, t.boardRouted = project.Name, true
 			return true
 		}
@@ -344,19 +348,63 @@ func listStates(state string) ([]string, error) {
 
 // ticketPage is one page of tickets from either listing query.
 type ticketPage struct {
-	IsPrivate bool
-	Nodes     []ticketNode
-	PageInfo  pageInfo
-	Total     int
+	IsPrivate     bool
+	Nodes         []ticketNode
+	PageInfo      pageInfo
+	Total         int
+	Registrations []labelNode
 }
 
 // pageReader fetches the page after a cursor, with nil for the first page.
 type pageReader func(context.Context, any) (ticketPage, error)
 
+// registrationFields reads the routing labels of a repository's components with a
+// listing. A component registered on another machine causes no cache miss, so
+// without this its tickets would be left out of the repository's lists.
+const registrationFields = `registrations: labels(query: $registrations, first: 100) @include(if: $checkRegistrations) { nodes { id name description } }`
+
+// registrationVariables asks for the labels of a repository project's components.
+// A component has none, and an unscoped listing has no project to check.
+func registrationVariables(project Project) map[string]any {
+	check := project.Name != "" && !project.Component()
+	query := ""
+	if check {
+		query = project.Label() + "/"
+	}
+	return map[string]any{"registrations": query, "checkRegistrations": check}
+}
+
+// withProject runs a read of a project, and runs it once more with refreshed metadata
+// when the read reports that the cached components are stale.
+func (c *Client) withProject(ctx context.Context, name string, read func(*metadata, Project) (bool, error)) error {
+	project, err := c.lookupProject(ctx, name)
+	if err != nil {
+		return err
+	}
+	meta, err := c.metadata(ctx)
+	if err != nil {
+		return err
+	}
+	stale, err := read(meta, project)
+	if err != nil || !stale {
+		return err
+	}
+	if meta, err = c.refreshMetadata(ctx); err != nil {
+		return err
+	}
+	project, ok := meta.project(name)
+	if !ok {
+		return fmt.Errorf("unknown project %q: register it with project add", name)
+	}
+	_, err = read(meta, project)
+	return err
+}
+
 // ListTickets returns matching tickets, oldest first, and how many tickets match
 // in all, which exceeds the tickets returned when Limit cuts the list. GitHub
 // counts what it filters on the first page. A client-side filter has no such
-// count, so it reads every page whatever the limit.
+// count, so it reads every page whatever the limit. A repository's list includes
+// its components' tickets.
 func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, int, error) {
 	if opts.Limit < 0 {
 		return nil, 0, fmt.Errorf("invalid limit %d: expected 0 or more", opts.Limit)
@@ -365,21 +413,39 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, i
 	if err != nil {
 		return nil, 0, err
 	}
-	label, scope := "", ""
+	if opts.Project == "" {
+		tickets, total, _, err := c.listTickets(ctx, opts, states, &metadata{}, Project{})
+		return tickets, total, err
+	}
+	var tickets []Ticket
+	var total int
+	err = c.withProject(ctx, opts.Project, func(meta *metadata, project Project) (bool, error) {
+		var stale bool
+		var err error
+		tickets, total, stale, err = c.listTickets(ctx, opts, states, meta, project)
+		return stale, err
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return tickets, total, nil
+}
+
+// listTickets lists one project's tickets, or every ticket when project is empty. It
+// stops after the first page when the cached components are stale.
+func (c *Client) listTickets(ctx context.Context, opts ListOptions, states []string, meta *metadata, project Project) ([]Ticket, int, bool, error) {
+	var labels []string
 	var onBoard []Ticket
-	if opts.Project != "" {
-		project, err := c.lookupProject(ctx, opts.Project)
-		if err != nil {
-			return nil, 0, err
-		}
-		label, scope = project.Label(), fmt.Sprintf(`label:"%s"`, project.Label())
-		if onBoard, err = c.boardOnlyTickets(ctx, project, states, opts); err != nil {
-			return nil, 0, fmt.Errorf("listing tickets: %w", err)
+	if project.Name != "" {
+		labels = meta.scopeLabels(project)
+		var err error
+		if onBoard, err = c.boardOnlyTickets(ctx, project, labels, states, opts); err != nil {
+			return nil, 0, false, fmt.Errorf("listing tickets: %w", err)
 		}
 	}
-	read := c.issuesPage(states, label)
+	read := c.issuesPage(states, labels, project)
 	if opts.Search != "" {
-		read = c.searchPage(states, scope, opts.Search)
+		read = c.searchPage(states, labelScope(labels), opts.Search, project)
 	}
 	tickets := []Ticket{}
 	matched := 0
@@ -387,15 +453,18 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, i
 	for {
 		page, err := read(ctx, cursor)
 		if err != nil {
-			return nil, 0, fmt.Errorf("listing tickets: %w", err)
+			return nil, 0, false, fmt.Errorf("listing tickets: %w", err)
 		}
 		if err := c.checkPrivate(page.IsPrivate); err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
+		}
+		if cursor == nil && meta.staleComponents(project, page.Registrations) {
+			return nil, 0, true, nil
 		}
 		for _, node := range page.Nodes {
 			ticket, err := c.routed(ctx, node.ticket())
 			if err != nil {
-				return nil, 0, fmt.Errorf("listing tickets: %w", err)
+				return nil, 0, false, fmt.Errorf("listing tickets: %w", err)
 			}
 			if !opts.matches(ticket) {
 				continue
@@ -406,22 +475,36 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, i
 			}
 		}
 		if opts.Limit > 0 && len(tickets) == opts.Limit && !opts.clientFiltered() {
-			return oldestFirst(tickets, onBoard, opts.Limit), page.Total + len(onBoard), nil
+			return oldestFirst(tickets, onBoard, opts.Limit), page.Total + len(onBoard), false, nil
 		}
 		if !page.PageInfo.HasNextPage {
-			return oldestFirst(tickets, onBoard, opts.Limit), matched + len(onBoard), nil
+			return oldestFirst(tickets, onBoard, opts.Limit), matched + len(onBoard), false, nil
 		}
 		cursor = page.PageInfo.EndCursor
 	}
 }
 
-// boardOnlyTickets reads the tickets on a project's board that have no routing label.
-// The issues connection filters by label only, so these need a search of their own.
-func (c *Client) boardOnlyTickets(ctx context.Context, project Project, states []string, opts ListOptions) ([]Ticket, error) {
-	if project.BoardURL == "" {
+// labelScope is the search qualifier matching any of the labels.
+func labelScope(labels []string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(labels))
+	for _, label := range labels {
+		quoted = append(quoted, strconv.Quote(label))
+	}
+	return "label:" + strings.Join(quoted, ",")
+}
+
+// boardOnlyTickets reads the tickets on a project's board that have none of its
+// routing labels. The issues connection filters by label only, so these need a
+// search of their own. A component has none, because its board is its repository's
+// and an unlabelled ticket there belongs to the repository.
+func (c *Client) boardOnlyTickets(ctx context.Context, project Project, labels, states []string, opts ListOptions) ([]Ticket, error) {
+	if project.BoardURL == "" || project.Component() {
 		return nil, nil
 	}
-	read := c.searchPage(states, c.boardOnlyScope(project), opts.Search)
+	read := c.searchPage(states, c.boardOnlyScope(project, labels), opts.Search, Project{})
 	tickets := []Ticket{}
 	var cursor any
 	for {
@@ -450,9 +533,13 @@ func (c *Client) boardOnlyTickets(ctx context.Context, project Project, states [
 	}
 }
 
-// boardOnlyScope is the search for a project's board without its routing label.
-func (c *Client) boardOnlyScope(project Project) string {
-	return fmt.Sprintf(`project:%s/%s -label:"%s"`, c.repo.Owner, path.Base(project.BoardURL), project.Label())
+// boardOnlyScope is the search for a project's board without any of its routing labels.
+func (c *Client) boardOnlyScope(project Project, labels []string) string {
+	terms := []string{fmt.Sprintf("project:%s/%s", c.repo.Owner, path.Base(project.BoardURL))}
+	for _, label := range labels {
+		terms = append(terms, "-label:"+strconv.Quote(label))
+	}
+	return strings.Join(terms, " ")
 }
 
 // oldestFirst merges board-only tickets into a list and applies the limit again.
@@ -468,14 +555,11 @@ func oldestFirst(tickets, onBoard []Ticket, limit int) []Ticket {
 	return merged
 }
 
-func (c *Client) issuesPage(states []string, label string) pageReader {
-	var labels []string
-	if label != "" {
-		labels = []string{label}
-	}
-	query := `query($owner: String!, $name: String!, $states: [IssueState!], $labels: [String!], $after: String) {
+func (c *Client) issuesPage(states, labels []string, project Project) pageReader {
+	query := `query($owner: String!, $name: String!, $states: [IssueState!], $labels: [String!], $after: String, $registrations: String, $checkRegistrations: Boolean!) {
   repository(owner: $owner, name: $name) {
     isPrivate
+    ` + registrationFields + `
     issues(first: ` + strconv.Itoa(listPageSize) + `, after: $after, states: $states, labels: $labels, orderBy: {field: CREATED_AT, direction: ASC}) {
       totalCount
       nodes { ` + ticketFields + ` }
@@ -486,20 +570,23 @@ func (c *Client) issuesPage(states []string, label string) pageReader {
 	return func(ctx context.Context, cursor any) (ticketPage, error) {
 		var response struct {
 			Repository struct {
-				IsPrivate bool
-				Issues    struct {
+				IsPrivate     bool
+				Registrations struct{ Nodes []labelNode }
+				Issues        struct {
 					TotalCount int
 					Nodes      []ticketNode
 					PageInfo   pageInfo
 				}
 			}
 		}
-		variables := c.variables(map[string]any{"states": states, "labels": labels, "after": cursor})
+		variables := c.variables(registrationVariables(project))
+		variables["states"], variables["labels"], variables["after"] = states, labels, cursor
 		if err := c.do(ctx, query, variables, &response); err != nil {
 			return ticketPage{}, err
 		}
-		issues := response.Repository.Issues
-		return ticketPage{IsPrivate: response.Repository.IsPrivate, Nodes: issues.Nodes, PageInfo: issues.PageInfo, Total: issues.TotalCount}, nil
+		repository := response.Repository
+		issues := repository.Issues
+		return ticketPage{IsPrivate: repository.IsPrivate, Nodes: issues.Nodes, PageInfo: issues.PageInfo, Total: issues.TotalCount, Registrations: repository.Registrations.Nodes}, nil
 	}
 }
 
@@ -507,7 +594,7 @@ func (c *Client) issuesPage(states []string, label string) pageReader {
 // lacks. A search query stops at searchCap results, so a longer one continues with a
 // new query from the last creation time. That query starts with the tickets created
 // in the same second, which were already served.
-func (c *Client) searchPage(states []string, scope, text string) pageReader {
+func (c *Client) searchPage(states []string, scope, text string, project Project) pageReader {
 	terms := []string{"repo:" + c.repo.String(), "is:issue", "sort:created-asc"}
 	if len(states) == 1 {
 		terms = append(terms, "is:"+strings.ToLower(states[0]))
@@ -515,8 +602,8 @@ func (c *Client) searchPage(states []string, scope, text string) pageReader {
 	if scope != "" {
 		terms = append(terms, scope)
 	}
-	query := `query($owner: String!, $name: String!, $search: String!, $after: String) {
-  repository(owner: $owner, name: $name) { isPrivate }
+	query := `query($owner: String!, $name: String!, $search: String!, $after: String, $registrations: String, $checkRegistrations: Boolean!) {
+  repository(owner: $owner, name: $name) { isPrivate ` + registrationFields + ` }
   search(query: $search, type: ISSUE, first: ` + strconv.Itoa(listPageSize) + `, after: $after) {
     issueCount
     nodes { ... on Issue { ` + ticketFields + ` } }
@@ -528,8 +615,11 @@ func (c *Client) searchPage(states []string, scope, text string) pageReader {
 	seen := map[int]bool{}
 	return func(ctx context.Context, cursor any) (ticketPage, error) {
 		var response struct {
-			Repository struct{ IsPrivate bool }
-			Search     struct {
+			Repository struct {
+				IsPrivate     bool
+				Registrations struct{ Nodes []labelNode }
+			}
+			Search struct {
 				IssueCount int
 				Nodes      []ticketNode
 				PageInfo   pageInfo
@@ -545,7 +635,8 @@ func (c *Client) searchPage(states []string, scope, text string) pageReader {
 		if cursor == "" {
 			cursor = nil
 		}
-		variables := c.variables(map[string]any{"search": strings.Join(search, " "), "after": cursor})
+		variables := c.variables(registrationVariables(project))
+		variables["search"], variables["after"] = strings.Join(search, " "), cursor
 		if err := c.do(ctx, query, variables, &response); err != nil {
 			return ticketPage{}, err
 		}
@@ -553,7 +644,7 @@ func (c *Client) searchPage(states []string, scope, text string) pageReader {
 		if total == 0 {
 			total = result.IssueCount
 		}
-		page := ticketPage{IsPrivate: response.Repository.IsPrivate, Total: total, PageInfo: result.PageInfo}
+		page := ticketPage{IsPrivate: response.Repository.IsPrivate, Total: total, PageInfo: result.PageInfo, Registrations: response.Repository.Registrations.Nodes}
 		for _, node := range result.Nodes {
 			if !seen[node.Number] {
 				seen[node.Number] = true
@@ -1263,11 +1354,16 @@ func (c *Client) MoveTicket(ctx context.Context, number int, target string) erro
 		}
 		fields = append(fields, fmt.Sprintf(`remove: removeLabelsFromLabelable(input: {labelableId: %q, labelIds: [%q]}) { clientMutationId }`, ticket.ID, previous.LabelID))
 	}
-	if ticket.itemID != "" {
+	// A component uses its repository's board, so moving between them keeps the item.
+	sameBoard := ticket.itemID != "" && ticket.boardID == project.BoardID
+	if ticket.itemID != "" && !sameBoard {
 		fields = append(fields, fmt.Sprintf(`drop: deleteProjectV2Item(input: {projectId: %q, itemId: %q}) { clientMutationId }`, ticket.boardID, ticket.itemID))
 	}
 	if err := c.write(ctx, fields); err != nil {
 		return fmt.Errorf("moving ticket #%d: %w", number, err)
+	}
+	if sameBoard {
+		return nil
 	}
 	status := ticket.Status
 	if status == "" {

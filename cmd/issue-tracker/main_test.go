@@ -403,9 +403,9 @@ func TestLabelAndSearchFlags(t *testing.T) {
 func TestProjectCommands(t *testing.T) {
 	t.Setenv("AGENT", "1")
 	metadata := fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},
-"labels":{"nodes":[{"id":"L1","name":"repo:go-tui","description":"o/go-tui"}],"pageInfo":{"hasNextPage":false,"endCursor":""}},
+"labels":{"nodes":[{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},{"id":"LD","name":"repo:go-tui/docs","description":"o/go-tui:site/docs"}],"pageInfo":{"hasNextPage":false,"endCursor":""}},
 "projectsV2":{"nodes":[{"id":"B1","title":"go-tui","url":"https://b/1","field":{"id":"F","options":[{"id":"t","name":"Todo"}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
-	visibility := fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":false}}}`}
+	visibility := fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":false},"r1":{"isPrivate":false}}}`}
 	summary := fakegithub.Route{Match: "open: search", Body: `{"data":{"open":{"issueCount":2},"closed":{"issueCount":5}}}`}
 	tests := []struct {
 		name   string
@@ -413,9 +413,13 @@ func TestProjectCommands(t *testing.T) {
 		args   []string
 		want   string
 	}{
-		{"list", []fakegithub.Route{metadata, visibility}, []string{"project", "list"}, "go-tui\to/go-tui\tpublic\thttps://b/1\n"},
-		{"inspect", []fakegithub.Route{boardOnly(), summary}, []string{"project", "inspect", "go-tui"}, "visibility: private\nboard: https://b/1\nopen: 2\nclosed: 5\n"},
+		{"list", []fakegithub.Route{metadata, visibility}, []string{"project", "list"}, "go-tui\to/go-tui\tpublic\thttps://b/1\t.\n"},
+		{"inspect", []fakegithub.Route{boardOnly(), summary}, []string{"project", "inspect", "go-tui"}, "path: .\nvisibility: private\nboard: https://b/1\nopen: 2\nclosed: 5\n"},
+		{"list components", []fakegithub.Route{metadata, visibility}, []string{"project", "list"}, "go-tui/docs\to/go-tui\tpublic\thttps://b/1\tsite/docs\n"},
 		{"add existing", []fakegithub.Route{metadata, visibility}, []string{"project", "add", "o/go-tui"}, "OK: registered project go-tui"},
+		{"add existing component", []fakegithub.Route{metadata, visibility}, []string{"project", "add", "o/go-tui", "--path", "site/docs"}, "OK: registered project go-tui/docs for site/docs in o/go-tui"},
+		{"add component", []fakegithub.Route{metadata, visibility, {Match: "label(name: $label)", Body: `{"data":{"repository":{"label":null}}}`}, {Match: "createLabel(input", Body: `{"data":{"createLabel":{"label":{"id":"LN"}}}}`}},
+			[]string{"project", "add", "o/go-tui", "--path", "cmd/demo", "--name", "example"}, "OK: registered project go-tui/example for cmd/demo in o/go-tui"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -603,6 +607,7 @@ func TestArgumentErrors(t *testing.T) {
 		{"list scope conflict", []string{"issue", "list", "--project", "x", "--all-projects"}, "not both"},
 		{"project add outside a repository", []string{"project", "add"}, "pass owner/repo"},
 		{"project add bad repo", []string{"project", "add", "bad"}, "invalid repository"},
+		{"project add name without path", []string{"project", "add", "o/go-tui", "--name", "docs"}, "pass --path too"},
 		{"project inspect outside a repository", []string{"project", "inspect"}, "pass a project"},
 		{"unknown command", []string{"nope"}, "unknown command"},
 	}

@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-02 18:40
+  last_modified: 2026-11-03 12:00
   status: current
 ---
 
@@ -12,7 +12,7 @@ metadata:
 
 Set `AGENT=1` on every invocation, or export it for the session. Read exit status as well as stdout: failures exit nonzero and print `ERR:` to stderr. Successful writes print one `OK:` line. Values `1`, `true`, and `yes` enable agent output, with case and surrounding whitespace ignored.
 
-`issue-tracker` keeps every ticket as a GitHub Issue in one private tracker repository. Code and pull requests stay in their own repositories. Each registered code repository is a project, with one `repo:<name>` label and one board with the columns Todo, Doing, and Done. A ticket belongs to a project through that label or by being on its board, so a ticket created inside a board in the GitHub web UI needs no label. If the two disagree, the label wins. Project-scoped lists find unlabelled board tickets through GitHub search, so a new or just-closed one can take several seconds to move in them; `issue inspect` is always current. A ticket with neither has no project and appears only in an unscoped list.
+`issue-tracker` keeps every ticket as a GitHub Issue in one private tracker repository. Code and pull requests stay in their own repositories. Each registered code repository is a project, with one `repo:<name>` label and one board with the columns Todo, Doing, and Done. A ticket belongs to a project through that label or by being on its board, so a ticket created inside a board in the GitHub web UI needs no label. If the two disagree, the label wins. A directory of a registered repository can be registered as a component: a project named `<repo>/<component>` with its own `repo:<repo>/<component>` label on the repository's board. A ticket with a component's label belongs to the component, and a ticket on the board without a component label belongs to the repository. Project-scoped lists find unlabelled board tickets through GitHub search, so a new or just-closed one can take several seconds to move in them; `issue inspect` is always current. A ticket with neither has no project and appears only in an unscoped list.
 
 ## Workflow
 
@@ -46,7 +46,7 @@ Authentication reuses the GitHub CLI login. Boards need the `project` scope: `is
 
 ## Project resolution
 
-Inside a registered repository, the current repository's git remote selects the project, so `--project` is optional. An explicit `--project` always wins. Outside a registered repository, `issue list` covers all projects, and `issue create` and `project inspect` need an explicit project.
+Inside a registered repository, the current repository's git remote selects the project, so `--project` is optional. Inside a registered component's directory, or below it, the component is selected; when components are nested, the deepest one wins. Elsewhere in the repository, the repository's project is selected, and its lists, claims, and counts include its components' tickets. When `GH_REPO` is set, it names the repository and the directory is ignored. An explicit `--project` always wins. Outside a registered repository, `issue list` covers all projects, and `issue create` and `project inspect` need an explicit project.
 
 ## Commands
 
@@ -58,19 +58,24 @@ Runs `gh auth refresh --hostname github.com --scopes project` to add the `projec
 
 Registers a repository, creating its board and label. Defaults to the current repository. Repeating it is safe. Fails when another owner's repository already uses the short name.
 
+With `--path`, registers that directory of an already registered repository as a component instead. It creates only the label `repo:<repo>/<component>`, whose description `owner/repo:<path>` records the directory, and uses the repository's board. Prints `registered project <repo>/<component> for <path> in <owner/repo>`. Repeating it is safe. Fails when the repository is not registered, when the name or path is already registered to another component, or when the label name exceeds 50 characters or its description exceeds 100.
+
+- `--path` string: directory relative to the top of the repository, without `.`, `..`, or `:`.
+- `--name` string: component name used after `<repo>/`. Defaults to the last element of `--path`. Requires `--path`.
+
 ### issue-tracker project inspect [project]
 
-Prints `project`, `repository`, `visibility`, `board`, `open`, and `closed`. Defaults to the current repository's project.
+Prints `project`, `repository`, `path`, `visibility`, `board`, `open`, and `closed`. `path` is `.` for a whole repository. A repository's counts include its components' tickets. Defaults to the current repository's project.
 
 ### issue-tracker project list
 
-Prints one tab-separated line per project: name, repository, visibility, board URL.
+Prints one tab-separated line per project: name, repository, visibility, board URL, path. The path is `.` for a whole repository. A component shows its repository's board.
 
 ### issue-tracker project rm <project>
 
-Unregisters a project with no open tickets. Labels closed tickets that were only on the board, deletes the board, and keeps the label on closed tickets.
+Unregisters a project with no open tickets and keeps the label on closed tickets. For a repository, labels closed tickets that were only on the board, then deletes the board. A component's board belongs to its repository and stays. Fails for a repository with registered components until they are removed.
 
-- `--yes` bool: confirm deleting the board. Required.
+- `--yes` bool: confirm the removal. Required.
 
 ### issue-tracker project scan
 
@@ -155,7 +160,7 @@ Reopens a ticket and sets it to Todo.
 
 ### issue-tracker issue move <number> <project>
 
-Reassigns a ticket to another project and keeps its status. A ticket already in that project with no board status gets Todo, which finishes an import that failed partway.
+Reassigns a ticket to another project and keeps its status. Moving between a repository and its components changes only the label, because they share a board. A ticket already in that project with no board status gets Todo, which finishes an import that failed partway.
 
 ### issue-tracker issue label add <number> <label...>
 
@@ -248,6 +253,8 @@ Prints help for a command. `--help`, `-h` bool prints help on any command, and `
 - `GitHub rate limit reached: retry after <time>`: wait until that time.
 - `your GitHub login has no access to project boards: run issue-tracker auth refresh`: the token lacks the `project` scope. Ask the user to run `issue-tracker auth refresh` in a terminal.
 - `auth refresh needs a person at a terminal to approve the login in a browser`: `auth refresh` ran in agent mode or without a terminal. Ask the user to run it.
+- `repository <owner/repo> is not registered: run project add <owner/repo> first`: `project add --path` needs the repository registered. Run the suggested command, then repeat.
+- `project "<repo>" has components: remove <repo>/<component> first`: `project rm` keeps a repository while components use its board. Remove each component first.
 - `tracker <repo> is not private`: `require_private` is on and the tracker is not private.
 - `moved to ticket #<number>, finish it with issue move: ticket is on the board, but its item cannot be read yet`: `project import` moved the issue, and the ticket has its label but no status. Wait a few seconds, run `issue move <number> <project>`, then rerun the import for the rest.
 - `ticket #<number> was created but linking it failed: ticket is on the board, but its item cannot be read yet`: the ticket exists and has no status, and its `--blocked-by`, `--blocking`, `--label`, and `--attach` values were not applied. Keep that ticket instead of running `issue create` again. Wait a few seconds, run `issue status set <number> Todo`, then apply the rest with `issue blocker add`, `issue label add`, and `issue attachment add`.

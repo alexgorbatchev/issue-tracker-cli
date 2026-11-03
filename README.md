@@ -8,7 +8,8 @@
 - **Attachments:** Uploads and downloads screenshots and videos using only your GitHub login.
 - **Merge checks:** Closes a ticket only after confirming its pull requests merged.
 - **Stale reporting:** Flags claimed tickets with no recent activity.
-- **Project detection:** Works out the project from the repository you are in, so most commands need few arguments.
+- **Project detection:** Works out the project from the repository and directory you are in, so most commands need few arguments.
+- **Monorepos:** Registers directories of one repository as components, each with its own label on the repository's board.
 
 # How It Works
 
@@ -22,6 +23,7 @@
 
 - Each project is a `repo:<name>` label and a private GitHub Project board in the tracker repository. Boards are never linked to your code repositories, and nothing is written to them, so a public repository shows no trace of the tracker.
 - A ticket you create inside a board on GitHub belongs to that project without a label. If a label and a board disagree, the label wins.
+- A component is a project for one directory of a registered repository, registered with `project add --path`. Its label `repo:<repo>/<component>` has the description `owner/repo:<path>`, and it uses the repository's board, so routing a ticket to it on GitHub takes one label. Inside that directory the component is the current project; elsewhere in the repository, the repository's lists and claims include its components' tickets.
 - A claim is a Git ref named `refs/claims/<number>` in the tracker repository. GitHub refuses to create a ref that exists, so a second claimant fails at once. Refs do not appear on the Tags or Branches pages.
 - Claims never expire on their own. A Doing ticket with no ticket or board activity for `stale_days` is reported as stale and is left for you to release.
 - A ticket is ready when it is open, does not have the `blocked` label, has no open blockers, has no blocked parent or grandparent, has no open sub-issues, and is not in Doing or Done. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers. A ticket with sub-issues works as an epic: `issue sub list` shows its progress, and `issue sub close-eligible` closes it once they are all closed.
@@ -49,6 +51,9 @@ curl -sSL https://github.com/alexgorbatchev/issue-tracker-cli/releases/latest/do
 ```bash
 # Register the repository you are in
 issue-tracker project add
+
+# Register one of its directories as a component
+issue-tracker project add --path services/api
 
 # Create a ticket with a screenshot
 issue-tracker issue create --title "Crash on resize" --body-file bug.md --attach ./crash.png
@@ -146,11 +151,18 @@ require_private = true
 | :--- | :--- | :--- | :--- |
 | `--dir <path>` | | `~/.cache/issue-tracker/attachments/<number>/` | Download directory |
 
+`issue-tracker project add [owner/repo]`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--path <dir>` | | | Register this directory, relative to the top of the repository, as a component |
+| `--name <name>` | | Last element of `--path` | Component name after the repository's |
+
 `issue-tracker project rm`
 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--yes` | | `false` | Confirm deleting the project's board |
+| `--yes` | | `false` | Confirm the removal, which deletes a repository's board |
 
 `issue-tracker project scan`
 

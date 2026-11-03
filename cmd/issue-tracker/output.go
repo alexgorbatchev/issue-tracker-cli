@@ -80,7 +80,7 @@ func printTickets(w io.Writer, tickets []tracker.Ticket, staleDays int, now time
 func printProjects(w io.Writer, projects []tracker.Project) error {
 	rows := make([][]string, 0, len(projects))
 	for _, project := range projects {
-		rows = append(rows, []string{project.Name, project.Repo, visibility(project), project.BoardURL})
+		rows = append(rows, []string{project.Name, project.Repo, visibility(project), project.BoardURL, projectPath(project)})
 	}
 	if cobrahelptree.IsAgentMode() {
 		return tsv(w, rows)
@@ -89,7 +89,15 @@ func printProjects(w io.Writer, projects []tracker.Project) error {
 		_, err := fmt.Fprintln(w, "No projects registered.")
 		return err
 	}
-	return table(w, []string{"Project", "Repository", "Visibility", "Board"}, rows)
+	return table(w, []string{"Project", "Repository", "Visibility", "Board", "Path"}, rows)
+}
+
+// projectPath shows a component's directory, and . for a whole repository.
+func projectPath(project tracker.Project) string {
+	if project.Path == "" {
+		return "."
+	}
+	return project.Path
 }
 
 func visibility(project tracker.Project) string {
@@ -101,8 +109,8 @@ func visibility(project tracker.Project) string {
 
 func printSummary(w io.Writer, summary tracker.ProjectSummary) error {
 	project := summary.Project
-	_, err := fmt.Fprintf(w, "project: %s\nrepository: %s\nvisibility: %s\nboard: %s\nopen: %d\nclosed: %d\n",
-		project.Name, project.Repo, visibility(project), project.BoardURL, summary.Open, summary.Closed)
+	_, err := fmt.Fprintf(w, "project: %s\nrepository: %s\npath: %s\nvisibility: %s\nboard: %s\nopen: %d\nclosed: %d\n",
+		project.Name, project.Repo, projectPath(project), visibility(project), project.BoardURL, summary.Open, summary.Closed)
 	return err
 }
 

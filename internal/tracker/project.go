@@ -4,12 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cli/go-gh/v2/pkg/repository"
 )
 
-const boardViewName = "Board"
+const (
+	boardViewName = "Board"
+	// GitHub rejects longer label names and descriptions, which hold the registration.
+	maxLabelName        = 50
+	maxLabelDescription = 100
+)
 
 // Ticket statuses, which are the columns of every project board.
 const (
@@ -40,24 +49,26 @@ func (c *Client) Projects(ctx context.Context) ([]Project, error) {
 	return meta.Projects, nil
 }
 
-// CurrentProject maps the working directory's GitHub remote to a project without
-// calling GitHub unless refresh is set and the cached metadata has no match.
+// CurrentProject maps the working directory's GitHub remote, and its directory in the
+// checkout, to a project without calling GitHub unless refresh is set and the cached
+// metadata has no match.
 func (c *Client) CurrentProject(ctx context.Context, refresh bool) (Project, bool, error) {
 	repo, ok := currentRepo()
 	if !ok {
 		return Project{}, false, nil
 	}
+	dir := currentDir()
 	meta, err := c.metadata(ctx)
 	if err != nil {
 		return Project{}, false, err
 	}
-	if project, ok := meta.projectForRepo(repo); ok || !refresh {
+	if project, ok := meta.projectAt(repo, dir); ok || !refresh {
 		return project, ok, nil
 	}
 	if meta, err = c.refreshMetadata(ctx); err != nil {
 		return Project{}, false, err
 	}
-	project, ok := meta.projectForRepo(repo)
+	project, ok := meta.projectAt(repo, dir)
 	return project, ok, nil
 }
 
@@ -79,13 +90,34 @@ func currentRepo() (string, bool) {
 	return repo.Owner + "/" + repo.Name, true
 }
 
-func (m *metadata) projectForRepo(repo string) (Project, bool) {
-	for _, project := range m.Projects {
-		if strings.EqualFold(project.Repo, repo) {
-			return project, true
-		}
+// currentDir returns the working directory relative to the top of its checkout,
+// empty at the top. GH_REPO names a repository that need not be this checkout, so
+// it selects the whole repository.
+func currentDir() string {
+	if os.Getenv("GH_REPO") != "" {
+		return ""
 	}
-	return Project{}, false
+	out, err := exec.Command("git", "rev-parse", "--show-prefix").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(strings.TrimSpace(string(out)), "/")
+}
+
+// validDir accepts a directory inside a repository, written relative to its top.
+func validDir(dir string) error {
+	if dir == "" || dir != path.Clean(dir) || dir == "." || path.IsAbs(dir) || dir == ".." || strings.HasPrefix(dir, "../") || strings.Contains(dir, ":") {
+		return fmt.Errorf("invalid path %q: expected a directory relative to the top of the repository", dir)
+	}
+	return nil
+}
+
+// validComponent accepts the part of a component's name after its repository.
+func validComponent(name string) error {
+	if name == "" || strings.ContainsAny(name, "/:, \t\n") {
+		return fmt.Errorf("invalid component name %q: expected one word without slashes, colons, commas, or spaces", name)
+	}
+	return nil
 }
 
 // AddProject registers a code repository. Writing the label comes last, so a
@@ -111,7 +143,7 @@ func (c *Client) AddProject(ctx context.Context, repo Repo) (Project, error) {
 			return Project{}, err
 		}
 	}
-	labelID, err := c.writeLabel(ctx, meta, repo)
+	labelID, err := c.writeLabel(ctx, meta, labelPrefix+repo.Name, repo.String())
 	if err != nil {
 		return Project{}, err
 	}
@@ -192,10 +224,64 @@ func (c *Client) writeColumns(ctx context.Context, boardID, fieldID string) (map
 	return options, nil
 }
 
-// writeLabel creates the routing label, or restores the repository on a label kept
-// by a removed project. The description holds owner/name for the project mapping.
-func (c *Client) writeLabel(ctx context.Context, meta *metadata, repo Repo) (string, error) {
-	name := labelPrefix + repo.Name
+// AddComponent registers a directory of a registered repository as a project of its
+// own, named repository/component after the directory unless component is given. It
+// uses the repository's board, so registering it writes only its label.
+func (c *Client) AddComponent(ctx context.Context, repo Repo, dir, component string) (Project, error) {
+	if err := validDir(dir); err != nil {
+		return Project{}, err
+	}
+	if component == "" {
+		component = path.Base(dir)
+	}
+	if err := validComponent(component); err != nil {
+		return Project{}, err
+	}
+	project := Project{Name: repo.Name + "/" + component, Repo: repo.String(), Path: dir}
+	if n := utf8.RuneCountInString(project.Label()); n > maxLabelName {
+		return Project{}, fmt.Errorf("label %s is %d characters, over GitHub's %d: pass a shorter --name", project.Label(), n, maxLabelName)
+	}
+	if n := utf8.RuneCountInString(project.registration()); n > maxLabelDescription {
+		return Project{}, fmt.Errorf("registration %s is %d characters, over GitHub's %d for a label description", project.registration(), n, maxLabelDescription)
+	}
+	meta, err := c.refreshMetadata(ctx)
+	if err != nil {
+		return Project{}, err
+	}
+	root, ok := meta.project(repo.Name)
+	if !ok || !strings.EqualFold(root.Repo, repo.String()) {
+		return Project{}, fmt.Errorf("repository %s is not registered: run project add %s first", repo, repo)
+	}
+	if root.BoardID == "" {
+		return Project{}, errNoBoard(root)
+	}
+	for _, other := range meta.components(root) {
+		switch {
+		case other.Name == project.Name && other.Path == dir:
+			return other, nil
+		case other.Name == project.Name:
+			return Project{}, fmt.Errorf("project %q is already registered for %s", project.Name, other.registration())
+		case other.Path == dir:
+			return Project{}, fmt.Errorf("%s is already registered as project %q", dir, other.Name)
+		}
+	}
+	labelID, err := c.writeLabel(ctx, meta, project.Label(), project.registration())
+	if err != nil {
+		return Project{}, err
+	}
+	// The component shares everything else with its repository, so the cache is
+	// updated here instead of read again from GitHub.
+	root.Name, root.Path, root.LabelID = project.Name, project.Path, labelID
+	meta.Projects = append(meta.Projects, root)
+	if err := c.saveMetadata(meta); err != nil {
+		return Project{}, err
+	}
+	return root, nil
+}
+
+// writeLabel creates a routing label, or restores the registration on a label kept
+// by a removed project. The description maps the project to its repository.
+func (c *Client) writeLabel(ctx context.Context, meta *metadata, name, description string) (string, error) {
 	var existing struct {
 		Repository struct {
 			Label *struct{ ID string }
@@ -208,7 +294,7 @@ func (c *Client) writeLabel(ctx context.Context, meta *metadata, repo Repo) (str
 	}
 	if existing.Repository.Label != nil {
 		id := existing.Repository.Label.ID
-		return id, c.describeLabel(ctx, id, repo.String())
+		return id, c.describeLabel(ctx, id, description)
 	}
 	var created struct {
 		CreateLabel struct {
@@ -218,7 +304,7 @@ func (c *Client) writeLabel(ctx context.Context, meta *metadata, repo Repo) (str
 	mutation := `mutation($repository: ID!, $name: String!, $description: String!) {
   createLabel(input: {repositoryId: $repository, name: $name, color: "0969da", description: $description}) { label { id } }
 }`
-	variables = map[string]any{"repository": meta.RepositoryID, "name": name, "description": repo.String()}
+	variables = map[string]any{"repository": meta.RepositoryID, "name": name, "description": description}
 	if err := c.do(ctx, mutation, variables, &created); err != nil {
 		return "", fmt.Errorf("creating label: %w", err)
 	}
@@ -233,16 +319,28 @@ func (c *Client) describeLabel(ctx context.Context, labelID, description string)
 	return nil
 }
 
-// RemoveProject unregisters a project with no open tickets. It deletes the board
-// and clears the label's repository, so closed tickets keep their label. Closed
-// tickets that were only on the board get the label first, or they would lose their
-// project with it.
+// RemoveProject unregisters a project with no open tickets and clears its label's
+// registration, so closed tickets keep their label. A repository also loses its
+// board, so closed tickets that were only on the board get the label first, or they
+// would lose their project with it. A repository with components keeps them until
+// they are removed, because they use its board.
 func (c *Client) RemoveProject(ctx context.Context, name string) error {
-	project, err := c.lookupProject(ctx, name)
-	if err != nil {
-		return err
-	}
-	summary, onBoard, err := c.summarize(ctx, project)
+	var project Project
+	var summary ProjectSummary
+	var onBoard []Ticket
+	err := c.withProject(ctx, name, func(meta *metadata, found Project) (bool, error) {
+		var stale bool
+		var err error
+		project = found
+		summary, onBoard, stale, err = c.summarize(ctx, meta, found)
+		if err != nil || stale {
+			return stale, err
+		}
+		if components := meta.components(found); len(components) > 0 {
+			return false, fmt.Errorf("project %q has components: remove %s first", name, components[0].Name)
+		}
+		return false, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -258,7 +356,7 @@ func (c *Client) RemoveProject(ctx context.Context, name string) error {
 			return fmt.Errorf("labelling closed tickets: %w", err)
 		}
 	}
-	if project.BoardID != "" {
+	if project.BoardID != "" && !project.Component() {
 		mutation := `mutation($id: ID!) { deleteProjectV2(input: {projectId: $id}) { clientMutationId } }`
 		if err := c.do(ctx, mutation, map[string]any{"id": project.BoardID}, nil); err != nil {
 			return fmt.Errorf("deleting board: %w", err)
@@ -271,31 +369,47 @@ func (c *Client) RemoveProject(ctx context.Context, name string) error {
 	return err
 }
 
-// ProjectSummary counts a project's tickets.
+// ProjectSummary counts a project's tickets. A repository's counts include its
+// components' tickets.
 func (c *Client) ProjectSummary(ctx context.Context, project Project) (ProjectSummary, error) {
-	summary, _, err := c.summarize(ctx, project)
+	var summary ProjectSummary
+	err := c.withProject(ctx, project.Name, func(meta *metadata, found Project) (bool, error) {
+		var stale bool
+		var err error
+		summary, _, stale, err = c.summarize(ctx, meta, found)
+		return stale, err
+	})
 	return summary, err
 }
 
 // summarize counts labelled tickets in one request. Board-only tickets are read
 // rather than counted, because a search count would include tickets labelled for
-// another project.
-func (c *Client) summarize(ctx context.Context, project Project) (ProjectSummary, []Ticket, error) {
-	onBoard, err := c.boardOnlyTickets(ctx, project, []string{stateOpen, StateClosed}, ListOptions{})
+// another project. It reports stale cached components instead of counting.
+func (c *Client) summarize(ctx context.Context, meta *metadata, project Project) (ProjectSummary, []Ticket, bool, error) {
+	labels := meta.scopeLabels(project)
+	onBoard, err := c.boardOnlyTickets(ctx, project, labels, []string{stateOpen, StateClosed}, ListOptions{})
 	if err != nil {
-		return ProjectSummary{}, nil, fmt.Errorf("counting tickets: %w", err)
+		return ProjectSummary{}, nil, false, fmt.Errorf("counting tickets: %w", err)
 	}
-	base := fmt.Sprintf(`repo:%s label:"%s" is:issue`, c.repo, project.Label())
-	query := `query($open: String!, $closed: String!) {
+	base := fmt.Sprintf(`repo:%s %s is:issue`, c.repo, labelScope(labels))
+	query := `query($owner: String!, $name: String!, $open: String!, $closed: String!, $registrations: String, $checkRegistrations: Boolean!) {
+  repository(owner: $owner, name: $name) { ` + registrationFields + ` }
   open: search(query: $open, type: ISSUE, first: 1) { issueCount }
   closed: search(query: $closed, type: ISSUE, first: 1) { issueCount }
 }`
 	var response struct {
+		Repository struct {
+			Registrations struct{ Nodes []labelNode }
+		}
 		Open, Closed struct{ IssueCount int }
 	}
-	variables := map[string]any{"open": base + " is:open", "closed": base + " is:closed"}
+	variables := c.variables(registrationVariables(project))
+	variables["open"], variables["closed"] = base+" is:open", base+" is:closed"
 	if err := c.do(ctx, query, variables, &response); err != nil {
-		return ProjectSummary{}, nil, fmt.Errorf("counting tickets: %w", err)
+		return ProjectSummary{}, nil, false, fmt.Errorf("counting tickets: %w", err)
+	}
+	if meta.staleComponents(project, response.Repository.Registrations.Nodes) {
+		return ProjectSummary{}, nil, true, nil
 	}
 	summary := ProjectSummary{Project: project, Open: response.Open.IssueCount, Closed: response.Closed.IssueCount}
 	for _, ticket := range onBoard {
@@ -305,7 +419,7 @@ func (c *Client) summarize(ctx context.Context, project Project) (ProjectSummary
 			summary.Closed++
 		}
 	}
-	return summary, onBoard, nil
+	return summary, onBoard, false, nil
 }
 
 // ResolveProject looks up a registered project by name.

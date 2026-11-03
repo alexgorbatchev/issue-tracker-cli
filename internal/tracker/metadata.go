@@ -14,10 +14,12 @@ import (
 
 const labelPrefix = "repo:"
 
-// Project is a code repository registered with the tracker.
+// Project is a code repository registered with the tracker, or a component: one
+// directory of a registered repository with its own label on the repository's board.
 type Project struct {
 	Name          string            `json:"name"`
 	Repo          string            `json:"repo"`
+	Path          string            `json:"path,omitempty"`
 	Public        bool              `json:"public"`
 	LabelID       string            `json:"label_id"`
 	BoardID       string            `json:"board_id,omitempty"`
@@ -29,6 +31,45 @@ type Project struct {
 // Label returns the routing label for the project.
 func (p Project) Label() string {
 	return labelPrefix + p.Name
+}
+
+// Component reports a project registered for one directory of its repository.
+func (p Project) Component() bool {
+	return p.Path != ""
+}
+
+// Root names the repository project whose board this project uses, which is the
+// project itself unless it is a component.
+func (p Project) Root() string {
+	root, _, _ := strings.Cut(p.Name, "/")
+	return root
+}
+
+// registration is the label description that registers a component: owner/name:path.
+func (p Project) registration() string {
+	return p.Repo + ":" + p.Path
+}
+
+// parseRegistration reads a routing label. A repository's label is named after it,
+// and a component's after its repository and the component, as in repo:name/api.
+func parseRegistration(name, description string) (Project, bool) {
+	value, dir, component := strings.Cut(description, ":")
+	repo, err := ParseRepo(value)
+	if err != nil {
+		return Project{}, false
+	}
+	project := Project{Name: name, Repo: repo.String(), Path: dir}
+	if !component {
+		if name != repo.Name {
+			return Project{}, false
+		}
+		return project, true
+	}
+	root, child, ok := strings.Cut(name, "/")
+	if !ok || root != repo.Name || validComponent(child) != nil || validDir(dir) != nil {
+		return Project{}, false
+	}
+	return project, true
 }
 
 // board is a GitHub Project linked to the tracker repository.
@@ -57,6 +98,79 @@ func (m *metadata) project(name string) (Project, bool) {
 		}
 	}
 	return Project{}, false
+}
+
+// projectAt picks the project for a directory of a repository: the component with
+// the longest path holding it, or else the repository's own project.
+func (m *metadata) projectAt(repo, dir string) (Project, bool) {
+	var found Project
+	ok := false
+	for _, project := range m.Projects {
+		if !strings.EqualFold(project.Repo, repo) || !within(dir, project.Path) {
+			continue
+		}
+		if !ok || len(project.Path) > len(found.Path) {
+			found, ok = project, true
+		}
+	}
+	return found, ok
+}
+
+// within reports whether dir is path or below it. An empty path is the whole repository.
+func within(dir, path string) bool {
+	return path == "" || dir == path || strings.HasPrefix(dir, path+"/")
+}
+
+// components lists the components registered under a repository project.
+func (m *metadata) components(project Project) []Project {
+	if project.Component() {
+		return nil
+	}
+	var found []Project
+	for _, other := range m.Projects {
+		if other.Component() && other.Root() == project.Name {
+			found = append(found, other)
+		}
+	}
+	return found
+}
+
+// scopeLabels lists the routing labels of a project's tickets. A repository covers
+// the tickets of its components too.
+func (m *metadata) scopeLabels(project Project) []string {
+	labels := []string{project.Label()}
+	for _, component := range m.components(project) {
+		labels = append(labels, component.Label())
+	}
+	return labels
+}
+
+// staleComponents reports whether the labels read from GitHub register other
+// components of a repository project than the cache holds.
+func (m *metadata) staleComponents(project Project, labels []labelNode) bool {
+	if project.Name == "" || project.Component() {
+		return false
+	}
+	registered := map[string]string{}
+	for _, label := range labels {
+		name, ok := strings.CutPrefix(label.Name, labelPrefix)
+		if !ok {
+			continue
+		}
+		if found, ok := parseRegistration(name, label.Description); ok && found.Component() && found.Root() == project.Name {
+			registered[found.Name] = found.Path
+		}
+	}
+	cached := m.components(project)
+	if len(cached) != len(registered) {
+		return true
+	}
+	for _, component := range cached {
+		if dir, ok := registered[component.Name]; !ok || dir != component.Path {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *metadata) board(title string) (board, bool) {
@@ -146,6 +260,9 @@ const metadataQuery = `query($owner: String!, $name: String!, $labels: String, $
   }
 }`
 
+// labelNode is a label of the tracker repository.
+type labelNode struct{ ID, Name, Description string }
+
 type pageInfo struct {
 	HasNextPage bool
 	EndCursor   string
@@ -160,7 +277,7 @@ type metadataPage struct {
 			Target struct{ OID string }
 		}
 		Labels struct {
-			Nodes    []struct{ ID, Name, Description string }
+			Nodes    []labelNode
 			PageInfo pageInfo
 		}
 		ProjectsV2 struct {
@@ -245,11 +362,12 @@ func (m *metadata) collect(page metadataPage) {
 		if !ok {
 			continue
 		}
-		repo, err := ParseRepo(label.Description)
-		if err != nil || repo.Name != name {
+		project, ok := parseRegistration(name, label.Description)
+		if !ok {
 			continue // an unregistered project keeps its label but loses its repository
 		}
-		m.Projects = append(m.Projects, Project{Name: name, Repo: repo.String(), LabelID: label.ID})
+		project.LabelID = label.ID
+		m.Projects = append(m.Projects, project)
 	}
 	for _, node := range page.Repository.ProjectsV2.Nodes {
 		item := board{ID: node.ID, Title: node.Title, URL: node.URL, StatusFieldID: node.Field.ID}
@@ -261,9 +379,11 @@ func (m *metadata) collect(page metadataPage) {
 	}
 }
 
+// linkBoards gives each project its board. A component uses its repository's board,
+// so a ticket keeps its status when it moves between them.
 func (m *metadata) linkBoards() {
 	for i := range m.Projects {
-		if item, ok := m.board(m.Projects[i].Name); ok {
+		if item, ok := m.board(m.Projects[i].Root()); ok {
 			m.Projects[i].attach(item)
 		}
 	}
