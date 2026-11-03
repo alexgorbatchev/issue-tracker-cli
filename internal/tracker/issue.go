@@ -869,7 +869,7 @@ func (c *Client) detail(ctx context.Context, number int, issue detailNode) (Tick
 		}
 		detail.Comments = append(detail.Comments, more...)
 	}
-	detail.Attachments = findAttachments(detail.Body, detail.Comments)
+	detail.Attachments = findAttachments(detail.Body, detail.Comments, attachmentURL, c.releaseAssetURL())
 	if detail.Project != "" {
 		if meta, err := c.metadata(ctx); err == nil {
 			project, ok := meta.project(detail.Project)
@@ -907,14 +907,18 @@ func (c *Client) remainingComments(ctx context.Context, number int, cursor strin
 	}
 }
 
-func findAttachments(body string, comments []Comment) []string {
+// findAttachments lists the links in a ticket's text that patterns match, in order
+// and each once.
+func findAttachments(body string, comments []Comment, patterns ...*regexp.Regexp) []string {
 	seen := map[string]bool{}
 	urls := []string{}
 	add := func(text string) {
-		for _, link := range attachmentURL.FindAllString(text, -1) {
-			if !seen[link] {
-				seen[link] = true
-				urls = append(urls, link)
+		for _, pattern := range patterns {
+			for _, link := range pattern.FindAllString(text, -1) {
+				if !seen[link] {
+					seen[link] = true
+					urls = append(urls, link)
+				}
 			}
 		}
 	}
@@ -1047,7 +1051,8 @@ func (c *Client) CreateTicket(ctx context.Context, opts CreateOptions) (Ticket, 
 	if err := c.linkCreated(ctx, project, created, opts, ids); err != nil {
 		return ticket, fmt.Errorf("ticket #%d was created but linking it failed: %w", created.Number, err)
 	}
-	if err := c.AddAttachments(ctx, created.Number, opts.Attachments); err != nil {
+	body := createBody(opts)
+	if err := c.AddAttachments(ctx, created.Number, &body, opts.Attachments); err != nil {
 		return ticket, fmt.Errorf("ticket #%d was created but attaching failed: %w", created.Number, err)
 	}
 	return ticket, nil
@@ -1155,19 +1160,31 @@ func (c *Client) write(ctx context.Context, fields []string) error {
 
 // EditOptions holds ticket fields to change. Nil fields stay unchanged.
 type EditOptions struct {
-	Title *string
-	Body  *string
+	Title       *string
+	Body        *string
+	Attachments []string
 }
 
-// EditTicket changes a ticket's title or body.
+// EditTicket changes a ticket's title or body, and attaches files to the body.
 func (c *Client) EditTicket(ctx context.Context, number int, opts EditOptions) error {
-	if opts.Title == nil && opts.Body == nil {
-		return errors.New("nothing to change: pass a title or body")
+	if opts.Title == nil && opts.Body == nil && len(opts.Attachments) == 0 {
+		return errors.New("nothing to change: pass a title, body, or attachment")
 	}
 	if opts.Body != nil {
 		if err := checkBodyLength(*opts.Body); err != nil {
 			return err
 		}
+	}
+	if len(opts.Attachments) > 0 {
+		if err := checkFiles(opts.Attachments); err != nil {
+			return err
+		}
+		if opts.Title != nil {
+			if err := c.EditTicket(ctx, number, EditOptions{Title: opts.Title}); err != nil {
+				return err
+			}
+		}
+		return c.AddAttachments(ctx, number, opts.Body, opts.Attachments)
 	}
 	ids, err := c.issueIDs(ctx, []int{number})
 	if err != nil {
@@ -1182,19 +1199,6 @@ func (c *Client) EditTicket(ctx context.Context, number int, opts EditOptions) e
 	}
 	mutation := `mutation($input: UpdateIssueInput!) { updateIssue(input: $input) { clientMutationId } }`
 	return c.do(ctx, mutation, map[string]any{"input": input}, nil)
-}
-
-// AddComment adds a comment to a ticket.
-func (c *Client) AddComment(ctx context.Context, number int, body string) error {
-	if err := checkBodyLength(body); err != nil {
-		return err
-	}
-	ids, err := c.issueIDs(ctx, []int{number})
-	if err != nil {
-		return err
-	}
-	mutation := `mutation($id: ID!, $body: String!) { addComment(input: {subjectId: $id, body: $body}) { clientMutationId } }`
-	return c.do(ctx, mutation, map[string]any{"id": ids[number], "body": body}, nil)
 }
 
 // SetRelations adds or removes blockers of a ticket.

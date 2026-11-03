@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-03 13:33
+  last_modified: 2026-11-03 13:41
   status: current
 ---
 
@@ -123,7 +123,7 @@ Creates a ticket on its project's board with status Todo. If a later step fails,
 - `--body` string: ticket text.
 - `--body-file` string: file holding the text; `-` reads standard input. Bodies hold at most 65,536 characters.
 - `--project` string: project. Defaults to the current repository's project.
-- `--attach` stringArray: image or video to upload. Repeatable.
+- `--attach` stringArray: file to upload. Repeatable. See Attachments.
 - `--label` stringArray: label to apply. Repeatable.
 - `--parent` int: parent ticket number.
 - `--discovered-from` int: adds a line naming the ticket that surfaced this work. It does not block anything.
@@ -132,9 +132,12 @@ Creates a ticket on its project's board with status Todo. If a later step fails,
 
 ### issue-tracker issue edit <number>
 
+Changes the title or body, and attaches files to the body. Attaching without `--body` or `--body-file` appends the files to the current body.
+
 - `--title` string: new title.
 - `--body` string: new text.
 - `--body-file` string: file holding the new text; `-` reads standard input. Bodies hold at most 65,536 characters.
+- `--attach` stringArray: file to upload. Repeatable. See Attachments.
 
 ### issue-tracker issue claim [number]
 
@@ -177,16 +180,19 @@ Moves an unclaimed ticket to `Todo` or `Done`. Doing belongs to `issue claim`, a
 
 ### issue-tracker issue comment add <number>
 
+Adds a comment. Needs text, files, or both.
+
 - `--body` string: comment text.
 - `--body-file` string: file holding the text; `-` reads standard input. Bodies hold at most 65,536 characters.
+- `--attach` stringArray: file to upload. Repeatable. See Attachments.
 
 ### issue-tracker issue attachment add <number> <file...>
 
-Uploads images or videos and appends them to the ticket. Requires the `gh` binary.
+Uploads files and appends them to the ticket's body. See Attachments.
 
 ### issue-tracker issue attachment pull <number>
 
-Downloads a ticket's attachments and prints one path per line.
+Downloads the images, videos, and files linked from a ticket's body and comments and prints one path per line. Files kept in the attachments release are listed once per run, at one request per 100 assets in it.
 
 - `--dir` string: download directory. Defaults to `~/.cache/issue-tracker/attachments/<number>/`. A directory inside a Git worktree must be ignored by it.
 
@@ -241,6 +247,24 @@ Generates the zsh completion script. `--no-descriptions` bool leaves out descrip
 ### issue-tracker help [command]
 
 Prints help for a command. `--help`, `-h` bool prints help on any command, and `--version`, `-v` bool prints the version.
+
+## Attachments
+
+`--attach` on `issue create`, `issue edit`, and `issue comment add`, and `issue attachment add`, take any file:
+
+- Images and video (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov`, `.webm`) upload through the `gh` binary to GitHub's attachment storage.
+- Every other file, such as logs, traces, and archives, becomes an asset of the tracker's `attachments` prerelease, created on first use. Only people with access to the tracker can download it.
+- A Markdown image or link whose target is the path passed to `--attach` is pointed at the upload, so images sit where the text discusses them. A file the text does not reference is appended. For `--attach ./after.png --attach ./run.log`:
+
+```markdown
+The panel overflows after resizing:
+
+![after resize](./after.png)
+
+Full output: [run log](./run.log)
+```
+
+Put long output such as logs in a file and attach it rather than pasting it into a body.
 
 ## Errors
 

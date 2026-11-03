@@ -20,6 +20,6 @@ func TestAnOverlongBodyIsRefusedBeforeAnyRequest(t *testing.T) {
 	_, err = c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t", Body: strings.Repeat("a", maxBodyLength-10), DiscoveredFrom: 4})
 	wantError(t, err, "over GitHub's 65536")
 	wantError(t, c.EditTicket(ctx, 1, EditOptions{Body: &long}), "over GitHub's 65536")
-	wantError(t, c.AddComment(ctx, 1, long), "over GitHub's 65536")
+	wantError(t, c.AddComment(ctx, 1, long, nil), "over GitHub's 65536")
 	wantCount(t, gh, 0)
 }

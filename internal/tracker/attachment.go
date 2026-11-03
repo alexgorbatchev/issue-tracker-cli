@@ -11,25 +11,119 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/cli/go-gh/v2"
 )
 
-// AddAttachments uploads files to a ticket. GitHub has no documented upload API,
-// so this is the one operation that runs the gh binary.
-func (c *Client) AddAttachments(ctx context.Context, number int, files []string) error {
+// AddAttachments uploads files to a ticket's body. With body set, it replaces the
+// body and the body's references to the files are pointed at them; otherwise the
+// files are appended to the current body. Images and video go through gh, the one
+// operation that runs it, because GitHub's attachment endpoint is undocumented.
+func (c *Client) AddAttachments(ctx context.Context, number int, body *string, files []string) error {
 	if len(files) == 0 {
 		return nil
 	}
+	if err := checkFiles(files); err != nil {
+		return err
+	}
+	text, replace := "", body != nil
+	if replace {
+		text = *body
+	} else if slices.ContainsFunc(files, func(file string) bool { return !isMedia(file) }) {
+		current, err := c.ticketBody(ctx, number)
+		if err != nil {
+			return err
+		}
+		text, replace = current, true
+	}
+	text, media, err := c.linkFiles(ctx, number, text, files)
+	if err != nil {
+		return err
+	}
+	if err := checkBodyLength(text); err != nil {
+		return err
+	}
+	if len(media) == 0 {
+		return c.EditTicket(ctx, number, EditOptions{Body: &text})
+	}
 	args := []string{"issue", "edit", strconv.Itoa(number), "--repo", c.repo.String()}
+	if !replace {
+		return runGH(ctx, nil, append(args, attachArgs(media)...))
+	}
+	return runGH(ctx, strings.NewReader(text), append(append(args, "--body-file", "-"), attachArgs(media)...))
+}
+
+// AddComment adds a comment to a ticket, with files attached where its text
+// references them, or after it.
+func (c *Client) AddComment(ctx context.Context, number int, body string, files []string) error {
+	if err := checkBodyLength(body); err != nil {
+		return err
+	}
+	if err := checkFiles(files); err != nil {
+		return err
+	}
+	text, media, err := c.linkFiles(ctx, number, body, files)
+	if err != nil {
+		return err
+	}
+	if err := checkBodyLength(text); err != nil {
+		return err
+	}
+	if len(media) > 0 {
+		args := []string{"issue", "comment", strconv.Itoa(number), "--repo", c.repo.String(), "--body-file", "-"}
+		return runGH(ctx, strings.NewReader(text), append(args, attachArgs(media)...))
+	}
+	ids, err := c.issueIDs(ctx, []int{number})
+	if err != nil {
+		return err
+	}
+	mutation := `mutation($id: ID!, $body: String!) { addComment(input: {subjectId: $id, body: $body}) { clientMutationId } }`
+	return c.do(ctx, mutation, map[string]any{"id": ids[number], "body": text}, nil)
+}
+
+func attachArgs(files []string) []string {
+	args := make([]string, 0, 2*len(files))
 	for _, file := range files {
 		args = append(args, "--attach", file)
 	}
-	if _, stderr, err := gh.ExecContext(ctx, args...); err != nil {
-		return fmt.Errorf("uploading attachments: %w: %s", err, stderr.String())
+	return args
+}
+
+// runGH runs gh with stdin, which carries a body so that gh can place the images
+// the body references.
+func runGH(ctx context.Context, stdin io.Reader, args []string) error {
+	path, err := gh.Path()
+	if err != nil {
+		return fmt.Errorf("uploading attachments needs the gh binary: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Stdin = stdin
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("uploading attachments: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+// ticketBody reads a ticket's current body.
+func (c *Client) ticketBody(ctx context.Context, number int) (string, error) {
+	var response struct {
+		Repository struct {
+			Issue *struct{ Body string }
+		}
+	}
+	query := `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { body } } }`
+	if err := c.do(ctx, query, c.variables(map[string]any{"number": number}), &response); err != nil {
+		return "", fmt.Errorf("reading ticket #%d: %w", number, err)
+	}
+	if response.Repository.Issue == nil {
+		return "", fmt.Errorf("ticket #%d not found in %s", number, c.repo)
+	}
+	return response.Repository.Issue.Body, nil
 }
 
 // PullAttachments downloads a ticket's attachments into dir and returns their paths.
@@ -45,8 +139,20 @@ func (c *Client) PullAttachments(ctx context.Context, number int, dir string) ([
 		return nil, fmt.Errorf("creating attachment directory: %w", err)
 	}
 	files := make([]string, 0, len(detail.Attachments))
+	releaseAsset := c.releaseAssetURL()
+	var ids map[string]int64
 	for _, url := range detail.Attachments {
-		file, err := c.download(ctx, url, dir)
+		var file string
+		if releaseAsset.MatchString(url) {
+			if ids == nil {
+				if ids, err = c.assetIDs(ctx); err != nil {
+					return nil, err
+				}
+			}
+			file, err = c.downloadAsset(ctx, url, ids, dir)
+		} else {
+			file, err = c.download(ctx, url, dir)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -90,6 +196,12 @@ func (c *Client) download(ctx context.Context, url, dir string) (string, error) 
 		return "", fmt.Errorf("preparing download: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	return c.save(req, dir, func(contentType string) string { return attachmentName(url, contentType) })
+}
+
+// save writes a download into dir, under the name the response's content type gives.
+func (c *Client) save(req *http.Request, dir string, name func(contentType string) string) (string, error) {
+	url := req.URL.String()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("downloading attachment: %w", err)
@@ -98,7 +210,7 @@ func (c *Client) download(ctx context.Context, url, dir string) (string, error) 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("downloading %s: HTTP %d", url, resp.StatusCode)
 	}
-	file := filepath.Join(dir, attachmentName(url, resp.Header.Get("Content-Type")))
+	file := filepath.Join(dir, name(resp.Header.Get("Content-Type")))
 	out, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("creating attachment file: %w", err)

@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:52
-last_modified: 2026-11-03 11:18
+last_modified: 2026-11-03 13:41
 status: current
 ---
 
@@ -20,7 +20,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 - **Format Source Code:** `just fmt` (`go fmt ./...`)
 
 ## Setup & Environment
-- **Prerequisites:** Go 1.26.7+, `just`, and `gh` for attachment uploads.
+- **Prerequisites:** Go 1.26.7+, `just`, and `gh` for image and video uploads.
 - **Temporary Files:** Temporary file operations use `.tmp/` within the project root.
 - **Layout:** `cmd/issue-tracker/` holds commands and output, `internal/tracker/` holds GitHub operations, `internal/config/` resolves settings, `internal/fakegithub/` is the test double, and `skills/issue-tracker/` holds the agent skill.
 
@@ -36,7 +36,8 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 - **Project Membership:** A ticket belongs to a project through its `repo:<name>` label or by being on its board, and the label wins if they disagree. People creating tickets inside a board fill in no routing, so read commands treat board membership as routing and never write the label back. A component's label wins over its repository's. On a repository's board, an unlabelled ticket belongs to the component its `Component` field value names, or else to the repository.
 - **Project Registration:** A project exists when a `repo:<name>` label's description holds `owner/name`. A component exists when a `repo:<name>/<component>` label's description holds `owner/name:<path>`; it has no board of its own and uses its repository's, whose single-select `Component` field holds one option per component. Read that field through the board's `fields` connection, because `field(name:)` fails the whole query on a board without it. Send existing options back with their IDs when changing options, or GitHub clears every ticket's value. Write the label last so a failed `project add` can simply be repeated. Link boards to the tracker repository only, never to a code repository.
 - **Component Cache Coherence:** A component registered on another machine causes no cache miss, so every query that scopes to a repository project also reads its component labels and refreshes the cache once when they differ. Do not add a request for this check.
-- **Secrets on the Wire:** Send the GitHub token only to URLs matching `attachmentURL`.
+- **Secrets on the Wire:** Send the GitHub token only to GitHub's API hosts and to URLs matching `attachmentURL`. Downloads that redirect to a storage host rely on Go dropping the token across hosts; never copy it onto a redirect.
+- **Attachment Storage:** GitHub's attachment endpoint accepts only images and video, so other files are assets of the tracker's `attachments` prerelease. Upload media through `gh` so that it rewrites body references; send it the body on standard input.
 - **Hermetic Unit Tests:** All unit tests must remain offline. Use `internal/fakegithub` as the transport.
 
 ## Agent Skill

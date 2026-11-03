@@ -23,21 +23,37 @@ func fakeGH(t *testing.T, script string) string {
 	return log
 }
 
-func TestAddAttachmentsCallsGH(t *testing.T) {
+// tempFiles creates empty files with these names and returns their paths.
+func tempFiles(t *testing.T, names ...string) []string {
+	t.Helper()
+	dir := t.TempDir()
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func TestAddAttachmentsAppendsMediaThroughGH(t *testing.T) {
 	log := fakeGH(t, "exit 0")
+	files := tempFiles(t, "a.png", "b.mp4")
 	c, gh := newClient(t)
-	if err := c.AddAttachments(ctx, 12, []string{"a.png", "b.mp4"}); err != nil {
+	if err := c.AddAttachments(ctx, 12, nil, files); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "issue edit 12 --repo o/tracker --attach a.png --attach b.mp4\n"; string(data) != want {
+	if want := "issue edit 12 --repo o/tracker --attach " + files[0] + " --attach " + files[1] + "\n"; string(data) != want {
 		t.Fatalf("args = %q, want %q", data, want)
 	}
 	wantCount(t, gh, 0)
-	if err := c.AddAttachments(ctx, 12, nil); err != nil {
+	if err := c.AddAttachments(ctx, 12, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -45,7 +61,12 @@ func TestAddAttachmentsCallsGH(t *testing.T) {
 func TestAddAttachmentsReportsGHFailure(t *testing.T) {
 	fakeGH(t, "echo upload refused >&2; exit 1")
 	c, _ := newClient(t)
-	wantError(t, c.AddAttachments(ctx, 12, []string{"a.png"}), "upload refused")
+	wantError(t, c.AddAttachments(ctx, 12, nil, tempFiles(t, "a.png")), "upload refused")
+
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GH_PATH", "")
+	wantError(t, c.AddAttachments(ctx, 12, nil, tempFiles(t, "a.png")), "needs the gh binary")
+	wantError(t, c.AddAttachments(ctx, 12, nil, []string{"/missing.png"}), "attachment:")
 }
 
 func attachmentTicket() fakegithub.Route {
