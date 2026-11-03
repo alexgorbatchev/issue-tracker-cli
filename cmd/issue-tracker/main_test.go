@@ -393,7 +393,7 @@ func TestLabelAndSearchFlags(t *testing.T) {
 
 func TestProjectCommands(t *testing.T) {
 	t.Setenv("AGENT", "1")
-	metadata := fakegithub.Route{Match: "labels(first: 100", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},
+	metadata := fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},
 "labels":{"nodes":[{"id":"L1","name":"repo:go-tui","description":"o/go-tui"}],"pageInfo":{"hasNextPage":false,"endCursor":""}},
 "projectsV2":{"nodes":[{"id":"B1","title":"go-tui","url":"https://b/1","field":{"id":"F","options":[{"id":"t","name":"Todo"}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
 	visibility := fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":false}}}`}
@@ -432,7 +432,7 @@ func TestProjectRm(t *testing.T) {
 	gh := fakegithub.New(
 		fakegithub.Route{Match: "open: search", Body: `{"data":{"open":{"issueCount":0},"closed":{"issueCount":0}}}`},
 		ok("deleteProjectV2"), ok("updateLabel"),
-		fakegithub.Route{Match: "labels(first: 100", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},"labels":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}},"projectsV2":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`},
+		fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},"labels":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}},"projectsV2":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`},
 	)
 	stdout, _, err := execute(t, fakeOpener(t, gh), "project", "rm", "go-tui", "--yes")
 	if err != nil || !strings.Contains(stdout, "OK: removed project go-tui") {
@@ -827,7 +827,7 @@ func TestProjectScanOutput(t *testing.T) {
 func TestProjectImportOutput(t *testing.T) {
 	t.Setenv("AGENT", "1")
 	outsideRepository(t)
-	metadata := fakegithub.Route{Match: "labels(first: 100", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},
+	metadata := fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},
 "labels":{"nodes":[{"id":"L1","name":"repo:go-tui","description":"o/go-tui"}],"pageInfo":{"hasNextPage":false,"endCursor":""}},
 "projectsV2":{"nodes":[{"id":"B1","title":"go-tui","url":"https://b/1","field":{"id":"F","options":[{"id":"t","name":"Todo"}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
 	visibility := fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":false}}}`}
