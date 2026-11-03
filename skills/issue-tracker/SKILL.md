@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-03 11:18
+  last_modified: 2026-11-03 13:33
   status: current
 ---
 
@@ -121,7 +121,7 @@ Creates a ticket on its project's board with status Todo. If a later step fails,
 
 - `--title` string: ticket title. Required.
 - `--body` string: ticket text.
-- `--body-file` string: file holding the text; `-` reads standard input.
+- `--body-file` string: file holding the text; `-` reads standard input. Bodies hold at most 65,536 characters.
 - `--project` string: project. Defaults to the current repository's project.
 - `--attach` stringArray: image or video to upload. Repeatable.
 - `--label` stringArray: label to apply. Repeatable.
@@ -134,7 +134,7 @@ Creates a ticket on its project's board with status Todo. If a later step fails,
 
 - `--title` string: new title.
 - `--body` string: new text.
-- `--body-file` string: file holding the new text; `-` reads standard input.
+- `--body-file` string: file holding the new text; `-` reads standard input. Bodies hold at most 65,536 characters.
 
 ### issue-tracker issue claim [number]
 
@@ -178,7 +178,7 @@ Moves an unclaimed ticket to `Todo` or `Done`. Doing belongs to `issue claim`, a
 ### issue-tracker issue comment add <number>
 
 - `--body` string: comment text.
-- `--body-file` string: file holding the text; `-` reads standard input.
+- `--body-file` string: file holding the text; `-` reads standard input. Bodies hold at most 65,536 characters.
 
 ### issue-tracker issue attachment add <number> <file...>
 
@@ -250,6 +250,7 @@ Prints help for a command. `--help`, `-h` bool prints help on any command, and `
 - `listing tickets: more than 1000 tickets were created at <time>: search cannot page past them`: narrow the search text.
 - `ticket #<number> not found in <tracker>` or `tickets #<number>, #<number> not found in <tracker>`: no ticket has that number, and `issue inspect` printed nothing. Check the numbers and rerun.
 - `accepts between 1 and 50 arg(s)`: `issue inspect` takes at most 50 tickets. Split the numbers across calls.
+- `body is <n> characters, over GitHub's 65536: attach long output as a file with --attach`: GitHub caps a ticket or comment body at 65,536 characters. Nothing was sent. Shorten the text, or move long output such as logs into a file and attach it.
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
 - `ticket #<number> has no project: give it a repo: label on GitHub or run issue move <number> <project>`: the ticket is unrouted, and no claim was created. Ask the user which project owns it, or pick another ticket.
 - `GitHub rate limit reached: retry after <time>`: wait until that time.

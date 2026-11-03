@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 )
@@ -36,6 +37,10 @@ const (
 	subIssuesLimit = 100
 
 	labelBlocked = "blocked"
+
+	// maxBodyLength is the most characters GitHub accepts in an issue or comment
+	// body. GitHub rejects a longer one with 422 Validation Failed.
+	maxBodyLength = 65536
 
 	boardItemTaken = "Content already exists in this project"
 	boardItemReads = 3
@@ -1007,6 +1012,9 @@ func (c *Client) CreateTicket(ctx context.Context, opts CreateOptions) (Ticket, 
 	if err := checkPlainLabels(opts.Labels); err != nil {
 		return Ticket{}, err
 	}
+	if err := checkBodyLength(createBody(opts)); err != nil {
+		return Ticket{}, err
+	}
 	project, err := c.lookupProject(ctx, opts.Project)
 	if err != nil {
 		return Ticket{}, err
@@ -1068,6 +1076,15 @@ func (c *Client) insertTicket(ctx context.Context, meta *metadata, project Proje
 		return createdTicket{}, fmt.Errorf("creating ticket: %w", err)
 	}
 	return response.CreateIssue.Issue, nil
+}
+
+// checkBodyLength refuses a body GitHub would reject, before any request. GitHub
+// counts characters, not bytes.
+func checkBodyLength(body string) error {
+	if n := utf8.RuneCountInString(body); n > maxBodyLength {
+		return fmt.Errorf("body is %d characters, over GitHub's %d: attach long output as a file with --attach", n, maxBodyLength)
+	}
+	return nil
 }
 
 func createBody(opts CreateOptions) string {
@@ -1147,6 +1164,11 @@ func (c *Client) EditTicket(ctx context.Context, number int, opts EditOptions) e
 	if opts.Title == nil && opts.Body == nil {
 		return errors.New("nothing to change: pass a title or body")
 	}
+	if opts.Body != nil {
+		if err := checkBodyLength(*opts.Body); err != nil {
+			return err
+		}
+	}
 	ids, err := c.issueIDs(ctx, []int{number})
 	if err != nil {
 		return err
@@ -1164,6 +1186,9 @@ func (c *Client) EditTicket(ctx context.Context, number int, opts EditOptions) e
 
 // AddComment adds a comment to a ticket.
 func (c *Client) AddComment(ctx context.Context, number int, body string) error {
+	if err := checkBodyLength(body); err != nil {
+		return err
+	}
 	ids, err := c.issueIDs(ctx, []int{number})
 	if err != nil {
 		return err
