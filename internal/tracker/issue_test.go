@@ -871,6 +871,38 @@ func TestSetStatusContinuesWhenTheBoardAlreadyHasIt(t *testing.T) {
 	}
 }
 
+func TestCreateTicketRefreshesAStaleBoardWithoutCreatingTwice(t *testing.T) {
+	stale := fakegithub.Route{Match: "addProjectV2ItemById", Status: 200, Body: `{"data":null,"errors":[{"type":"NOT_FOUND","message":"gone"}]}`, Times: 1}
+	replaced := fakegithub.Route{Match: "labels(first: 100, query", Body: strings.ReplaceAll(metadataJSON, `"id":"B1"`, `"id":"B9"`)}
+	c, gh := newClient(t, createRoute(), stale, replaced, visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))
+	if _, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	creates, adds := 0, []string{}
+	for _, req := range gh.Requests() {
+		if strings.Contains(req.Description, "createIssue(input") {
+			creates++
+		}
+		if strings.Contains(req.Description, "addProjectV2ItemById") {
+			adds = append(adds, fmt.Sprint(req.Variables["board"]))
+		}
+	}
+	if creates != 1 || fmt.Sprint(adds) != "[B1 B9]" {
+		t.Fatalf("creates = %d, board adds = %v, want one create and an add to the refreshed board", creates, adds)
+	}
+	if status := lastDescription(gh); !strings.Contains(status, `projectId: "B9"`) {
+		t.Fatalf("the status write must use the refreshed board: %s", status)
+	}
+}
+
+func TestCreateTicketReportsAProjectGoneAfterRefresh(t *testing.T) {
+	stale := fakegithub.Route{Match: "addProjectV2ItemById", Status: 200, Body: `{"data":null,"errors":[{"type":"NOT_FOUND","message":"gone"}]}`}
+	gone := strings.Replace(strings.Replace(metadataJSON, `"repo:go-tui"`, `"repo:other"`, 1), `"o/go-tui"`, `"o/other"`, 1)
+	c, _ := newClient(t, createRoute(), stale, fakegithub.Route{Match: "labels(first: 100, query", Body: gone}, visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
+	_, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t"})
+	wantError(t, err, "was created but linking it failed")
+}
+
 func TestCreateTicketFailures(t *testing.T) {
 	c, gh := newClient(t)
 	_, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t", Attachments: []string{"/missing.png"}})

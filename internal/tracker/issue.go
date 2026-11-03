@@ -877,7 +877,20 @@ func createBody(opts CreateOptions) string {
 func (c *Client) linkCreated(ctx context.Context, project Project, created createdTicket, opts CreateOptions, ids map[int]string) error {
 	// createIssue is not given the board because it adds the item asynchronously,
 	// which would race this add on every ticket.
-	itemID, err := c.addToBoard(ctx, project, created.ID)
+	var itemID string
+	err := c.withFreshIDs(ctx, func(meta *metadata) error {
+		fresh, ok := meta.project(project.Name)
+		if !ok {
+			return fmt.Errorf("unknown project %q: register it with project add", project.Name)
+		}
+		if fresh.BoardID == "" {
+			return errNoBoard(fresh)
+		}
+		var err error
+		project = fresh
+		itemID, err = c.addToBoard(ctx, fresh, created.ID)
+		return err
+	})
 	if err != nil {
 		return err
 	}
