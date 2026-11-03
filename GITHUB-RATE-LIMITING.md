@@ -66,7 +66,8 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | Command | Requests | Reads and writes |
 | --- | --- | --- |
 | `issue list`, up to 100 tickets | 1 | One query, about 6 points with parent and sub-issue checks. GitHub reports the total on that page |
-| `issue list`, `claim --next`, or `close-eligible` in one project | Add 1 per 100 board tickets with no routing label | The issues connection filters by label only, so a search finds board tickets without the label. Its minimum is 1 |
+| `issue list`, `claim --next`, `close-eligible`, `project inspect`, or `project rm` in one project | Add 1 per 100 board tickets with no routing label | The issues connection filters by label only, so a search finds board tickets without the label. Its minimum is 1 |
+| Any read that meets a ticket on an unregistered board | Add one metadata refresh per command | The board may have been registered on another machine, so the cached IDs are refreshed once |
 | `issue list` with `--status`, `--label`, `--ready`, or `--stale` | 1 per 100 tickets | Reads every page, whatever `--limit` says, because GitHub cannot count these filters and the total has to be counted here |
 | `issue list --search` | 1 per 100 matches | One search query. GitHub ends a query at 1,000 results, so each further 1,000 starts a new query from the last creation time |
 | `issue inspect <number>` | 1 | One query, plus one per extra 100 comments |

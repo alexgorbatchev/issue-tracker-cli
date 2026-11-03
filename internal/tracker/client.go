@@ -54,7 +54,9 @@ type Client struct {
 	cacheDir       string
 	requirePrivate bool
 	meta           *metadata
-	pause          func(context.Context, time.Duration) error
+	// boardsChecked keeps tickets on unregistered boards to one metadata refresh.
+	boardsChecked bool
+	pause         func(context.Context, time.Duration) error
 }
 
 // New builds a Client. It leaves go-gh's response cache disabled because that

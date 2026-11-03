@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-02 16:53
+  last_modified: 2026-11-02 16:58
   status: current
 ---
 
@@ -68,7 +68,7 @@ Prints one tab-separated line per project: name, repository, visibility, board U
 
 ### issue-tracker project rm <project>
 
-Unregisters a project with no open tickets. Deletes its board and keeps the label on closed tickets.
+Unregisters a project with no open tickets. Labels closed tickets that were only on the board, deletes the board, and keeps the label on closed tickets.
 
 - `--yes` bool: confirm deleting the board. Required.
 

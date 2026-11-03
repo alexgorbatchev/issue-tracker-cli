@@ -57,6 +57,8 @@ type ticketSpec struct {
 	updated  string
 	label    string
 	subs     string
+	// otherBoard puts the ticket on that board ahead of the one status implies.
+	otherBoard string
 }
 
 func (s ticketSpec) json() string {
@@ -81,6 +83,9 @@ func (s ticketSpec) json() string {
 	items := ""
 	if s.status != "" {
 		items = fmt.Sprintf(`{"id":"ITEM%d","updatedAt":%q,"project":{"id":"B1"},"fieldValueByName":{"name":%q}}`, s.number, updated, s.status)
+	}
+	if s.otherBoard != "" {
+		items = strings.TrimSuffix(fmt.Sprintf(`{"id":"OTHER%d","updatedAt":%q,"project":{"id":%q},"fieldValueByName":{"name":"Elsewhere"}},%s`, s.number, updated, s.otherBoard, items), ",")
 	}
 	parent := "null"
 	if s.parent != "" {

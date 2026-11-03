@@ -162,15 +162,15 @@ func summaryRoute(open int) fakegithub.Route {
 }
 
 func TestRemoveProject(t *testing.T) {
-	c, gh := newClient(t, summaryRoute(0), okRoute("deleteProjectV2"), okRoute("updateLabel"), metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
+	c, gh := newClient(t, boardOnlyRoute(), summaryRoute(0), okRoute("deleteProjectV2"), okRoute("updateLabel"), metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
 	if err := c.RemoveProject(ctx, "go-tui"); err != nil {
 		t.Fatal(err)
 	}
 	requests := gh.Requests()
-	if requests[2].Variables["description"] != "" {
-		t.Fatalf("label = %v", requests[2].Variables)
+	if requests[3].Variables["description"] != "" {
+		t.Fatalf("label = %v", requests[3].Variables)
 	}
-	query := requests[0].Variables["open"].(string)
+	query := requests[1].Variables["open"].(string)
 	if !strings.Contains(query, `label:"repo:go-tui"`) || !strings.Contains(query, "repo:o/tracker") {
 		t.Fatalf("search = %s", query)
 	}
@@ -189,20 +189,20 @@ func TestRemoveProjectWithoutBoard(t *testing.T) {
 }
 
 func TestRemoveProjectRefusals(t *testing.T) {
-	c, gh := newClient(t, summaryRoute(2))
+	c, gh := newClient(t, boardOnlyRoute(), summaryRoute(2))
 	wantError(t, c.RemoveProject(ctx, "go-tui"), "2 open tickets")
-	wantCount(t, gh, 1)
+	wantCount(t, gh, 2)
 
 	c, _ = newClient(t, metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
 	wantError(t, c.RemoveProject(ctx, "unknown"), "unknown project")
 
-	c, _ = newClient(t, fakegithub.Route{Match: "open: search", Status: 500, Body: "{}"})
+	c, _ = newClient(t, boardOnlyRoute(), fakegithub.Route{Match: "open: search", Status: 500, Body: "{}"})
 	wantError(t, c.RemoveProject(ctx, "go-tui"), "counting tickets")
 
-	c, _ = newClient(t, summaryRoute(0), fakegithub.Route{Match: "deleteProjectV2", Status: 500, Body: "{}"})
+	c, _ = newClient(t, boardOnlyRoute(), summaryRoute(0), fakegithub.Route{Match: "deleteProjectV2", Status: 500, Body: "{}"})
 	wantError(t, c.RemoveProject(ctx, "go-tui"), "deleting board")
 
-	c, _ = newClient(t, summaryRoute(0), okRoute("deleteProjectV2"), fakegithub.Route{Match: "updateLabel", Status: 500, Body: "{}"})
+	c, _ = newClient(t, boardOnlyRoute(), summaryRoute(0), okRoute("deleteProjectV2"), fakegithub.Route{Match: "updateLabel", Status: 500, Body: "{}"})
 	wantError(t, c.RemoveProject(ctx, "go-tui"), "updating label")
 }
 
@@ -262,25 +262,55 @@ func TestCurrentProjectFailures(t *testing.T) {
 }
 
 func TestProjectSummaryCountsBoardOnlyTickets(t *testing.T) {
-	counts := `{"data":{"open":{"issueCount":2},"closed":{"issueCount":5},"boardOpen":{"issueCount":1},"boardClosed":{"issueCount":3}}}`
-	c, gh := newClient(t, fakegithub.Route{Match: "open: search", Body: counts})
+	counts := fakegithub.Route{Match: "open: search", Body: `{"data":{"open":{"issueCount":2},"closed":{"issueCount":5}}}`}
+	onBoard := boardOnlyRoute(
+		ticketSpec{number: 5, status: "Todo"},
+		ticketSpec{number: 6, status: "Done", state: "CLOSED"},
+		ticketSpec{number: 7, status: "Todo", project: "lib"},
+	)
+	c, gh := newClient(t, onBoard, counts)
 	summary, err := c.ProjectSummary(ctx, testMetadata().Projects[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Open != 3 || summary.Closed != 8 {
-		t.Fatalf("summary = %+v", summary)
+	if summary.Open != 3 || summary.Closed != 6 {
+		t.Fatalf("summary = %+v: a ticket labelled for another project must not count", summary)
 	}
-	wantCount(t, gh, 1)
-	variables := gh.Requests()[0].Variables
-	if got := variables["boardOpen"]; got != `repo:o/tracker is:issue project:o/1 -label:"repo:go-tui" is:open` || variables["hasBoard"] != true {
-		t.Fatalf("variables = %v", variables)
+	wantCount(t, gh, 2)
+	if got := gh.Requests()[0].Variables["search"]; got != `repo:o/tracker is:issue sort:created-asc project:o/1 -label:"repo:go-tui"` {
+		t.Fatalf("search = %v", got)
 	}
 
-	if _, err := c.ProjectSummary(ctx, testMetadata().Projects[2]); err != nil {
+	bare, gh := newClient(t, counts)
+	if _, err := bare.ProjectSummary(ctx, testMetadata().Projects[2]); err != nil {
 		t.Fatal(err)
 	}
-	if variables = gh.Requests()[1].Variables; variables["hasBoard"] != false {
-		t.Fatalf("a project without a board has nothing to search: %v", variables)
+	wantCount(t, gh, 1)
+}
+
+func TestProjectSummaryBoardSearchFailure(t *testing.T) {
+	c, _ := newClient(t, fakegithub.Route{Match: "search(query: $search", Status: 500, Body: "{}"})
+	_, err := c.ProjectSummary(ctx, testMetadata().Projects[0])
+	wantError(t, err, "counting tickets")
+}
+
+func TestRemoveProjectLabelsClosedBoardOnlyTickets(t *testing.T) {
+	counts := fakegithub.Route{Match: "open: search", Body: `{"data":{"open":{"issueCount":0},"closed":{"issueCount":0}}}`}
+	c, gh := newClient(t, boardOnlyRoute(ticketSpec{number: 5, status: "Done", state: "CLOSED"}), counts,
+		okRoute("addLabelsToLabelable"), okRoute("deleteProjectV2"), okRoute("updateLabel"), metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
+	if err := c.RemoveProject(ctx, "go-tui"); err != nil {
+		t.Fatal(err)
 	}
+	requests := gh.Requests()
+	write := requests[2].Description
+	if !strings.Contains(write, `labelableId: "I5"`) || !strings.Contains(write, `labelIds: ["L1"]`) {
+		t.Fatalf("write = %s", write)
+	}
+	if !strings.Contains(requests[3].Description, "deleteProjectV2") {
+		t.Fatalf("the label must land before the board goes: %s", requests[3].Description)
+	}
+
+	failing, _ := newClient(t, boardOnlyRoute(ticketSpec{number: 5, status: "Done", state: "CLOSED"}), counts,
+		fakegithub.Route{Match: "addLabelsToLabelable", Status: 500, Body: "{}"})
+	wantError(t, failing.RemoveProject(ctx, "go-tui"), "labelling closed tickets")
 }

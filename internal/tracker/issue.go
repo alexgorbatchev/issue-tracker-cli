@@ -124,8 +124,27 @@ type Ticket struct {
 
 	itemID      string
 	boardID     string
+	items       []boardItem
 	created     time.Time
 	boardRouted bool
+}
+
+// boardItem is a ticket's place on one board. A ticket can be on several, because
+// GitHub Projects is not limited to the boards this tool manages.
+type boardItem struct {
+	id, boardID, status string
+}
+
+// useBoard makes a ticket's item on the board the current one, and reports whether
+// the ticket is on it.
+func (t *Ticket) useBoard(boardID string) bool {
+	for _, item := range t.items {
+		if item.boardID == boardID {
+			t.itemID, t.boardID, t.Status = item.id, item.boardID, item.status
+			return true
+		}
+	}
+	return false
 }
 
 // Ready reports whether a ticket can be picked up: open, unblocked, with no blocked
@@ -175,14 +194,17 @@ func (n ticketNode) ticket() Ticket {
 		t.Parent = n.Parent.Number
 		t.ParentBlocked = n.Parent.blocked() || n.Parent.Parent.blocked()
 	}
-	if items := n.ProjectItems.Nodes; len(items) > 0 {
-		item := items[0]
-		t.itemID, t.boardID = item.ID, item.Project.ID
+	for _, item := range n.ProjectItems.Nodes {
+		entry := boardItem{id: item.ID, boardID: item.Project.ID}
 		if item.FieldValueByName != nil {
-			t.Status = item.FieldValueByName.Name
+			entry.status = item.FieldValueByName.Name
 		}
-		if item.UpdatedAt.After(t.Activity) {
-			t.Activity = item.UpdatedAt
+		t.items = append(t.items, entry)
+	}
+	if items := n.ProjectItems.Nodes; len(items) > 0 {
+		t.useBoard(items[0].Project.ID)
+		if items[0].UpdatedAt.After(t.Activity) {
+			t.Activity = items[0].UpdatedAt
 		}
 	}
 	return t
@@ -226,26 +248,44 @@ func (c *Client) readTicket(ctx context.Context, number int) (Ticket, error) {
 	if err := c.checkPrivate(response.Repository.IsPrivate); err != nil {
 		return Ticket{}, err
 	}
-	return c.routed(ctx, response.Repository.Issue.ticket()), nil
+	ticket, err := c.routed(ctx, response.Repository.Issue.ticket())
+	if err != nil {
+		return Ticket{}, fmt.Errorf("reading ticket #%d: %w", number, err)
+	}
+	return ticket, nil
 }
 
 // routed gives a ticket with no routing label the project whose board holds it, so a
 // ticket created inside a board needs no label. A label wins when the two disagree.
-func (c *Client) routed(ctx context.Context, t Ticket) Ticket {
-	if t.Project != "" || t.boardID == "" {
-		return t
+// An unknown board can be one registered on another machine, so it refreshes the
+// cached IDs once.
+func (c *Client) routed(ctx context.Context, t Ticket) (Ticket, error) {
+	if t.Project != "" || len(t.items) == 0 {
+		return t, nil
 	}
 	meta, err := c.metadata(ctx)
 	if err != nil {
-		return t
+		return t, err
 	}
+	if t.routeTo(meta) || c.boardsChecked {
+		return t, nil
+	}
+	c.boardsChecked = true
+	if meta, err = c.refreshMetadata(ctx); err != nil {
+		return t, err
+	}
+	t.routeTo(meta)
+	return t, nil
+}
+
+func (t *Ticket) routeTo(meta *metadata) bool {
 	for _, project := range meta.Projects {
-		if project.BoardID == t.boardID {
+		if t.useBoard(project.BoardID) {
 			t.Project, t.boardRouted = project.Name, true
-			break
+			return true
 		}
 	}
-	return t
+	return false
 }
 
 // ListOptions filters tickets. Project is empty for all projects.
@@ -347,7 +387,10 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, i
 			return nil, 0, err
 		}
 		for _, node := range page.Nodes {
-			ticket := c.routed(ctx, node.ticket())
+			ticket, err := c.routed(ctx, node.ticket())
+			if err != nil {
+				return nil, 0, fmt.Errorf("listing tickets: %w", err)
+			}
 			if !opts.matches(ticket) {
 				continue
 			}
@@ -386,7 +429,7 @@ func (c *Client) boardOnlyTickets(ctx context.Context, project Project, states [
 		for _, node := range page.Nodes {
 			ticket := node.ticket()
 			// The search cannot exclude a label from another project, which wins.
-			if ticket.Project != "" || ticket.boardID != project.BoardID {
+			if ticket.Project != "" || !ticket.useBoard(project.BoardID) {
 				continue
 			}
 			ticket.Project, ticket.boardRouted = project.Name, true
@@ -612,8 +655,12 @@ func (c *Client) InspectTicket(ctx context.Context, number int) (TicketDetail, e
 		return TicketDetail{}, err
 	}
 	issue := response.Repository.Issue
+	ticket, err := c.routed(ctx, issue.ticket())
+	if err != nil {
+		return TicketDetail{}, fmt.Errorf("reading ticket #%d: %w", number, err)
+	}
 	detail := TicketDetail{
-		Ticket: c.routed(ctx, issue.ticket()), Body: issue.Body, Blocking: openNumbers(issue.Blocking.Nodes),
+		Ticket: ticket, Body: issue.Body, Blocking: openNumbers(issue.Blocking.Nodes),
 		SubIssues: issue.SubIssues.Nodes, Comments: issue.Comments.comments(),
 	}
 	if issue.Comments.PageInfo.HasNextPage {

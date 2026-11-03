@@ -414,7 +414,7 @@ func TestProjectCommands(t *testing.T) {
 		want   string
 	}{
 		{"list", []fakegithub.Route{metadata, visibility}, []string{"project", "list"}, "go-tui\to/go-tui\tpublic\thttps://b/1\n"},
-		{"inspect", []fakegithub.Route{summary}, []string{"project", "inspect", "go-tui"}, "visibility: private\nboard: https://b/1\nopen: 2\nclosed: 5\n"},
+		{"inspect", []fakegithub.Route{boardOnly(), summary}, []string{"project", "inspect", "go-tui"}, "visibility: private\nboard: https://b/1\nopen: 2\nclosed: 5\n"},
 		{"add existing", []fakegithub.Route{metadata, visibility}, []string{"project", "add", "o/go-tui"}, "OK: registered project go-tui"},
 	}
 	for _, tt := range tests {
@@ -439,6 +439,7 @@ func TestProjectRm(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	gh := fakegithub.New(
+		boardOnly(),
 		fakegithub.Route{Match: "open: search", Body: `{"data":{"open":{"issueCount":0},"closed":{"issueCount":0}}}`},
 		ok("deleteProjectV2"), ok("updateLabel"),
 		fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},"labels":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}},"projectsV2":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`},

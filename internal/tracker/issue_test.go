@@ -359,21 +359,87 @@ func TestReadTicketRoutesByBoard(t *testing.T) {
 	if ticket, err = labelled.readTicket(ctx, 1); err != nil || ticket.Project != "lib" {
 		t.Fatalf("a label must win over the board: %+v, %v", ticket, err)
 	}
+}
 
-	meta := testMetadata()
-	meta.Projects = meta.Projects[1:]
-	unknown := clientWith(t, fakegithub.New(ticketRoute(ticketSpec{number: 1, status: "Todo"})), meta)
-	if ticket, err = unknown.readTicket(ctx, 1); err != nil || ticket.Project != "" {
-		t.Fatalf("an unregistered board must not route: %+v, %v", ticket, err)
-	}
-
-	noCache, err := New(Options{Repo: Repo{Owner: "o", Name: "tracker"}, CacheDir: t.TempDir(), Transport: fakegithub.New(ticketRoute(ticketSpec{number: 1, status: "Todo"})), Token: "tok"})
+func TestATicketOnSeveralBoardsUsesItsProjectsItem(t *testing.T) {
+	spec := ticketSpec{number: 5, status: "Todo", otherBoard: "PERSONAL"}
+	c, _ := newClient(t, ticketRoute(spec))
+	ticket, err := c.readTicket(ctx, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ticket, err = noCache.readTicket(ctx, 1); err != nil || ticket.Project != "" {
-		t.Fatalf("unreadable metadata must leave the ticket unrouted: %+v, %v", ticket, err)
+	if ticket.Project != "go-tui" || ticket.itemID != "ITEM5" || ticket.Status != "Todo" {
+		t.Fatalf("ticket = %+v", ticket)
 	}
+
+	c, _ = newClient(t, boardOnlyRoute(spec), listRoute())
+	tickets, _, err := c.ListTickets(ctx, ListOptions{Project: "go-tui", Ready: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 1 || tickets[0].itemID != "ITEM5" {
+		t.Fatalf("tickets = %+v", tickets)
+	}
+}
+
+func TestAnUnknownBoardRefreshesTheCacheOnce(t *testing.T) {
+	stale := testMetadata()
+	stale.Projects = stale.Projects[1:]
+	visibility := visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`)
+	spec := ticketSpec{number: 1, status: "Todo"}
+	gh := fakegithub.New(ticketRoute(spec), metadataRoute(), visibility)
+	ticket, err := clientWith(t, gh, stale).readTicket(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket.Project != "go-tui" {
+		t.Fatalf("a board registered elsewhere must route after a refresh: %+v", ticket)
+	}
+
+	unknown := ticketSpec{number: 1, otherBoard: "PERSONAL"}
+	gh = fakegithub.New(listRoute(unknown, ticketSpec{number: 2, otherBoard: "PERSONAL"}), metadataRoute(), visibility)
+	tickets, _, err := clientWith(t, gh, testMetadata()).ListTickets(ctx, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 2 || tickets[0].Project != "" {
+		t.Fatalf("an unregistered board must not route: %+v", tickets)
+	}
+	refreshes := 0
+	for _, req := range gh.Requests() {
+		if strings.Contains(req.Description, "labels(first: 100, query") {
+			refreshes++
+		}
+	}
+	if refreshes != 1 {
+		t.Fatalf("refreshes = %d, want 1 per command", refreshes)
+	}
+}
+
+func TestRoutingFailsWhenMetadataCannotBeRead(t *testing.T) {
+	spec := ticketSpec{number: 1, status: "Todo"}
+	failing := fakegithub.Route{Match: "labels(first: 100, query", Status: 500, Body: "{}"}
+	noCache := func(routes ...fakegithub.Route) *Client {
+		t.Helper()
+		c, err := New(Options{Repo: Repo{Owner: "o", Name: "tracker"}, CacheDir: t.TempDir(), Transport: fakegithub.New(routes...), Token: "tok"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	_, err := noCache(ticketRoute(spec), failing).readTicket(ctx, 1)
+	wantError(t, err, "reading ticket #1")
+	_, _, err = noCache(listRoute(spec), failing).ListTickets(ctx, ListOptions{})
+	wantError(t, err, "listing tickets")
+
+	stale := testMetadata()
+	stale.Projects = stale.Projects[1:]
+	_, err = clientWith(t, fakegithub.New(ticketRoute(spec), failing), stale).readTicket(ctx, 1)
+	wantError(t, err, "reading ticket #1")
+
+	detail := fakegithub.Route{Match: "comments(first: 100)", Body: strings.Replace(ticketRoute(spec).Body, `"projectItems"`, `"body":"","blocking":{"nodes":[]},"subIssues":{"nodes":[]},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}},"projectItems"`, 1)}
+	_, err = noCache(detail, failing).InspectTicket(ctx, 1)
+	wantError(t, err, "reading ticket #1")
 }
 
 func TestMoveKeepsABoardOnlyTicketsMissingLabelOutOfTheWrite(t *testing.T) {
