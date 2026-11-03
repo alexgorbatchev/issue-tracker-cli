@@ -20,7 +20,7 @@ const metadataJSON = `{"data":{"repository":{"id":"REPO","isPrivate":true,"owner
 "projectsV2":{"nodes":[{"id":"B1","title":"go-tui","url":"https://b/1","field":{"id":"F1","options":[{"id":"T","name":"Todo"},{"id":"G","name":"Doing"},{"id":"D","name":"Done"}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`
 
 func metadataRoute() fakegithub.Route {
-	return fakegithub.Route{Match: "labels(first: 100", Body: metadataJSON}
+	return fakegithub.Route{Match: "labels(first: 100, query", Body: metadataJSON}
 }
 
 func visibilityRoute(body string) fakegithub.Route {
@@ -75,8 +75,8 @@ func TestRefreshFollowsBothConnections(t *testing.T) {
 	second := `{"data":{"repository":{"id":"REPO","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},
 "labels":{"nodes":[{"id":"L2","name":"repo:b","description":"o/b"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`
 	gh := fakegithub.New(
-		fakegithub.Route{Match: "labels(first: 100", Body: first, Times: 1},
-		fakegithub.Route{Match: "labels(first: 100", Body: second},
+		fakegithub.Route{Match: "labels(first: 100, query", Body: first, Times: 1},
+		fakegithub.Route{Match: "labels(first: 100, query", Body: second},
 		visibilityRoute(`{"data":{"r0":{"isPrivate":true},"r1":{"isPrivate":false}}}`),
 	)
 	projects, err := clientWith(t, gh, nil).Projects(context.Background())
@@ -105,7 +105,7 @@ func TestUnresolvableRepositoryCountsAsPublic(t *testing.T) {
 
 func TestRequirePrivate(t *testing.T) {
 	public := strings.Replace(metadataJSON, `"isPrivate":true`, `"isPrivate":false`, 1)
-	gh := fakegithub.New(fakegithub.Route{Match: "labels(first: 100", Body: public})
+	gh := fakegithub.New(fakegithub.Route{Match: "labels(first: 100, query", Body: public})
 	c, err := New(Options{Repo: Repo{"o", "tracker"}, CacheDir: t.TempDir(), Transport: gh, Token: "tok", RequirePrivate: true})
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestRequirePrivate(t *testing.T) {
 		t.Fatal("a refused tracker must not be cached")
 	}
 
-	off := clientWith(t, fakegithub.New(fakegithub.Route{Match: "labels(first: 100", Body: public}, visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`)), nil)
+	off := clientWith(t, fakegithub.New(fakegithub.Route{Match: "labels(first: 100, query", Body: public}, visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`)), nil)
 	if _, err := off.Projects(context.Background()); err != nil {
 		t.Fatalf("the check is off by default: %v", err)
 	}

@@ -39,7 +39,7 @@ func TestNewUsesEnvironmentToken(t *testing.T) {
 }
 
 func emptyMetadata() fakegithub.Route {
-	return fakegithub.Route{Match: "labels(first: 100", Body: strings.ReplaceAll(strings.ReplaceAll(metadataJSON, `{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},`, ""), `"title":"go-tui"`, `"title":"unrelated"`)}
+	return fakegithub.Route{Match: "labels(first: 100, query", Body: strings.ReplaceAll(strings.ReplaceAll(metadataJSON, `{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},`, ""), `"title":"go-tui"`, `"title":"unrelated"`)}
 }
 
 func boardRoutes() []fakegithub.Route {
@@ -117,7 +117,7 @@ func TestAddProjectRestoresRemovedProject(t *testing.T) {
 func TestAddProjectReusesBoardFromFailedRun(t *testing.T) {
 	metadata := strings.ReplaceAll(emptyMetadata().Body, `"title":"unrelated"`, `"title":"new"`)
 	routes := []fakegithub.Route{
-		{Match: "labels(first: 100", Body: metadata},
+		{Match: "labels(first: 100, query", Body: metadata},
 		boardRoutes()[0], boardRoutes()[3], boardRoutes()[4],
 	}
 	gh := fakegithub.New(routes...)
@@ -142,7 +142,7 @@ func TestAddProjectFailures(t *testing.T) {
 		routes []fakegithub.Route
 		want   string
 	}{
-		{"metadata", []fakegithub.Route{{Match: "labels(first: 100", Status: 500, Body: "{}"}}, "reading tracker metadata"},
+		{"metadata", []fakegithub.Route{{Match: "labels(first: 100, query", Status: 500, Body: "{}"}}, "reading tracker metadata"},
 		{"missing repo", []fakegithub.Route{emptyMetadata(), {Match: "{ repository(owner: $owner, name: $name) { id } }", Body: `{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"x"}]}`}}, "not found"},
 		{"board", fail(1), "creating board"},
 		{"columns", fail(2), "configuring board"},
@@ -250,7 +250,7 @@ func TestCurrentProject(t *testing.T) {
 func TestCurrentProjectFailures(t *testing.T) {
 	t.Setenv("GH_TOKEN", "tok")
 	t.Setenv("GH_REPO", "o/unregistered")
-	c, _ := newClient(t, fakegithub.Route{Match: "labels(first: 100", Status: 500, Body: "{}"})
+	c, _ := newClient(t, fakegithub.Route{Match: "labels(first: 100, query", Status: 500, Body: "{}"})
 	_, _, err := c.CurrentProject(ctx, true)
 	wantError(t, err, "reading tracker metadata")
 

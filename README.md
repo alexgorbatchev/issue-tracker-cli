@@ -99,7 +99,7 @@ require_private = true
 | `--all-projects` | | `false` | List every project from inside a registered repository |
 | `--state <state>` | | `open` | `open`, `closed`, or `all` |
 | `--status <status>` | | | `Todo`, `Doing`, or `Done` |
-| `--label <label>` | | | Only tickets with this label |
+| `--label <label>` | | | Only tickets with this label, ignoring case |
 | `--search <text>` | | | Only tickets matching this search text |
 | `--ready` | | `false` | Only tickets that can start now |
 | `--stale` | | `false` | Only Doing tickets with no recent activity |

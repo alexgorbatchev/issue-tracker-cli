@@ -26,6 +26,9 @@ const (
 	stateOpen     = "OPEN"
 	nestedLimit   = 20
 	commentsLimit = 100
+	// labelsLimit is the largest page GitHub serves. A shorter page could hide the
+	// blocked label or a routing label, and each ticket holds only a few labels.
+	labelsLimit = 100
 	// subIssuesLimit is GitHub's maximum per parent, so one page holds them all.
 	subIssuesLimit = 100
 
@@ -39,7 +42,7 @@ const (
 // ticketFields is the shared selection for one ticket. Reading blockers, parents,
 // and board status here keeps list and claim commands to a single request.
 var ticketFields = fmt.Sprintf(`id number title state url updatedAt
-  labels(first: %[1]d) { nodes { name } }
+  labels(first: %[3]d) { nodes { name } }
   blockedBy(first: %[1]d) { nodes { number state } }
   parent {
     number state blockedBy(first: %[1]d) { nodes { state } }
@@ -51,7 +54,7 @@ var ticketFields = fmt.Sprintf(`id number title state url updatedAt
       id updatedAt project { id }
       fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
     }
-  }`, nestedLimit, subIssuesLimit)
+  }`, nestedLimit, subIssuesLimit, labelsLimit)
 
 type issueRef struct {
 	Number int
@@ -244,7 +247,7 @@ func (o ListOptions) matches(t Ticket) bool {
 	switch {
 	case o.Status != "" && !strings.EqualFold(t.Status, o.Status):
 		return false
-	case o.Label != "" && !slices.Contains(t.Labels, o.Label):
+	case o.Label != "" && !t.labelled(o.Label):
 		return false
 	case o.Ready && !t.Ready():
 		return false

@@ -218,6 +218,20 @@ func TestListTicketsFilters(t *testing.T) {
 	}
 }
 
+func TestListTicketsMatchesLabelsLikeGitHub(t *testing.T) {
+	c, gh := newClient(t, listRoute(ticketSpec{number: 1, label: "Docs"}, ticketSpec{number: 2, label: "bug"}))
+	tickets, _, err := c.ListTickets(ctx, ListOptions{Label: "docs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 1 || tickets[0].Number != 1 {
+		t.Fatalf("tickets = %+v", tickets)
+	}
+	if query := lastDescription(gh); !strings.Contains(query, "labels(first: 100)") {
+		t.Fatalf("a short label page could hide blocked or a routing label: %s", query)
+	}
+}
+
 func TestListTicketsScopesAndPages(t *testing.T) {
 	first := listRoute(ticketSpec{number: 1, project: "go-tui"})
 	first.Body = strings.Replace(first.Body, `"hasNextPage":false,"endCursor":""`, `"hasNextPage":true,"endCursor":"c1"`, 1)

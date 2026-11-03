@@ -98,7 +98,7 @@ Prints one tab-separated line per ticket, oldest first: number, status, project,
 - `--all-projects` bool: list every project from inside a registered repository.
 - `--state` string: `open`, `closed`, or `all`. Default: open.
 - `--status` string: `Todo`, `Doing`, or `Done`.
-- `--label` string: only tickets with this label.
+- `--label` string: only tickets with this label, ignoring case as GitHub does.
 - `--search` string: only tickets matching this GitHub search text in their title, body, or comments.
 - `--ready` bool: only tickets that can be picked up now: open, without the `blocked` label, with no open blockers, no blocked parent or grandparent, no open sub-issues, and not in Doing or Done. A parent with open sub-issues is left out so that its children get claimed instead; `issue claim <number>` can still claim it. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers.
 - `--stale` bool: only Doing tickets with no ticket or board activity within the stale window.

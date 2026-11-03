@@ -97,7 +97,7 @@ func TestClaimReportsOtherFailures(t *testing.T) {
 
 	c, _ = newClient(t, ticketRoute(ticketSpec{number: 12, project: "go-tui"}),
 		fakegithub.Route{Match: refsPost, Status: 422, Body: `{"message":"Object does not exist"}`},
-		fakegithub.Route{Match: "labels(first: 100", Status: 500, Body: "{}"})
+		fakegithub.Route{Match: "labels(first: 100, query", Status: 500, Body: "{}"})
 	_, err = c.ClaimTicket(ctx, 12)
 	wantError(t, err, "reading tracker metadata")
 }

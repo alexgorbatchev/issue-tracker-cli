@@ -57,7 +57,7 @@ func transferRoute(numbers ...int) []fakegithub.Route {
 
 func importRoutes(source fakegithub.Route, numbers ...int) []fakegithub.Route {
 	routes := []fakegithub.Route{
-		{Match: "labels(first: 100", Body: metadataJSON},
+		{Match: "labels(first: 100, query", Body: metadataJSON},
 		{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":false}}}`},
 		source,
 	}
@@ -414,7 +414,7 @@ func TestImportRefusals(t *testing.T) {
 	if public == metadataJSON {
 		t.Fatal("metadata fixture is no longer private")
 	}
-	c, gh, _ := importClient(t, fakegithub.Route{Match: "labels(first: 100", Body: public}, fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":false}}}`})
+	c, gh, _ := importClient(t, fakegithub.Route{Match: "labels(first: 100, query", Body: public}, fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":false}}}`})
 	_, err = c.ImportIssues(ctx, ImportOptions{Repo: Repo{"o", "go-tui"}})
 	wantError(t, err, "is not private")
 	if countRequests(gh, "issues(states: OPEN") != 0 {
@@ -514,7 +514,7 @@ func TestImportStops(t *testing.T) {
 		wantError(t, err, "reading issues of o/go-tui")
 	})
 	t.Run("metadata read fails", func(t *testing.T) {
-		c, _, _ := importClient(t, fakegithub.Route{Match: "labels(first: 100", Status: 500, Body: "{}"})
+		c, _, _ := importClient(t, fakegithub.Route{Match: "labels(first: 100, query", Status: 500, Body: "{}"})
 		if _, err := c.ImportIssues(ctx, ImportOptions{Repo: Repo{"o", "go-tui"}}); err == nil {
 			t.Fatal("want an error")
 		}
