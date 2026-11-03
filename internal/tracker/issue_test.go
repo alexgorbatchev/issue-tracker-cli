@@ -1023,7 +1023,7 @@ func TestEditCommentAndRelationsUseTwoRequests(t *testing.T) {
 		want string
 	}{
 		{"edit", func(c *Client) error { return c.EditTicket(ctx, 1, EditOptions{Title: &title, Body: &body}) }, "updateIssue"},
-		{"comment", func(c *Client) error { return c.AddComment(ctx, 1, "hi") }, "addComment"},
+		{"comment", func(c *Client) error { return c.AddComment(ctx, 1, "hi", nil) }, "addComment"},
 		{"add blockers", func(c *Client) error { return c.SetBlockers(ctx, 1, []int{2, 3}, true) }, "addBlockedBy"},
 		{"remove blockers", func(c *Client) error { return c.SetBlockers(ctx, 1, []int{2}, false) }, "removeBlockedBy"},
 		{"add sub-issues", func(c *Client) error { return c.SetSubIssues(ctx, 1, []int{2}, true) }, "addSubIssue"},
@@ -1050,7 +1050,7 @@ func TestEditNeedsAChange(t *testing.T) {
 	gh.Add(fakegithub.Route{Match: "n1: issue", Status: 500, Body: "{}"})
 	title := "x"
 	wantError(t, c.EditTicket(ctx, 1, EditOptions{Title: &title}), "reading tickets")
-	wantError(t, c.AddComment(ctx, 1, "x"), "reading tickets")
+	wantError(t, c.AddComment(ctx, 1, "x", nil), "reading tickets")
 	wantError(t, c.SetBlockers(ctx, 1, []int{2}, true), "reading tickets")
 }
 

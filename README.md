@@ -5,7 +5,7 @@
 - **Single tracker:** Stores every ticket in one private repository, with one board per code repository.
 - **Atomic claims:** Lets any number of agents race for a ticket, with exactly one winner.
 - **Ready work:** Shows tickets that can start now, skipping blocked, claimed, and finished work.
-- **Attachments:** Uploads and downloads screenshots and videos using only your GitHub login.
+- **Attachments:** Uploads and downloads screenshots, videos, logs, and other files on tickets and comments using only your GitHub login, placing images where the text references them.
 - **Merge checks:** Closes a ticket only after confirming its pull requests merged.
 - **Stale reporting:** Flags claimed tickets with no recent activity.
 - **Project detection:** Works out the project from the repository and directory you are in, so most commands need few arguments.
@@ -31,6 +31,7 @@
 - A ticket is ready when it has a project, is open, does not have the `blocked` label, has no open blockers, has no blocked parent or grandparent, has no open sub-issues, and is not in Doing or Done. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers. A ticket with sub-issues works as an epic: `issue sub list` shows its progress, and `issue sub close-eligible` closes it once they are all closed.
 - Closing a ticket adds a link to each pull request. On a public pull request, the back-reference is visible to people with access to the tracker, and anonymous visitors did not see it in testing.
 - Project and board IDs are cached in `~/.cache/issue-tracker/` with owner-only permissions. Ticket data is read live and never stored, and each command makes few GitHub requests, as listed in [GITHUB-RATE-LIMITING.md](GITHUB-RATE-LIMITING.md). When GitHub rate limits a request, the command waits as GitHub asks, or stops and prints when to retry.
+- Images and video upload through `gh` to GitHub's attachment storage, which takes nothing else. Other files, such as logs, become assets of an `attachments` prerelease in the tracker repository, so only people with tracker access can download them. A Markdown reference to an attached file's path, such as `![after](./after.png)`, is replaced with the upload.
 - Attachments download to `~/.cache/issue-tracker/attachments/<number>/`. A `--dir` inside a Git worktree must be ignored by it, so a pulled screenshot cannot reach a commit by accident.
 - Lists print a table for people, with board statuses in upper case, and tab-separated rows with the board's status names when `AGENT=1` is set. A table wider than the terminal shrinks its columns and wraps their text, so every line fits; `COLUMNS` overrides the detected width. Results go to stdout, errors go to stderr, and failures exit with status 1.
 
@@ -45,7 +46,7 @@ curl -sSL https://github.com/alexgorbatchev/issue-tracker-cli/releases/latest/do
 
 # Setup
 
-- [GitHub CLI](https://cli.github.com/) - Provides your GitHub login, and uploads attachments. Run `gh auth login`, then `issue-tracker auth refresh` to allow board access.
+- [GitHub CLI](https://cli.github.com/) - Provides your GitHub login, and uploads images and video. Run `gh auth login`, then `issue-tracker auth refresh` to allow board access.
 - Private tracker repository - Create an empty private repository with at least one commit, then set `repo` in the configuration below.
 
 # Quick Start
@@ -126,7 +127,7 @@ require_private = true
 | `--body <text>` | | | Ticket text |
 | `--body-file <path>` | | | File holding the text; `-` reads standard input |
 | `--project <name>` | | Current directory's project | Project for the ticket |
-| `--attach <file>` | | | Image or video to upload; repeatable |
+| `--attach <file>` | | | File to upload; repeatable. Also on `issue edit` and `issue comment add` |
 | `--label <label>` | | | Label to apply; repeatable |
 | `--parent <number>` | | | Parent ticket |
 | `--discovered-from <number>` | | | Note the ticket that surfaced this work |

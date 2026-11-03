@@ -574,8 +574,23 @@ func TestAttachmentCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New()), "issue", "attachment", "add", "1", "a.png", "b.png")
+	shots := t.TempDir()
+	for _, name := range []string{"a.png", "b.png"} {
+		if err := os.WriteFile(filepath.Join(shots, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New()), "issue", "attachment", "add", "1", filepath.Join(shots, "a.png"), filepath.Join(shots, "b.png"))
 	if err != nil || !strings.Contains(stdout, "OK: attached 2 file(s) to #1") {
+		t.Fatalf("stdout = %q, err = %v", stdout, err)
+	}
+
+	stdout, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "comment", "add", "1", "--attach", filepath.Join(shots, "a.png"))
+	if err != nil || !strings.Contains(stdout, "OK: commented on #1") {
+		t.Fatalf("a comment can be only an attachment: stdout = %q, err = %v", stdout, err)
+	}
+	stdout, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "edit", "1", "--attach", filepath.Join(shots, "b.png"))
+	if err != nil || !strings.Contains(stdout, "OK: edited #1") {
 		t.Fatalf("stdout = %q, err = %v", stdout, err)
 	}
 

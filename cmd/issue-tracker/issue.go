@@ -223,7 +223,7 @@ func newIssueCreateCommand(open opener) *cobra.Command {
 	}
 	addBodyFlags(cmd, &opts.Body, &bodyFile)
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Project for the ticket; defaults to the current repository's project")
-	cmd.Flags().StringArrayVar(&opts.Attachments, "attach", nil, "Image or video to upload; repeatable")
+	cmd.Flags().StringArrayVar(&opts.Attachments, "attach", nil, attachUsage)
 	cmd.Flags().StringArrayVar(&opts.Labels, "label", nil, "Label to apply; repeatable")
 	cmd.Flags().IntVar(&opts.Parent, "parent", 0, "Parent ticket number")
 	cmd.Flags().IntVar(&opts.DiscoveredFrom, "discovered-from", 0, "Ticket that surfaced this work; does not block anything")
@@ -232,11 +232,15 @@ func newIssueCreateCommand(open opener) *cobra.Command {
 	return cmd
 }
 
+// attachUsage describes every --attach flag.
+const attachUsage = "File to upload; repeatable. The text places it where it references the path, as in ![shot](./shot.png), or it is appended"
+
 func newIssueEditCommand(open opener) *cobra.Command {
 	var title, body, bodyFile string
+	var attachments []string
 	cmd := &cobra.Command{
 		Use:   "edit <number>",
-		Short: "Change a ticket's title or body",
+		Short: "Change a ticket's title or body, or attach files to it",
 		Args:  cobra.ExactArgs(1),
 		RunE: withTicket(open, func(cmd *cobra.Command, s *session, number int) (string, error) {
 			var opts tracker.EditOptions
@@ -250,11 +254,13 @@ func newIssueEditCommand(open opener) *cobra.Command {
 				}
 				opts.Body = &text
 			}
+			opts.Attachments = attachments
 			return fmt.Sprintf("edited #%d", number), s.client.EditTicket(cmd.Context(), number, opts)
 		}),
 	}
 	cmd.Flags().StringVar(&title, "title", "", "New ticket title")
 	addBodyFlags(cmd, &body, &bodyFile)
+	cmd.Flags().StringArrayVar(&attachments, "attach", nil, attachUsage)
 	return cmd
 }
 
@@ -364,7 +370,7 @@ func newIssueReopenCommand(open opener) *cobra.Command {
 }
 
 func newAttachmentCommand(open opener) *cobra.Command {
-	cmd := &cobra.Command{Use: "attachment", Short: "Manage images and videos on a ticket"}
+	cmd := &cobra.Command{Use: "attachment", Short: "Manage files attached to a ticket"}
 	var dir string
 	pull := &cobra.Command{
 		Use:   "pull <number>",
@@ -393,11 +399,11 @@ func newAttachmentCommand(open opener) *cobra.Command {
 	pull.Flags().StringVar(&dir, "dir", "", "Download directory; defaults to the cache, and must be outside a Git worktree or ignored by it")
 	add := &cobra.Command{
 		Use:   "add <number> <file...>",
-		Short: "Upload images or videos",
+		Short: "Upload files and append them to the ticket",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: withTicket(open, func(cmd *cobra.Command, s *session, number int) (string, error) {
 			files := cmd.Flags().Args()[1:]
-			return fmt.Sprintf("attached %d file(s) to #%d", len(files), number), s.client.AddAttachments(cmd.Context(), number, files)
+			return fmt.Sprintf("attached %d file(s) to #%d", len(files), number), s.client.AddAttachments(cmd.Context(), number, nil, files)
 		}),
 	}
 	cmd.AddCommand(add, pull)
@@ -516,6 +522,7 @@ func closeParent(cmd *cobra.Command, s *session, parent tracker.Ticket, dryRun b
 
 func newCommentCommand(open opener) *cobra.Command {
 	var body, bodyFile string
+	var attachments []string
 	add := &cobra.Command{
 		Use:   "add <number>",
 		Short: "Add a comment",
@@ -525,13 +532,14 @@ func newCommentCommand(open opener) *cobra.Command {
 			if err != nil {
 				return "", err
 			}
-			if text == "" {
-				return "", errors.New("comment is empty: pass --body or --body-file")
+			if text == "" && len(attachments) == 0 {
+				return "", errors.New("comment is empty: pass --body, --body-file, or --attach")
 			}
-			return fmt.Sprintf("commented on #%d", number), s.client.AddComment(cmd.Context(), number, text)
+			return fmt.Sprintf("commented on #%d", number), s.client.AddComment(cmd.Context(), number, text, attachments)
 		}),
 	}
 	addBodyFlags(add, &body, &bodyFile)
+	add.Flags().StringArrayVar(&attachments, "attach", nil, attachUsage)
 	cmd := &cobra.Command{Use: "comment", Short: "Manage comments"}
 	cmd.AddCommand(add)
 	return cmd
