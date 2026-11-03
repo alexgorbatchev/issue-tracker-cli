@@ -293,8 +293,10 @@ func newIssueListCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if opts.Project, err = s.listScope(cmd, opts.Project, allProjects); err != nil {
-				return err
+			if !opts.Unrouted {
+				if opts.Project, err = s.listScope(cmd, opts.Project, allProjects); err != nil {
+					return err
+				}
 			}
 			if !cmd.Flags().Changed("stale-days") {
 				opts.StaleDays = s.cfg.StaleDays
@@ -320,6 +322,10 @@ func newIssueListCommand(open opener) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.Stale, "stale", false, "Only Doing tickets with no recent activity")
 	cmd.Flags().IntVar(&opts.StaleDays, "stale-days", 0, "Days without activity before a Doing ticket is stale; overrides the configured value")
 	cmd.Flags().IntVar(&opts.Limit, "limit", 100, "Maximum tickets to show; 0 shows all")
+	cmd.Flags().BoolVar(&opts.Unrouted, "unrouted", false, "Only tickets with no project label and on no project board, for triage")
+	cmd.MarkFlagsMutuallyExclusive("unrouted", "project")
+	cmd.MarkFlagsMutuallyExclusive("unrouted", "all-projects")
+	cmd.MarkFlagsMutuallyExclusive("unrouted", "ready")
 	return cmd
 }
 

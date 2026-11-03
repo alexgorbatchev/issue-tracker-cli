@@ -173,6 +173,17 @@ func (m *metadata) staleComponents(project Project, labels []labelNode) bool {
 	return false
 }
 
+// unroutedScope is the search for tickets with none of the registered routing labels.
+// Its results still hold tickets routed through a board or by a label registered
+// since the cache was written, which routing drops afterwards.
+func (m *metadata) unroutedScope() string {
+	terms := make([]string, 0, len(m.Projects))
+	for _, project := range m.Projects {
+		terms = append(terms, "-label:"+strconv.Quote(project.Label()))
+	}
+	return strings.Join(terms, " ")
+}
+
 func (m *metadata) board(title string) (board, bool) {
 	for _, item := range m.Boards {
 		if item.Title == title {

@@ -147,12 +147,13 @@ func (t *Ticket) useBoard(boardID string) bool {
 	return false
 }
 
-// Ready reports whether a ticket can be picked up: open, unblocked, with no blocked
-// ancestor and no open sub-issues, and not in progress. A parent waits for its
+// Ready reports whether a ticket can be picked up: routed to a project, open,
+// unblocked, with no blocked ancestor and no open sub-issues, and not in progress.
+// An unrouted ticket waits for someone to give it a project. A parent waits for its
 // children, so the work gets claimed rather than its container. The blocked label
 // covers waits with no ticket to name, such as a person's input.
 func (t Ticket) Ready() bool {
-	return t.State == stateOpen && len(t.Blockers) == 0 && !t.ParentBlocked && t.OpenSubIssues == 0 &&
+	return t.Project != "" && t.State == stateOpen && len(t.Blockers) == 0 && !t.ParentBlocked && t.OpenSubIssues == 0 &&
 		t.Status != StatusDoing && t.Status != StatusDone && !t.labelled(labelBlocked)
 }
 
@@ -298,9 +299,11 @@ func (t *Ticket) routeTo(meta *metadata) bool {
 	return false
 }
 
-// ListOptions filters tickets. Project is empty for all projects.
+// ListOptions filters tickets. Project is empty for all projects. Unrouted lists only
+// tickets with no project, and excludes Project.
 type ListOptions struct {
 	Project   string
+	Unrouted  bool
 	State     string
 	Status    string
 	Label     string
@@ -315,11 +318,13 @@ type ListOptions struct {
 
 // clientFiltered reports a filter GitHub does not apply, so its count excludes it.
 func (o ListOptions) clientFiltered() bool {
-	return o.Status != "" || o.Label != "" || o.Ready || o.Closable || o.Stale
+	return o.Status != "" || o.Label != "" || o.Ready || o.Closable || o.Stale || o.Unrouted
 }
 
 func (o ListOptions) matches(t Ticket) bool {
 	switch {
+	case o.Unrouted && t.Project != "":
+		return false
 	case o.Status != "" && !strings.EqualFold(t.Status, o.Status):
 		return false
 	case o.Label != "" && !t.labelled(o.Label):
@@ -413,6 +418,17 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, i
 	if err != nil {
 		return nil, 0, err
 	}
+	if opts.Unrouted {
+		if opts.Project != "" {
+			return nil, 0, errors.New("unrouted tickets have no project: pass a project or unrouted, not both")
+		}
+		meta, err := c.metadata(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		tickets, total, _, err := c.listTickets(ctx, opts, states, meta, Project{})
+		return tickets, total, err
+	}
 	if opts.Project == "" {
 		tickets, total, _, err := c.listTickets(ctx, opts, states, &metadata{}, Project{})
 		return tickets, total, err
@@ -444,7 +460,10 @@ func (c *Client) listTickets(ctx context.Context, opts ListOptions, states []str
 		}
 	}
 	read := c.issuesPage(states, labels, project)
-	if opts.Search != "" {
+	switch {
+	case opts.Unrouted:
+		read = c.searchPage(states, meta.unroutedScope(), opts.Search, project)
+	case opts.Search != "":
 		read = c.searchPage(states, labelScope(labels), opts.Search, project)
 	}
 	tickets := []Ticket{}

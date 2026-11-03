@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:46
-last_modified: 2026-11-03 12:00
+last_modified: 2026-11-03 10:37
 status: current
 ---
 
@@ -70,6 +70,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | The same commands in a repository project whose components changed on another machine | Add one metadata refresh, 2 requests, and repeat the read once | The first read also returns the repository's component labels, at no extra request, and differs from the cache |
 | Any read that meets a ticket on an unregistered board | Add one metadata refresh per command | The board may have been registered on another machine, so the cached IDs are refreshed once |
 | `issue list` with `--status`, `--label`, `--ready`, or `--stale` | 1 per 100 tickets | Reads every page, whatever `--limit` says, because GitHub cannot count these filters and the total has to be counted here |
+| `issue list --unrouted` | 1 per 100 open tickets with no routing label | One search excluding every registered routing label, read to the end whatever `--limit` says. Tickets routed by their board are dropped locally; an unregistered board adds the metadata refresh above |
 | `issue list --search` | 1 per 100 matches | One search query. GitHub ends a query at 1,000 results, so each further 1,000 starts a new query from the last creation time |
 | `issue inspect <number...>` | 1 | One query for up to 50 tickets, with one aliased `issue` field each, plus one per extra 100 comments on a ticket. A dry run cost 1 point for one ticket, 2 for 20, and 5 for 50 |
 | `issue create` | 3 | Create with routing label, add to the board, set Todo. Add 1 when relating tickets, 1 for `--label`, and 1 to 3 when GitHub has already added the item, which its sub-issue workflow can do. Passing the board to `createIssue` would save a request but makes that collision routine |

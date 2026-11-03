@@ -50,6 +50,9 @@ func (c *Client) ClaimNext(ctx context.Context, project string) (Ticket, bool, e
 }
 
 func (c *Client) claim(ctx context.Context, ticket Ticket) (Ticket, error) {
+	if ticket.Project == "" {
+		return Ticket{}, fmt.Errorf("ticket #%d has no project: give it a repo: label on GitHub or run issue move %d <project>", ticket.Number, ticket.Number)
+	}
 	if err := c.createClaim(ctx, ticket.Number); err != nil {
 		return Ticket{}, err
 	}

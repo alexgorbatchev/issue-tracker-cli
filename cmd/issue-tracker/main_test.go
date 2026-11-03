@@ -377,6 +377,13 @@ func TestCurrentRepositorySelectsProject(t *testing.T) {
 	if labels := gh.Requests()[4].Variables["labels"].([]any); labels[0] != "repo:lib" {
 		t.Fatalf("an explicit project must win: %v", labels)
 	}
+	gh.Add(boardOnly())
+	if _, _, err := execute(t, open, "issue", "list", "--unrouted"); err != nil {
+		t.Fatal(err)
+	}
+	if search := gh.Requests()[5].Variables["search"].(string); !strings.Contains(search, `-label:"repo:go-tui"`) || strings.Contains(search, ` label:`) {
+		t.Fatalf("--unrouted must ignore the current repository: %q", search)
+	}
 }
 
 func TestLabelAndSearchFlags(t *testing.T) {
@@ -605,6 +612,9 @@ func TestArgumentErrors(t *testing.T) {
 		{"empty comment", []string{"issue", "comment", "add", "1"}, "comment is empty"},
 		{"missing body file", []string{"issue", "comment", "add", "1", "--body-file", "/missing"}, "reading body file"},
 		{"list scope conflict", []string{"issue", "list", "--project", "x", "--all-projects"}, "not both"},
+		{"unrouted with a project", []string{"issue", "list", "--unrouted", "--project", "x"}, "none of the others can be"},
+		{"unrouted with all projects", []string{"issue", "list", "--unrouted", "--all-projects"}, "none of the others can be"},
+		{"unrouted is never ready", []string{"issue", "list", "--unrouted", "--ready"}, "none of the others can be"},
 		{"project add outside a repository", []string{"project", "add"}, "pass owner/repo"},
 		{"project add bad repo", []string{"project", "add", "bad"}, "invalid repository"},
 		{"project add name without path", []string{"project", "add", "o/go-tui", "--name", "docs"}, "pass --path too"},

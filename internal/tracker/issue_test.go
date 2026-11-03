@@ -115,17 +115,18 @@ func TestReady(t *testing.T) {
 		spec ticketSpec
 		want bool
 	}{
-		{"open with no status", ticketSpec{number: 1}, true},
+		{"open with no status", ticketSpec{number: 1, project: "go-tui"}, true},
+		{"unrouted", ticketSpec{number: 1}, false},
 		{"todo", ticketSpec{number: 1, status: "Todo"}, true},
 		{"closed", ticketSpec{number: 1, state: "CLOSED"}, false},
 		{"doing", ticketSpec{number: 1, status: "Doing"}, false},
 		{"done on the board", ticketSpec{number: 1, status: "Done"}, false},
 		{"open blocker", ticketSpec{number: 1, blockers: openBlocker}, false},
-		{"closed blocker", ticketSpec{number: 1, blockers: `{"number":9,"state":"CLOSED"}`}, true},
+		{"closed blocker", ticketSpec{number: 1, project: "go-tui", blockers: `{"number":9,"state":"CLOSED"}`}, true},
 		{"blocked parent", ticketSpec{number: 1, parent: blockedParent}, false},
 		{"blocked grandparent", ticketSpec{number: 1, parent: blockedGrandparent}, false},
-		{"unblocked parent", ticketSpec{number: 1, parent: openParent}, true},
-		{"closed parent keeps child ready", ticketSpec{number: 1, parent: closedParent}, true},
+		{"unblocked parent", ticketSpec{number: 1, project: "go-tui", parent: openParent}, true},
+		{"closed parent keeps child ready", ticketSpec{number: 1, project: "go-tui", parent: closedParent}, true},
 		{"labelled blocked", ticketSpec{number: 1, status: "Todo", label: "blocked"}, false},
 		{"labelled blocked in another case", ticketSpec{number: 1, status: "Todo", label: "Blocked"}, false},
 		{"unrelated label", ticketSpec{number: 1, status: "Todo", label: "blocked-upstream"}, true},

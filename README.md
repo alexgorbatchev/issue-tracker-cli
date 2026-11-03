@@ -10,6 +10,7 @@
 - **Stale reporting:** Flags claimed tickets with no recent activity.
 - **Project detection:** Works out the project from the repository and directory you are in, so most commands need few arguments.
 - **Monorepos:** Registers directories of one repository as components, each with its own label on the repository's board.
+- **Triage inbox:** Lists tickets filed on GitHub without a project, and keeps them out of every work queue until they get one.
 
 # How It Works
 
@@ -23,10 +24,11 @@
 
 - Each project is a `repo:<name>` label and a private GitHub Project board in the tracker repository. Boards are never linked to your code repositories, and nothing is written to them, so a public repository shows no trace of the tracker.
 - A ticket you create inside a board on GitHub belongs to that project without a label. If a label and a board disagree, the label wins.
-- A component is a project for one directory of a registered repository, registered with `project add --path`. Its label `repo:<repo>/<component>` has the description `owner/repo:<path>`, and it uses the repository's board, so routing a ticket to it on GitHub takes one label. Inside that directory the component is the current project; elsewhere in the repository, the repository's lists and claims include its components' tickets.
+- A ticket with neither a project label nor a place on a project board has no project. It is never ready and cannot be claimed until you give it a label or put it on a board in GitHub, and `issue list --unrouted` lists these tickets for triage.
+- A component is a project for one directory of a registered repository, registered with `project add --path`. It has its own `repo:<repo>/<component>` label and shares the repository's board, so routing a ticket to it on GitHub takes one label. Inside that directory the component is the current project; elsewhere in the repository, the repository's lists, claims, and counts include its components' tickets.
 - A claim is a Git ref named `refs/claims/<number>` in the tracker repository. GitHub refuses to create a ref that exists, so a second claimant fails at once. Refs do not appear on the Tags or Branches pages.
 - Claims never expire on their own. A Doing ticket with no ticket or board activity for `stale_days` is reported as stale and is left for you to release.
-- A ticket is ready when it is open, does not have the `blocked` label, has no open blockers, has no blocked parent or grandparent, has no open sub-issues, and is not in Doing or Done. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers. A ticket with sub-issues works as an epic: `issue sub list` shows its progress, and `issue sub close-eligible` closes it once they are all closed.
+- A ticket is ready when it has a project, is open, does not have the `blocked` label, has no open blockers, has no blocked parent or grandparent, has no open sub-issues, and is not in Doing or Done. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers. A ticket with sub-issues works as an epic: `issue sub list` shows its progress, and `issue sub close-eligible` closes it once they are all closed.
 - Closing a ticket adds a link to each pull request. On a public pull request, the back-reference is visible to people with access to the tracker, and anonymous visitors did not see it in testing.
 - Project and board IDs are cached in `~/.cache/issue-tracker/` with owner-only permissions. Ticket data is read live and never stored, and each command makes few GitHub requests, as listed in [GITHUB-RATE-LIMITING.md](GITHUB-RATE-LIMITING.md). When GitHub rate limits a request, the command waits as GitHub asks, or stops and prints when to retry.
 - Attachments download to `~/.cache/issue-tracker/attachments/<number>/`. A `--dir` inside a Git worktree must be ignored by it, so a pulled screenshot cannot reach a commit by accident.
@@ -104,8 +106,9 @@ require_private = true
 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--project <name>` | | Current repository's project | Limit to a project |
+| `--project <name>` | | Current directory's project | Limit to a project |
 | `--all-projects` | | `false` | List every project from inside a registered repository |
+| `--unrouted` | | `false` | Only tickets with no project, for triage. Excludes `--project`, `--all-projects`, and `--ready` |
 | `--state <state>` | | `open` | `open`, `closed`, or `all` |
 | `--status <status>` | | | `Todo`, `Doing`, or `Done` |
 | `--label <label>` | | | Only tickets with this label, ignoring case |
@@ -122,7 +125,7 @@ require_private = true
 | `--title <title>` | | Required | Ticket title |
 | `--body <text>` | | | Ticket text |
 | `--body-file <path>` | | | File holding the text; `-` reads standard input |
-| `--project <name>` | | Current repository's project | Project for the ticket |
+| `--project <name>` | | Current directory's project | Project for the ticket |
 | `--attach <file>` | | | Image or video to upload; repeatable |
 | `--label <label>` | | | Label to apply; repeatable |
 | `--parent <number>` | | | Parent ticket |
@@ -135,7 +138,7 @@ require_private = true
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--next` | | `false` | Claim the oldest ready ticket |
-| `--project <name>` | | Current repository's project | Limit `--next` to a project |
+| `--project <name>` | | Current directory's project | Limit `--next` to a project |
 
 `issue-tracker issue close`
 
