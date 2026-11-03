@@ -296,14 +296,16 @@ func TestProjectSummaryBoardSearchFailure(t *testing.T) {
 
 func TestRemoveProjectLabelsClosedBoardOnlyTickets(t *testing.T) {
 	counts := fakegithub.Route{Match: "open: search", Body: `{"data":{"open":{"issueCount":0},"closed":{"issueCount":0}}}`}
-	c, gh := newClient(t, boardOnlyRoute(ticketSpec{number: 5, status: "Done", state: "CLOSED"}), counts,
+	closed := []ticketSpec{{number: 5, status: "Done", state: "CLOSED"}, {number: 6, status: "Done", state: "CLOSED"}}
+	c, gh := newClient(t, boardOnlyRoute(closed...), counts,
 		okRoute("addLabelsToLabelable"), okRoute("deleteProjectV2"), okRoute("updateLabel"), metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
 	if err := c.RemoveProject(ctx, "go-tui"); err != nil {
 		t.Fatal(err)
 	}
+	wantCount(t, gh, 7)
 	requests := gh.Requests()
 	write := requests[2].Description
-	if !strings.Contains(write, `labelableId: "I5"`) || !strings.Contains(write, `labelIds: ["L1"]`) {
+	if !strings.Contains(write, `labelableId: "I5"`) || !strings.Contains(write, `labelableId: "I6"`) || !strings.Contains(write, `labelIds: ["L1"]`) {
 		t.Fatalf("write = %s", write)
 	}
 	if !strings.Contains(requests[3].Description, "deleteProjectV2") {

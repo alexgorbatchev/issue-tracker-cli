@@ -382,6 +382,32 @@ func TestATicketOnSeveralBoardsUsesItsProjectsItem(t *testing.T) {
 	}
 }
 
+func TestALabelledTicketUsesItsProjectsItem(t *testing.T) {
+	c, gh := newClient(t, ticketRoute(ticketSpec{number: 5, project: "go-tui", status: "Todo", otherBoard: "PERSONAL"}))
+	ticket, err := c.readTicket(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket.Project != "go-tui" || ticket.itemID != "ITEM5" || ticket.Status != "Todo" {
+		t.Fatalf("ticket = %+v", ticket)
+	}
+	wantCount(t, gh, 1)
+}
+
+func TestActivityComesFromEveryBoard(t *testing.T) {
+	quiet := ticketSpec{number: 5, project: "go-tui", status: "Doing", otherBoard: "PERSONAL", updated: "2026-01-01T00:00:00Z"}
+	route := ticketRoute(quiet)
+	route.Body = strings.Replace(route.Body, `"id":"ITEM5","updatedAt":"2026-01-01T00:00:00Z"`, `"id":"ITEM5","updatedAt":"2026-10-30T00:00:00Z"`, 1)
+	c, _ := newClient(t, route)
+	ticket, err := c.readTicket(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if now := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC); ticket.Stale(3, now) {
+		t.Fatalf("a ticket active on its board is not stale: %+v", ticket)
+	}
+}
+
 func TestAnUnknownBoardRefreshesTheCacheOnce(t *testing.T) {
 	stale := testMetadata()
 	stale.Projects = stale.Projects[1:]

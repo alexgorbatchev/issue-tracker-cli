@@ -200,12 +200,12 @@ func (n ticketNode) ticket() Ticket {
 			entry.status = item.FieldValueByName.Name
 		}
 		t.items = append(t.items, entry)
-	}
-	if items := n.ProjectItems.Nodes; len(items) > 0 {
-		t.useBoard(items[0].Project.ID)
-		if items[0].UpdatedAt.After(t.Activity) {
-			t.Activity = items[0].UpdatedAt
+		if item.UpdatedAt.After(t.Activity) {
+			t.Activity = item.UpdatedAt
 		}
+	}
+	if len(t.items) > 0 {
+		t.useBoard(t.items[0].boardID)
 	}
 	return t
 }
@@ -258,14 +258,20 @@ func (c *Client) readTicket(ctx context.Context, number int) (Ticket, error) {
 // routed gives a ticket with no routing label the project whose board holds it, so a
 // ticket created inside a board needs no label. A label wins when the two disagree.
 // An unknown board can be one registered on another machine, so it refreshes the
-// cached IDs once.
+// cached IDs once. A labelled ticket on several boards uses its project's item.
 func (c *Client) routed(ctx context.Context, t Ticket) (Ticket, error) {
-	if t.Project != "" || len(t.items) == 0 {
+	if len(t.items) == 0 || (t.Project != "" && len(t.items) == 1) {
 		return t, nil
 	}
 	meta, err := c.metadata(ctx)
 	if err != nil {
 		return t, err
+	}
+	if t.Project != "" {
+		if project, ok := meta.project(t.Project); ok {
+			t.useBoard(project.BoardID)
+		}
+		return t, nil
 	}
 	if t.routeTo(meta) || c.boardsChecked {
 		return t, nil
