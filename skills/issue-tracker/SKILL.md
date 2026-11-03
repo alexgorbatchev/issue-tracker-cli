@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-02 16:43
+  last_modified: 2026-11-02 16:46
   status: current
 ---
 
@@ -99,7 +99,7 @@ Prints one tab-separated line per ticket, oldest first: number, status, project,
 - `--state` string: `open`, `closed`, or `all`. Default: open.
 - `--status` string: `Todo`, `Doing`, or `Done`.
 - `--label` string: only tickets with this label, ignoring case as GitHub does.
-- `--search` string: only tickets matching this GitHub search text in their title, body, or comments. GitHub serves 1,000 results per search query, so a longer result continues with another query from the last creation time, and `--limit 0` delivers every match once.
+- `--search` string: only tickets matching this GitHub search text in their title, body, or comments. GitHub serves 1,000 results per search query, so a longer result continues with another query from the last creation time, and `--limit 0` delivers every match once. The one exception is more than 1,000 matches created in the same second, which fails with the error listed under Errors and prints no tickets. Leave `sort:` out of the search text, because continuing depends on creation order.
 - `--ready` bool: only tickets that can be picked up now: open, without the `blocked` label, with no open blockers, no blocked parent or grandparent, no open sub-issues, and not in Doing or Done. A parent with open sub-issues is left out so that its children get claimed instead; `issue claim <number>` can still claim it. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers.
 - `--stale` bool: only Doing tickets with no ticket or board activity within the stale window.
 - `--stale-days` int: stale window in days, overriding the configured value.
@@ -237,6 +237,7 @@ Prints help for a command. `--help`, `-h` bool prints help on any command, and `
 
 ## Errors
 
+- `listing tickets: more than 1000 tickets were created at <time>: search cannot page past them`: narrow the search text.
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
 - `GitHub rate limit reached: retry after <time>`: wait until that time.
 - `your GitHub login has no access to project boards: run issue-tracker auth refresh`: the token lacks the `project` scope. Ask the user to run `issue-tracker auth refresh` in a terminal.
