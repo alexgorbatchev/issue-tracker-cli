@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-02 16:51
+  last_modified: 2026-11-02 16:53
   status: current
 ---
 
@@ -12,7 +12,7 @@ metadata:
 
 Set `AGENT=1` on every invocation, or export it for the session. Read exit status as well as stdout: failures exit nonzero and print `ERR:` to stderr. Successful writes print one `OK:` line. Values `1`, `true`, and `yes` enable agent output, with case and surrounding whitespace ignored.
 
-`issue-tracker` keeps every ticket as a GitHub Issue in one private tracker repository. Code and pull requests stay in their own repositories. Each registered code repository is a project, with one `repo:<name>` label and one board with the columns Todo, Doing, and Done. A ticket belongs to a project through that label or by being on its board, so a ticket created inside a board in the GitHub web UI needs no label. If the two disagree, the label wins. A ticket with neither has no project and appears only in an unscoped list.
+`issue-tracker` keeps every ticket as a GitHub Issue in one private tracker repository. Code and pull requests stay in their own repositories. Each registered code repository is a project, with one `repo:<name>` label and one board with the columns Todo, Doing, and Done. A ticket belongs to a project through that label or by being on its board, so a ticket created inside a board in the GitHub web UI needs no label. If the two disagree, the label wins. Project-scoped lists find unlabelled board tickets through GitHub search, so a new or just-closed one can take several seconds to move in them; `issue inspect` is always current. A ticket with neither has no project and appears only in an unscoped list.
 
 ## Workflow
 
