@@ -329,7 +329,7 @@ func TestIssueListOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"Ticket", "Doing (stale)", "Crash", "│"} {
+		for _, want := range []string{"Ticket", "DOING (stale)", "Crash", "│"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("stdout = %q, missing %q", stdout, want)
 			}
@@ -534,6 +534,12 @@ func TestIssueInspectPrintsDetail(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
+	}
+
+	t.Setenv("AGENT", "0")
+	stdout, _, err = execute(t, fakeOpener(t, fakegithub.New(route)), "issue", "inspect", "1")
+	if err != nil || !strings.Contains(stdout, "status: TODO\n") {
+		t.Fatalf("people see the status in upper case: stdout = %q, err = %v", stdout, err)
 	}
 }
 

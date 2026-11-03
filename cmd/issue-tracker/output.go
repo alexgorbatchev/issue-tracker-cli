@@ -55,6 +55,15 @@ func table(w io.Writer, header []string, rows [][]string) error {
 	return err
 }
 
+// displayStatus shows a board status in upper case for people. Agents get the
+// board's own name, which is what --status and the skill use.
+func displayStatus(status string) string {
+	if cobrahelptree.IsAgentMode() {
+		return status
+	}
+	return strings.ToUpper(status)
+}
+
 func tsv(w io.Writer, rows [][]string) error {
 	for _, row := range rows {
 		if _, err := fmt.Fprintln(w, strings.Join(row, "\t")); err != nil {
@@ -72,7 +81,7 @@ func printTickets(w io.Writer, tickets []tracker.Ticket, staleDays int, now time
 	}
 	rows := make([][]string, 0, len(tickets))
 	for _, ticket := range tickets {
-		status := ticket.Status
+		status := displayStatus(ticket.Status)
 		if ticket.Stale(staleDays, now) {
 			status += " (stale)"
 		}
@@ -161,7 +170,7 @@ func printDetails(w io.Writer, details []tracker.TicketDetail) error {
 func printDetail(w io.Writer, detail tracker.TicketDetail) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "number: %d\ntitle: %s\nstate: %s\nstatus: %s\nproject: %s\nurl: %s\n",
-		detail.Number, detail.Title, detail.State, detail.Status, detail.Project, detail.URL)
+		detail.Number, detail.Title, detail.State, displayStatus(detail.Status), detail.Project, detail.URL)
 	if len(detail.Labels) > 0 {
 		fmt.Fprintf(&b, "labels: %s\n", strings.Join(detail.Labels, ","))
 	}
