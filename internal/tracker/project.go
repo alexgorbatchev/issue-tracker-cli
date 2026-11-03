@@ -57,7 +57,7 @@ func (c *Client) CurrentProject(ctx context.Context, refresh bool) (Project, boo
 	if !ok {
 		return Project{}, false, nil
 	}
-	dir := currentDir()
+	dir := currentDir(ctx)
 	meta, err := c.metadata(ctx)
 	if err != nil {
 		return Project{}, false, err
@@ -93,11 +93,11 @@ func currentRepo() (string, bool) {
 // currentDir returns the working directory relative to the top of its checkout,
 // empty at the top. GH_REPO names a repository that need not be this checkout, so
 // it selects the whole repository.
-func currentDir() string {
+func currentDir(ctx context.Context) string {
 	if os.Getenv("GH_REPO") != "" {
 		return ""
 	}
-	out, err := exec.Command("git", "rev-parse", "--show-prefix").Output()
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-prefix").Output()
 	if err != nil {
 		return ""
 	}

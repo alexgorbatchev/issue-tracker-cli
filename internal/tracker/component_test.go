@@ -172,7 +172,7 @@ func TestCurrentProjectFollowsTheDirectory(t *testing.T) {
 
 	t.Chdir(t.TempDir())
 	t.Setenv("GH_REPO", "")
-	if dir := currentDir(); dir != "" {
+	if dir := currentDir(ctx); dir != "" {
 		t.Fatalf("outside a checkout: dir = %q", dir)
 	}
 }
