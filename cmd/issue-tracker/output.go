@@ -7,10 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
+	lgtable "charm.land/lipgloss/v2/table"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/displaypath"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"
-	"github.com/olekukonko/tablewriter"
 )
 
 // report prints a one-line result: OK: for agents, [OK] for people.
@@ -36,17 +37,22 @@ func warnPublic(w io.Writer, project string) error {
 	return warn(w, "%s is public: keep ticket text, attachments, numbers, and the tracker name out of its commits, PRs, and branch names", project)
 }
 
+// cellStyle pads cells so that wrapped text stays clear of the borders.
+var cellStyle = lipgloss.NewStyle().Padding(0, 1)
+
+// table renders rows for people. When the table is wider than the terminal, its
+// columns shrink and their text wraps so that every line fits.
 func table(w io.Writer, header []string, rows [][]string) error {
-	t := tablewriter.NewTable(w, tablewriter.WithHeader(header))
-	for _, row := range rows {
-		if err := t.Append(row); err != nil {
-			return fmt.Errorf("rendering table: %w", err)
-		}
+	t := lgtable.New().
+		Border(lipgloss.NormalBorder()).
+		Headers(header...).
+		Rows(rows...).
+		StyleFunc(func(row, col int) lipgloss.Style { return cellStyle })
+	if width := cobrahelptree.GetTerminalWidth(); width > 0 && lipgloss.Width(t.String()) > width {
+		t.Width(width)
 	}
-	if err := t.Render(); err != nil {
-		return fmt.Errorf("rendering table: %w", err)
-	}
-	return nil
+	_, err := fmt.Fprintln(w, t.String())
+	return err
 }
 
 func tsv(w io.Writer, rows [][]string) error {
@@ -59,13 +65,18 @@ func tsv(w io.Writer, rows [][]string) error {
 }
 
 func printTickets(w io.Writer, tickets []tracker.Ticket, staleDays int, now time.Time) error {
+	// A table wraps labels at the spaces after their commas.
+	separator := ", "
+	if cobrahelptree.IsAgentMode() {
+		separator = ","
+	}
 	rows := make([][]string, 0, len(tickets))
 	for _, ticket := range tickets {
 		status := ticket.Status
 		if ticket.Stale(staleDays, now) {
 			status += " (stale)"
 		}
-		rows = append(rows, []string{strconv.Itoa(ticket.Number), status, ticket.Project, strings.Join(ticket.Labels, ","), ticket.Title})
+		rows = append(rows, []string{strconv.Itoa(ticket.Number), status, ticket.Project, strings.Join(ticket.Labels, separator), ticket.Title})
 	}
 	if cobrahelptree.IsAgentMode() {
 		return tsv(w, rows)

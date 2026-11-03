@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/config"
@@ -328,9 +329,46 @@ func TestIssueListOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"TICKET", "Doing (stale)", "Crash", "│"} {
+		for _, want := range []string{"Ticket", "Doing (stale)", "Crash", "│"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("stdout = %q, missing %q", stdout, want)
+			}
+		}
+	})
+	t.Run("human tables fit the terminal", func(t *testing.T) {
+		t.Setenv("AGENT", "0")
+		outsideRepository(t)
+		long := strings.Replace(ticketJSON(2, "go-tui", "Todo", "2026-01-01T00:00:00Z"), `"title":"Crash"`, `"title":"Select the matching project item when a ticket belongs to multiple boards"`, 1)
+		long = strings.Replace(long, `{"name":"repo:go-tui"}`, `{"name":"repo:go-tui"},{"name":"priority:P2"},{"name":"dependencies"},{"name":"stdout-review"}`, 1)
+		widest := func(stdout string) int {
+			widest := 0
+			for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
+				widest = max(widest, utf8.RuneCountInString(line))
+			}
+			return widest
+		}
+
+		t.Setenv("COLUMNS", "200")
+		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(long))), "issue", "list")
+		if err != nil {
+			t.Fatal(err)
+		}
+		natural := widest(stdout)
+		if natural >= 200 || !strings.Contains(stdout, "priority:P2, dependencies, stdout-review") {
+			t.Fatalf("a table narrower than the terminal keeps its width and one line per row:\n%s", stdout)
+		}
+
+		t.Setenv("COLUMNS", "60")
+		stdout, _, err = execute(t, fakeOpener(t, fakegithub.New(listRoute(long))), "issue", "list")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := widest(stdout); got != 60 {
+			t.Fatalf("widest line = %d, want 60:\n%s", got, stdout)
+		}
+		for _, word := range []string{"Select", "boards", "dependencies"} {
+			if !strings.Contains(stdout, word) {
+				t.Fatalf("wrapping must keep %q whole:\n%s", word, stdout)
 			}
 		}
 	})
