@@ -434,13 +434,18 @@ func TestProjectCommands(t *testing.T) {
 func TestCloseNeedsExactlyOneKindOfEvidence(t *testing.T) {
 	t.Setenv("AGENT", "1")
 	outsideRepository(t)
-	for _, args := range [][]string{
-		{"issue", "close", "1"},
-		{"issue", "close", "1", "--pr", "2", "--landed-pr", "2"},
-		{"issue", "close", "1", "--landed-pr", "2", "--reason", "completed"},
-	} {
-		if _, _, err := execute(t, noSession, args...); err == nil {
-			t.Fatalf("%v must be refused", args)
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"issue", "close", "1"}, "at least one of the flags in the group [pr landed-pr reason] is required"},
+		{[]string{"issue", "close", "1", "--pr", "2", "--landed-pr", "2"}, "none of the others can be"},
+		{[]string{"issue", "close", "1", "--landed-pr", "2", "--reason", "completed"}, "none of the others can be"},
+	}
+	for _, tt := range tests {
+		_, _, err := execute(t, noSession, tt.args...)
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Fatalf("%v: err = %v, want %q", tt.args, err, tt.want)
 		}
 	}
 }
