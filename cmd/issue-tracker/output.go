@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -73,7 +74,10 @@ func tsv(w io.Writer, rows [][]string) error {
 	return nil
 }
 
-func printTickets(w io.Writer, tickets []tracker.Ticket, staleDays int, now time.Time) error {
+// printTickets prints a list scoped to project, or to every project when it is
+// empty. A table leaves out the Project column when every ticket belongs to the
+// scoped project, which the reader already knows.
+func printTickets(w io.Writer, tickets []tracker.Ticket, project string, staleDays int, now time.Time) error {
 	// A table wraps labels at the spaces after their commas.
 	separator := ", "
 	if cobrahelptree.IsAgentMode() {
@@ -94,7 +98,13 @@ func printTickets(w io.Writer, tickets []tracker.Ticket, staleDays int, now time
 		_, err := fmt.Fprintln(w, "No tickets found.")
 		return err
 	}
-	return table(w, []string{"Ticket", "Status", "Project", "Labels", "Title"}, rows)
+	if project == "" || slices.ContainsFunc(tickets, func(ticket tracker.Ticket) bool { return ticket.Project != project }) {
+		return table(w, []string{"#", "Status", "Project", "Labels", "Title"}, rows)
+	}
+	for i, row := range rows {
+		rows[i] = slices.Delete(row, 2, 3)
+	}
+	return table(w, []string{"#", "Status", "Labels", "Title"}, rows)
 }
 
 func printProjects(w io.Writer, projects []tracker.Project) error {
@@ -219,7 +229,7 @@ func printSubIssues(w io.Writer, subs []tracker.SubIssue) error {
 		_, err := fmt.Fprintln(w, "No sub-issues.")
 		return err
 	}
-	return table(w, []string{"Ticket", "State", "Title"}, rows)
+	return table(w, []string{"#", "State", "Title"}, rows)
 }
 
 func printPaths(w io.Writer, paths []string) error {

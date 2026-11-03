@@ -306,7 +306,7 @@ func newIssueListCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := printTickets(cmd.OutOrStdout(), tickets, opts.StaleDays, opts.Now); err != nil || total <= len(tickets) {
+			if err := printTickets(cmd.OutOrStdout(), tickets, opts.Project, opts.StaleDays, opts.Now); err != nil || total <= len(tickets) {
 				return err
 			}
 			return warn(cmd.ErrOrStderr(), "showing the first %d of %d tickets: pass --limit 0 to list them all", len(tickets), total)

@@ -32,7 +32,7 @@
 - Closing a ticket adds a link to each pull request. On a public pull request, the back-reference is visible to people with access to the tracker, and anonymous visitors did not see it in testing.
 - Project and board IDs are cached in `~/.cache/issue-tracker/` with owner-only permissions. Ticket data is read live and never stored, and each command makes few GitHub requests, as listed in [GITHUB-RATE-LIMITING.md](GITHUB-RATE-LIMITING.md). When GitHub rate limits a request, the command waits as GitHub asks, or stops and prints when to retry.
 - Attachments download to `~/.cache/issue-tracker/attachments/<number>/`. A `--dir` inside a Git worktree must be ignored by it, so a pulled screenshot cannot reach a commit by accident.
-- Lists print a table for people, with board statuses in upper case, and tab-separated rows with the board's status names when `AGENT=1` is set. A table wider than the terminal shrinks its columns and wraps their text, so every line fits; `COLUMNS` overrides the detected width. Results go to stdout, errors go to stderr, and failures exit with status 1.
+- Lists print a table for people, with board statuses in upper case and no Project column when every ticket belongs to the project the list is scoped to, and tab-separated rows with the board's status names when `AGENT=1` is set. A table wider than the terminal shrinks its columns and wraps their text, so every line fits; `COLUMNS` overrides the detected width. Results go to stdout, errors go to stderr, and failures exit with status 1.
 
 # Installation
 

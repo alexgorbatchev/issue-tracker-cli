@@ -329,10 +329,30 @@ func TestIssueListOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"Ticket", "DOING (stale)", "Crash", "│"} {
+		for _, want := range []string{"│ # ", "Project", "DOING (stale)", "Crash", "│"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("stdout = %q, missing %q", stdout, want)
 			}
+		}
+	})
+	t.Run("human tables leave out the project the list is scoped to", func(t *testing.T) {
+		t.Setenv("AGENT", "0")
+		t.Setenv("GH_TOKEN", "tok")
+		t.Setenv("GH_REPO", "o/go-tui")
+		gh := fakegithub.New(boardOnly(), listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")))
+		stdout, _, err := execute(t, fakeOpener(t, gh), "issue", "list")
+		if err != nil || strings.Contains(stdout, "Project") || strings.Contains(stdout, "go-tui") || !strings.Contains(stdout, "Crash") {
+			t.Fatalf("stdout = %q, err = %v", stdout, err)
+		}
+		gh = fakegithub.New(boardOnly(), listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z"), ticketJSON(2, "lib", "Todo", "2026-10-01T00:00:00Z")))
+		stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "list")
+		if err != nil || !strings.Contains(stdout, "Project") || !strings.Contains(stdout, "lib") {
+			t.Fatalf("a ticket from another project brings the column back: stdout = %q, err = %v", stdout, err)
+		}
+		t.Setenv("AGENT", "1")
+		gh = fakegithub.New(boardOnly(), listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")))
+		if stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "list"); err != nil || stdout != "1\tTodo\tgo-tui\t\tCrash\n" {
+			t.Fatalf("agents keep every column: stdout = %q, err = %v", stdout, err)
 		}
 	})
 	t.Run("human tables fit the terminal", func(t *testing.T) {
