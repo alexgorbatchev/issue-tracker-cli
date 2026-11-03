@@ -56,8 +56,9 @@ var ticketFields = fmt.Sprintf(`id number title state url createdAt updatedAt
     nodes {
       id updatedAt project { id }
       fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      component: fieldValueByName(name: %[4]q) { ... on ProjectV2ItemFieldSingleSelectValue { name } }
     }
-  }`, nestedLimit, subIssuesLimit, labelsLimit)
+  }`, nestedLimit, subIssuesLimit, labelsLimit, componentField)
 
 type issueRef struct {
 	Number int
@@ -101,6 +102,7 @@ type ticketNode struct {
 			UpdatedAt        time.Time
 			Project          struct{ ID string }
 			FieldValueByName *struct{ Name string }
+			Component        *struct{ Name string }
 		}
 	}
 }
@@ -124,6 +126,7 @@ type Ticket struct {
 
 	itemID      string
 	boardID     string
+	component   string
 	items       []boardItem
 	created     time.Time
 	boardRouted bool
@@ -132,7 +135,7 @@ type Ticket struct {
 // boardItem is a ticket's place on one board. A ticket can be on several, because
 // GitHub Projects is not limited to the boards this tool manages.
 type boardItem struct {
-	id, boardID, status string
+	id, boardID, status, component string
 }
 
 // useBoard makes a ticket's item on the board the current one, and reports whether
@@ -140,7 +143,7 @@ type boardItem struct {
 func (t *Ticket) useBoard(boardID string) bool {
 	for _, item := range t.items {
 		if item.boardID == boardID {
-			t.itemID, t.boardID, t.Status = item.id, item.boardID, item.status
+			t.itemID, t.boardID, t.Status, t.component = item.id, item.boardID, item.status, item.component
 			return true
 		}
 	}
@@ -202,6 +205,9 @@ func (n ticketNode) ticket() Ticket {
 		entry := boardItem{id: item.ID, boardID: item.Project.ID}
 		if item.FieldValueByName != nil {
 			entry.status = item.FieldValueByName.Name
+		}
+		if item.Component != nil {
+			entry.component = item.Component.Name
 		}
 		t.items = append(t.items, entry)
 		if item.UpdatedAt.After(t.Activity) {
@@ -290,9 +296,9 @@ func (c *Client) routed(ctx context.Context, t Ticket) (Ticket, error) {
 
 func (t *Ticket) routeTo(meta *metadata) bool {
 	for _, project := range meta.Projects {
-		// A component shares its repository's board, which routes to the repository.
+		// A component shares its repository's board, whose Component value picks it.
 		if !project.Component() && t.useBoard(project.BoardID) {
-			t.Project, t.boardRouted = project.Name, true
+			t.Project, t.boardRouted = meta.boardProject(project.Name, t.component), true
 			return true
 		}
 	}
@@ -455,7 +461,7 @@ func (c *Client) listTickets(ctx context.Context, opts ListOptions, states []str
 	if project.Name != "" {
 		labels = meta.scopeLabels(project)
 		var err error
-		if onBoard, err = c.boardOnlyTickets(ctx, project, labels, states, opts); err != nil {
+		if onBoard, err = c.boardOnlyTickets(ctx, meta, project, states, opts); err != nil {
 			return nil, 0, false, fmt.Errorf("listing tickets: %w", err)
 		}
 	}
@@ -515,15 +521,15 @@ func labelScope(labels []string) string {
 	return "label:" + strings.Join(quoted, ",")
 }
 
-// boardOnlyTickets reads the tickets on a project's board that have none of its
-// routing labels. The issues connection filters by label only, so these need a
-// search of their own. A component has none, because its board is its repository's
-// and an unlabelled ticket there belongs to the repository.
-func (c *Client) boardOnlyTickets(ctx context.Context, project Project, labels, states []string, opts ListOptions) ([]Ticket, error) {
-	if project.BoardURL == "" || project.Component() {
+// boardOnlyTickets reads the tickets on a project's board that have no routing label
+// of its repository or components. The issues connection filters by label only, so
+// these need a search of their own. Each is routed by its Component value, and a
+// component keeps only its own.
+func (c *Client) boardOnlyTickets(ctx context.Context, meta *metadata, project Project, states []string, opts ListOptions) ([]Ticket, error) {
+	if project.BoardURL == "" {
 		return nil, nil
 	}
-	read := c.searchPage(states, c.boardOnlyScope(project, labels), opts.Search, Project{})
+	read := c.searchPage(states, c.boardOnlyScope(project, meta.familyLabels(project)), opts.Search, Project{})
 	tickets := []Ticket{}
 	var cursor any
 	for {
@@ -540,7 +546,10 @@ func (c *Client) boardOnlyTickets(ctx context.Context, project Project, labels, 
 			if ticket.Project != "" || !ticket.useBoard(project.BoardID) {
 				continue
 			}
-			ticket.Project, ticket.boardRouted = project.Name, true
+			ticket.Project, ticket.boardRouted = meta.boardProject(project.Root(), ticket.component), true
+			if project.Component() && ticket.Project != project.Name {
+				continue
+			}
 			if opts.matches(ticket) {
 				tickets = append(tickets, ticket)
 			}
@@ -955,6 +964,25 @@ func statusMutation(alias string, project Project, itemID, status string) (strin
 		alias, project.BoardID, itemID, project.StatusFieldID, optionID), nil
 }
 
+// componentMutation sets a board item's Component value to the project's component,
+// or clears it for the repository. It reports false when the board has no Component
+// field or no option for the component, so the value cannot route the ticket.
+func componentMutation(alias string, project Project, itemID string) (string, bool) {
+	if project.ComponentFieldID == "" {
+		return "", false
+	}
+	if !project.Component() {
+		return fmt.Sprintf(`%s: clearProjectV2ItemFieldValue(input: {projectId: %q, itemId: %q, fieldId: %q}) { clientMutationId }`,
+			alias, project.BoardID, itemID, project.ComponentFieldID), true
+	}
+	optionID, ok := project.ComponentOptions[project.componentName()]
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf(`%s: updateProjectV2ItemFieldValue(input: {projectId: %q, itemId: %q, fieldId: %q, value: {singleSelectOptionId: %q}}) { clientMutationId }`,
+		alias, project.BoardID, itemID, project.ComponentFieldID, optionID), true
+}
+
 // CreateOptions describes a new ticket.
 type CreateOptions struct {
 	Project        string
@@ -1078,6 +1106,9 @@ func (c *Client) linkCreated(ctx context.Context, project Project, created creat
 		return err
 	}
 	fields := []string{field}
+	if component, ok := componentMutation("component", project, itemID); ok && project.Component() {
+		fields = append(fields, component)
+	}
 	for i, number := range opts.BlockedBy {
 		fields = append(fields, blockMutation("blockedBy"+strconv.Itoa(i), created.ID, ids[number]))
 	}
@@ -1228,17 +1259,22 @@ func (c *Client) writeStatus(ctx context.Context, ticket Ticket, status string) 
 			return fmt.Errorf("project %q has no board: run project add", ticket.Project)
 		}
 		itemID := ticket.itemID
+		fields := []string{}
 		if itemID == "" {
 			var err error
 			if itemID, err = c.addToBoard(ctx, project, ticket.ID); err != nil {
 				return err
+			}
+			// A new item has no Component value, so a component's ticket gets one.
+			if field, ok := componentMutation("component", project, itemID); ok && project.Component() {
+				fields = append(fields, field)
 			}
 		}
 		field, err := statusMutation("status", project, itemID, status)
 		if err != nil {
 			return err
 		}
-		return c.write(ctx, []string{field})
+		return c.write(ctx, append(fields, field))
 	})
 }
 
@@ -1365,7 +1401,17 @@ func (c *Client) MoveTicket(ctx context.Context, number int, target string) erro
 	if project.BoardID == "" {
 		return errNoBoard(project)
 	}
-	fields := []string{fmt.Sprintf(`add: addLabelsToLabelable(input: {labelableId: %q, labelIds: [%q]}) { clientMutationId }`, ticket.ID, project.LabelID)}
+	// A component uses its repository's board, so moving between them keeps the item
+	// and sets its Component value. A ticket routed by the board needs no label for it.
+	sameBoard := ticket.itemID != "" && ticket.boardID == project.BoardID
+	component, routes := "", false
+	if sameBoard {
+		component, routes = componentMutation("component", project, ticket.itemID)
+	}
+	var fields []string
+	if !routes || !ticket.boardRouted {
+		fields = append(fields, fmt.Sprintf(`add: addLabelsToLabelable(input: {labelableId: %q, labelIds: [%q]}) { clientMutationId }`, ticket.ID, project.LabelID))
+	}
 	if ticket.Project != "" && !ticket.boardRouted {
 		previous, err := c.lookupProject(ctx, ticket.Project)
 		if err != nil {
@@ -1373,8 +1419,9 @@ func (c *Client) MoveTicket(ctx context.Context, number int, target string) erro
 		}
 		fields = append(fields, fmt.Sprintf(`remove: removeLabelsFromLabelable(input: {labelableId: %q, labelIds: [%q]}) { clientMutationId }`, ticket.ID, previous.LabelID))
 	}
-	// A component uses its repository's board, so moving between them keeps the item.
-	sameBoard := ticket.itemID != "" && ticket.boardID == project.BoardID
+	if routes {
+		fields = append(fields, component)
+	}
 	if ticket.itemID != "" && !sameBoard {
 		fields = append(fields, fmt.Sprintf(`drop: deleteProjectV2Item(input: {projectId: %q, itemId: %q}) { clientMutationId }`, ticket.boardID, ticket.itemID))
 	}

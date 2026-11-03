@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:46
-last_modified: 2026-11-03 10:37
+last_modified: 2026-11-03 11:18
 status: current
 ---
 
@@ -66,7 +66,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | Command | Requests | Reads and writes |
 | --- | --- | --- |
 | `issue list`, up to 100 tickets | 1 | One query, about 6 points with parent and sub-issue checks. GitHub reports the total on that page |
-| `issue list`, `claim --next`, `close-eligible`, `project inspect`, or `project rm` in one repository project | Add 1 per 100 board tickets with no routing label | The issues connection filters by label only, so a search finds board tickets without any of the repository's or its components' labels. Its minimum is 1. A component has no such search, because unlabelled board tickets belong to its repository |
+| `issue list`, `claim --next`, `close-eligible`, `project inspect`, or `project rm` in one repository project | Add 1 per 100 board tickets with no routing label | The issues connection filters by label only, so a search finds board tickets without any of the repository's or its components' labels. Its minimum is 1. A component makes the same search and keeps the tickets whose `Component` value names it |
 | The same commands in a repository project whose components changed on another machine | Add one metadata refresh, 2 requests, and repeat the read once | The first read also returns the repository's component labels, at no extra request, and differs from the cache |
 | Any read that meets a ticket on an unregistered board | Add one metadata refresh per command | The board may have been registered on another machine, so the cached IDs are refreshed once |
 | `issue list` with `--status`, `--label`, `--ready`, or `--stale` | 1 per 100 tickets | Reads every page, whatever `--limit` says, because GitHub cannot count these filters and the total has to be counted here |
@@ -77,8 +77,8 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | `issue claim <number>` | 3 | Read the ticket, create the claim ref, set Doing |
 | `issue release <number>` | 3 | Read the ticket, delete the claim ref, set Todo |
 | `issue close <number> --pr <n>` | 3 | Read the ticket, read the PRs, then one write combining comment, close, and Done. Add 1 when a claim exists |
-| `project add --path <dir>` | 4 | Refresh metadata with its visibility read, read the label, create it. The new component is written to the cache without another refresh. 2 when it is already registered |
-| `project rm <component>` | 4 | Count tickets, clear the label, then refresh metadata with its visibility read |
+| `project add --path <dir>` | 5 to 6 | Refresh metadata with its visibility read, create the `Component` field or read its options and write them back with the new one, read the label, create it. The new component is written to the cache without another refresh. 2 when it is already registered with an option, 3 to 4 when its option is missing |
+| `project rm <component>` | 5 to 7 | Search the board, count tickets, read the `Component` options and write them back without its option (or delete the field with its last option), clear the label, then refresh metadata with its visibility read |
 | `project rm <project>` | 6 to 7 | Search the board, count tickets, delete the board, clear the label, then refresh metadata with its visibility read. One more request labels every closed ticket that was only on the board |
 | `issue close <number> --landed-pr <n>` | 4 | Read the ticket, read the PR, compare its head with its base branch, then one write combining comment, close, and Done. Add 1 when a claim exists |
 | `issue status set <number> <status>` | 2 | Read the ticket, then write |
@@ -103,7 +103,7 @@ Store a small metadata file under `~/.cache/issue-tracker/`, with owner-only per
 
 Refresh it when a project is not found, or when a write is rejected for a stale ID, then retry once. It needs no TTL, and a project added on another machine appears as an ordinary cache miss. A component added on another machine causes no miss, so every read scoped to a repository project also reads that repository's component labels and refreshes once when they differ from the cache.
 
-A refresh reads labels 100 at a time with the search `repo:`, which also returns some labels without that prefix. A tracker with more than 100 such labels needs one more request per refresh.
+A refresh reads labels 100 at a time with the search `repo:`, which also returns some labels without that prefix. A tracker with more than 100 such labels needs one more request per refresh. Each board's fields are read 50 at a time to find its `Component` field, which adds about one point to a refresh and no request.
 
 Never cache:
 

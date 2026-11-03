@@ -236,17 +236,28 @@ func TestARepositoryListIncludesItsComponents(t *testing.T) {
 	}
 }
 
-func TestAComponentListHasNoBoardSearch(t *testing.T) {
-	c, gh := monoClient(t, monoListRoute("", ticketSpec{number: 1, project: "mono/api", status: "Todo"}))
-	tickets, _, err := c.ListTickets(ctx, ListOptions{Project: "mono/api"})
+func TestAComponentListReadsItsBoardForComponentValues(t *testing.T) {
+	onBoard := boardOnlyRoute(
+		ticketSpec{number: 2, status: "Todo", component: "api"},
+		ticketSpec{number: 3, status: "Todo", component: "web"},
+		ticketSpec{number: 4, status: "Todo"},
+	)
+	c, gh := monoClient(t, onBoard, monoListRoute("", ticketSpec{number: 1, project: "mono/api", status: "Todo"}))
+	tickets, total, err := c.ListTickets(ctx, ListOptions{Project: "mono/api"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tickets) != 1 {
-		t.Fatalf("tickets = %+v", tickets)
+	if total != 2 || len(tickets) != 2 || tickets[0].Number != 1 || tickets[1].Number != 2 || tickets[1].Project != "mono/api" {
+		t.Fatalf("a component keeps its labelled tickets and the board tickets that name it: %+v", tickets)
 	}
-	wantCount(t, gh, 1)
-	request := gh.Requests()[0]
+	wantCount(t, gh, 2)
+	search := gh.Requests()[0].Variables["search"].(string)
+	for _, label := range []string{`-label:"repo:mono"`, `-label:"repo:mono/web"`, `-label:"repo:mono/api"`} {
+		if !strings.Contains(search, label) {
+			t.Fatalf("the board search leaves out every label of the repository, missing %s: %q", label, search)
+		}
+	}
+	request := gh.Requests()[1]
 	if labels := request.Variables["labels"].([]any); len(labels) != 1 || labels[0] != "repo:mono/api" {
 		t.Fatalf("labels = %v", labels)
 	}
@@ -388,11 +399,11 @@ func TestARepositorySummaryCountsItsComponents(t *testing.T) {
 		t.Fatalf("open = %q", open)
 	}
 
-	c, gh = monoClient(t, summaryRoute(1))
-	if summary, err = c.ProjectSummary(ctx, monoMetadata().Projects[3]); err != nil || summary.Open != 1 {
-		t.Fatalf("summary = %+v, err = %v", summary, err)
+	c, gh = monoClient(t, boardOnlyRoute(ticketSpec{number: 9, status: "Todo", component: "api"}), summaryRoute(1))
+	if summary, err = c.ProjectSummary(ctx, monoMetadata().Projects[3]); err != nil || summary.Open != 2 {
+		t.Fatalf("a component counts the board tickets that name it: summary = %+v, err = %v", summary, err)
 	}
-	wantCount(t, gh, 1)
+	wantCount(t, gh, 2)
 }
 
 func TestAStaleSummaryCountsAgain(t *testing.T) {
@@ -409,16 +420,16 @@ func TestAStaleSummaryCountsAgain(t *testing.T) {
 }
 
 func TestRemovingAComponentKeepsTheBoard(t *testing.T) {
-	c, gh := monoClient(t, summaryRoute(0), okRoute("updateLabel"), componentAdded(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
+	c, gh := monoClient(t, boardOnlyRoute(), summaryRoute(0), okRoute("updateLabel"), componentAdded(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
 	if err := c.RemoveProject(ctx, "mono/api"); err != nil {
 		t.Fatal(err)
 	}
 	for _, req := range gh.Requests() {
-		if strings.Contains(req.Description, "deleteProjectV2") || strings.Contains(req.Description, "search(query: $search") {
+		if strings.Contains(req.Description, "deleteProjectV2(") {
 			t.Fatalf("a component has no board of its own: %s", req.Description)
 		}
 	}
-	wantCount(t, gh, 4)
+	wantCount(t, gh, 5)
 
 	c, _ = monoClient(t, boardOnlyRoute(), fakegithub.Route{Match: "open: search", Body: `{"data":{"repository":{` + strings.TrimSuffix(monoRegistrations, ",") + `},"open":{"issueCount":0},"closed":{"issueCount":0}}}`})
 	wantError(t, c.RemoveProject(ctx, "mono"), `project "mono" has components: remove mono/web first`)
@@ -427,39 +438,93 @@ func TestRemovingAComponentKeepsTheBoard(t *testing.T) {
 	wantError(t, c.RemoveProject(ctx, "mono/api"), "counting tickets")
 }
 
+// createdField answers the creation of the Component field with these options.
+func createdField(names ...string) fakegithub.Route {
+	options := make([]string, 0, len(names))
+	for _, name := range names {
+		options = append(options, `{"id":"O-`+name+`","name":"`+name+`"}`)
+	}
+	return fakegithub.Route{Match: "createProjectV2Field(input", Body: `{"data":{"createProjectV2Field":{"projectV2Field":{"id":"FC","options":[` + strings.Join(options, ",") + `]}}}}`}
+}
+
 func TestAddComponent(t *testing.T) {
 	registered := componentAdded()
 	visibility := visibilityRoute(`{"data":{"r0":{"isPrivate":true},"r1":{"isPrivate":true}}}`)
 	label := fakegithub.Route{Match: "label(name: $label)", Body: `{"data":{"repository":{"label":null}}}`}
 	created := fakegithub.Route{Match: "createLabel(input", Body: `{"data":{"createLabel":{"label":{"id":"LN"}}}}`}
-	gh := fakegithub.New(registered, visibility, label, created)
+	gh := fakegithub.New(registered, visibility, createdField("api"), label, created)
 	c := clientWith(t, gh, nil)
 	project, err := c.AddComponent(ctx, Repo{"o", "mono"}, "services/api", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project.Name != "mono/api" || project.Path != "services/api" || project.LabelID != "LN" || project.BoardID != "B1" || project.Repo != "o/mono" {
+	if project.Name != "mono/api" || project.Path != "services/api" || project.LabelID != "LN" || project.BoardID != "B1" || project.Repo != "o/mono" || project.ComponentOptions["api"] != "O-api" {
 		t.Fatalf("project = %+v", project)
 	}
-	wantCount(t, gh, 4)
-	if vars := gh.Requests()[3].Variables; vars["name"] != "repo:mono/api" || vars["description"] != "o/mono:services/api" {
+	wantCount(t, gh, 5)
+	requests := gh.Requests()
+	field := requests[2]
+	if !strings.Contains(field.Description, "createProjectV2Field") || field.Variables["board"] != "B1" || field.Variables["name"] != "Component" {
+		t.Fatalf("the Component field must be created before the label: %s %v", field.Description, field.Variables)
+	}
+	if option := field.Variables["options"].([]any)[0].(map[string]any); option["name"] != "api" || option["description"] != "services/api" || option["color"] != "GRAY" || option["id"] != nil {
+		t.Fatalf("option = %v", option)
+	}
+	if vars := requests[4].Variables; vars["name"] != "repo:mono/api" || vars["description"] != "o/mono:services/api" {
 		t.Fatalf("label = %v", vars)
 	}
-	if cached, err := c.lookupProject(ctx, "mono/api"); err != nil || cached.LabelID != "LN" {
+	cached, err := c.lookupProject(ctx, "mono/api")
+	if err != nil || cached.LabelID != "LN" || cached.ComponentFieldID != "FC" {
 		t.Fatalf("the new component must be cached without a refresh: %+v, %v", cached, err)
 	}
-	wantCount(t, gh, 4)
+	if root, _ := c.lookupProject(ctx, "mono"); root.ComponentOptions["api"] != "O-api" {
+		t.Fatalf("the repository shares the field: %+v", root)
+	}
+	wantCount(t, gh, 5)
 
-	gh = fakegithub.New(registered, visibility, label, created)
+	gh = fakegithub.New(registered, visibility, createdField("console"), label, created)
 	if project, err = clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "mono"}, "apps/web/admin", "console"); err != nil || project.Name != "mono/console" {
 		t.Fatalf("project = %+v, err = %v", project, err)
 	}
 
-	gh = fakegithub.New(registered, visibility)
-	if project, err = clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "mono"}, "docs", ""); err != nil || project.LabelID != "LD" {
-		t.Fatalf("repeating a registration is safe: %+v, %v", project, err)
+	gh = fakegithub.New(registered, visibility, createdField("docs"))
+	if project, err = clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "mono"}, "docs", ""); err != nil || project.LabelID != "LD" || project.ComponentOptions["docs"] != "O-docs" {
+		t.Fatalf("repeating a registration gives an older component its option: %+v, %v", project, err)
+	}
+	wantCount(t, gh, 3)
+
+	gh = fakegithub.New(withField(registered, `{"id":"O-docs","name":"docs"}`), visibility)
+	if project, err = clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "mono"}, "docs", ""); err != nil || project.ComponentOptions["docs"] != "O-docs" {
+		t.Fatalf("repeating a complete registration is safe: %+v, %v", project, err)
 	}
 	wantCount(t, gh, 2)
+}
+
+// withField gives the mono board of a metadata route a Component field with options.
+func withField(route fakegithub.Route, options ...string) fakegithub.Route {
+	route.Body = strings.Replace(route.Body, `"title":"mono","url":"https://b/1","field":{"id":"F1","options":[{"id":"T","name":"Todo"},{"id":"G","name":"Doing"},{"id":"D","name":"Done"}]}`,
+		`"title":"mono","url":"https://b/1","field":{"id":"F1","options":[{"id":"T","name":"Todo"},{"id":"G","name":"Doing"},{"id":"D","name":"Done"}]},"fields":{"nodes":[{},{"id":"F1","name":"Status","options":[]},{"id":"FC","name":"Component","options":[`+strings.Join(options, ",")+`]}]}`, 1)
+	return route
+}
+
+func TestAddingAComponentKeepsTheOtherOptions(t *testing.T) {
+	registered := withField(componentAdded(), `{"id":"O-docs","name":"docs"}`)
+	visibility := visibilityRoute(`{"data":{"r0":{"isPrivate":true},"r1":{"isPrivate":true}}}`)
+	read := fakegithub.Route{Match: "node(id: $id)", Body: `{"data":{"node":{"options":[{"id":"O-docs","name":"docs","color":"BLUE","description":"Manual"}]}}}`}
+	update := fakegithub.Route{Match: "updateProjectV2Field(input", Body: `{"data":{"updateProjectV2Field":{"projectV2Field":{"id":"FC","options":[{"id":"O-docs","name":"docs"},{"id":"O-api","name":"api"}]}}}}`}
+	label := fakegithub.Route{Match: "label(name: $label)", Body: `{"data":{"repository":{"label":null}}}`}
+	created := fakegithub.Route{Match: "createLabel(input", Body: `{"data":{"createLabel":{"label":{"id":"LN"}}}}`}
+	gh := fakegithub.New(registered, visibility, read, update, label, created)
+	project, err := clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "mono"}, "services/api", "")
+	if err != nil || project.ComponentOptions["api"] != "O-api" || project.ComponentOptions["docs"] != "O-docs" {
+		t.Fatalf("project = %+v, err = %v", project, err)
+	}
+	wantCount(t, gh, 6)
+	options := gh.Requests()[3].Variables["options"].([]any)
+	kept := options[0].(map[string]any)
+	if len(options) != 2 || kept["id"] != "O-docs" || kept["color"] != "BLUE" || kept["description"] != "Manual" || options[1].(map[string]any)["name"] != "api" {
+		t.Fatalf("existing options must be sent back whole: %v", options)
+	}
 }
 
 func TestAddComponentFailures(t *testing.T) {
@@ -488,7 +553,11 @@ func TestAddComponentFailures(t *testing.T) {
 		{"name taken", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, "site/docs", "docs", `project "mono/docs" is already registered for o/mono:docs`},
 		{"path taken", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, "docs", "manual", `docs is already registered as project "mono/docs"`},
 		{"refresh fails", []fakegithub.Route{{Match: "labels(first: 100, query", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "reading tracker metadata"},
-		{"label fails", []fakegithub.Route{registered, visibility, {Match: "label(name: $label)", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "reading label"},
+		{"label fails", []fakegithub.Route{registered, visibility, createdField("a"), {Match: "label(name: $label)", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "reading label"},
+		{"field fails", []fakegithub.Route{registered, visibility, {Match: "createProjectV2Field", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "creating Component field"},
+		{"backfill fails", []fakegithub.Route{registered, visibility, {Match: "createProjectV2Field", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "docs", "", "creating Component field"},
+		{"options unreadable", []fakegithub.Route{withField(registered), visibility, {Match: "node(id: $id)", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "reading Component options"},
+		{"options rejected", []fakegithub.Route{withField(registered), visibility, {Match: "node(id: $id)", Body: `{"data":{"node":{"options":[]}}}`}, {Match: "updateProjectV2Field", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "updating Component options"},
 	}
 	for _, tt := range tests {
 		gh := fakegithub.New(tt.routes...)

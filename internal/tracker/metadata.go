@@ -12,7 +12,11 @@ import (
 	"strings"
 )
 
-const labelPrefix = "repo:"
+const (
+	labelPrefix = "repo:"
+	// componentField is the board field whose value routes a ticket to a component.
+	componentField = "Component"
+)
 
 // Project is a code repository registered with the tracker, or a component: one
 // directory of a registered repository with its own label on the repository's board.
@@ -26,6 +30,10 @@ type Project struct {
 	BoardURL      string            `json:"board_url,omitempty"`
 	StatusFieldID string            `json:"status_field_id,omitempty"`
 	StatusOptions map[string]string `json:"status_options,omitempty"`
+	// ComponentFieldID and ComponentOptions are the board's Component field and its
+	// option IDs by component name, empty until a component is registered.
+	ComponentFieldID string            `json:"component_field_id,omitempty"`
+	ComponentOptions map[string]string `json:"component_options,omitempty"`
 }
 
 // Label returns the routing label for the project.
@@ -43,6 +51,13 @@ func (p Project) Component() bool {
 func (p Project) Root() string {
 	root, _, _ := strings.Cut(p.Name, "/")
 	return root
+}
+
+// componentName is a component's name within its repository, the name of its
+// option in the board's Component field.
+func (p Project) componentName() string {
+	_, name, _ := strings.Cut(p.Name, "/")
+	return name
 }
 
 // registration is the label description that registers a component: owner/name:path.
@@ -74,11 +89,13 @@ func parseRegistration(name, description string) (Project, bool) {
 
 // board is a GitHub Project linked to the tracker repository.
 type board struct {
-	ID            string            `json:"id"`
-	Title         string            `json:"title"`
-	URL           string            `json:"url"`
-	StatusFieldID string            `json:"status_field_id"`
-	StatusOptions map[string]string `json:"status_options"`
+	ID               string            `json:"id"`
+	Title            string            `json:"title"`
+	URL              string            `json:"url"`
+	StatusFieldID    string            `json:"status_field_id"`
+	StatusOptions    map[string]string `json:"status_options"`
+	ComponentFieldID string            `json:"component_field_id,omitempty"`
+	ComponentOptions map[string]string `json:"component_options,omitempty"`
 }
 
 // metadata holds IDs that rarely change. It carries no ticket data.
@@ -133,6 +150,45 @@ func (m *metadata) components(project Project) []Project {
 		}
 	}
 	return found
+}
+
+// setComponentField records a repository board's Component field for its board and
+// every project that uses it.
+func (m *metadata) setComponentField(root, fieldID string, options map[string]string) {
+	for i := range m.Boards {
+		if m.Boards[i].Title == root {
+			m.Boards[i].ComponentFieldID, m.Boards[i].ComponentOptions = fieldID, options
+		}
+	}
+	for i := range m.Projects {
+		if m.Projects[i].Root() == root {
+			m.Projects[i].ComponentFieldID, m.Projects[i].ComponentOptions = fieldID, options
+		}
+	}
+}
+
+// familyLabels lists the routing labels of a project's repository and all its
+// components: every label that routes a ticket away from their shared board.
+func (m *metadata) familyLabels(project Project) []string {
+	labels := []string{labelPrefix + project.Root()}
+	for _, other := range m.Projects {
+		if other.Component() && other.Root() == project.Root() {
+			labels = append(labels, other.Label())
+		}
+	}
+	return labels
+}
+
+// boardProject routes an unlabelled ticket on a repository's board: to the
+// component its Component value names, or else to the repository.
+func (m *metadata) boardProject(root, component string) string {
+	if component == "" {
+		return root
+	}
+	if project, ok := m.project(root + "/" + component); ok && project.Component() {
+		return project.Name
+	}
+	return root
 }
 
 // scopeLabels lists the routing labels of a project's tickets. A repository covers
@@ -265,6 +321,9 @@ const metadataQuery = `query($owner: String!, $name: String!, $labels: String, $
         field(name: "Status") {
           ... on ProjectV2SingleSelectField { id options { id name } }
         }
+        fields(first: 50) {
+          nodes { ... on ProjectV2SingleSelectField { id name options { id name } } }
+        }
       }
       pageInfo { hasNextPage endCursor }
     }
@@ -297,6 +356,14 @@ type metadataPage struct {
 				Field          struct {
 					ID      string
 					Options []struct{ ID, Name string }
+				}
+				// Fields finds the Component field, because field(name:) fails the
+				// whole query on a board without it.
+				Fields struct {
+					Nodes []struct {
+						ID, Name string
+						Options  []struct{ ID, Name string }
+					}
 				}
 			}
 			PageInfo pageInfo
@@ -386,6 +453,16 @@ func (m *metadata) collect(page metadataPage) {
 		for _, option := range node.Field.Options {
 			item.StatusOptions[option.Name] = option.ID
 		}
+		for _, field := range node.Fields.Nodes {
+			if field.Name != componentField {
+				continue
+			}
+			item.ComponentFieldID = field.ID
+			item.ComponentOptions = make(map[string]string, len(field.Options))
+			for _, option := range field.Options {
+				item.ComponentOptions[option.Name] = option.ID
+			}
+		}
 		m.Boards = append(m.Boards, item)
 	}
 }
@@ -403,6 +480,7 @@ func (m *metadata) linkBoards() {
 func (p *Project) attach(item board) {
 	p.BoardID, p.BoardURL = item.ID, item.URL
 	p.StatusFieldID, p.StatusOptions = item.StatusFieldID, item.StatusOptions
+	p.ComponentFieldID, p.ComponentOptions = item.ComponentFieldID, item.ComponentOptions
 }
 
 // lookupProject finds a project, refreshing once so that a project registered on

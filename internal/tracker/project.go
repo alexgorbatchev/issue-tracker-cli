@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -258,12 +259,21 @@ func (c *Client) AddComponent(ctx context.Context, repo Repo, dir, component str
 	for _, other := range meta.components(root) {
 		switch {
 		case other.Name == project.Name && other.Path == dir:
-			return other, nil
+			// Repeating a registration gives a component registered before the
+			// Component field its option.
+			if err := c.ensureComponentOption(ctx, meta, root, other); err != nil {
+				return Project{}, err
+			}
+			found, _ := meta.project(other.Name)
+			return found, nil
 		case other.Name == project.Name:
 			return Project{}, fmt.Errorf("project %q is already registered for %s", project.Name, other.registration())
 		case other.Path == dir:
 			return Project{}, fmt.Errorf("%s is already registered as project %q", dir, other.Name)
 		}
+	}
+	if err := c.ensureComponentOption(ctx, meta, root, project); err != nil {
+		return Project{}, err
 	}
 	labelID, err := c.writeLabel(ctx, meta, project.Label(), project.registration())
 	if err != nil {
@@ -271,12 +281,114 @@ func (c *Client) AddComponent(ctx context.Context, repo Repo, dir, component str
 	}
 	// The component shares everything else with its repository, so the cache is
 	// updated here instead of read again from GitHub.
+	root, _ = meta.project(root.Name)
 	root.Name, root.Path, root.LabelID = project.Name, project.Path, labelID
 	meta.Projects = append(meta.Projects, root)
 	if err := c.saveMetadata(meta); err != nil {
 		return Project{}, err
 	}
 	return root, nil
+}
+
+// fieldOption is one option of a single-select board field. Updating a field's
+// options replaces them, so each existing one is sent back whole with its ID, which
+// keeps the values tickets already have.
+type fieldOption struct {
+	ID          string `json:"id,omitempty"`
+	Name        string `json:"name"`
+	Color       string `json:"color"`
+	Description string `json:"description"`
+}
+
+const fieldOptionsSelection = `projectV2Field { ... on ProjectV2SingleSelectField { id options { id name } } }`
+
+type fieldOptionsResult struct {
+	ProjectV2Field struct {
+		ID      string
+		Options []struct{ ID, Name string }
+	}
+}
+
+// ensureComponentOption gives the repository's board a Component option for the
+// component, creating the field on first use, and records it in the cache.
+func (c *Client) ensureComponentOption(ctx context.Context, meta *metadata, root, component Project) error {
+	if _, ok := root.ComponentOptions[component.componentName()]; ok {
+		return nil
+	}
+	option := fieldOption{Name: component.componentName(), Color: "GRAY", Description: component.Path}
+	var result fieldOptionsResult
+	if root.ComponentFieldID == "" {
+		var response struct{ CreateProjectV2Field fieldOptionsResult }
+		mutation := `mutation($board: ID!, $name: String!, $options: [ProjectV2SingleSelectFieldOptionInput!]) {
+  createProjectV2Field(input: {projectId: $board, dataType: SINGLE_SELECT, name: $name, singleSelectOptions: $options}) { ` + fieldOptionsSelection + ` }
+}`
+		variables := map[string]any{"board": root.BoardID, "name": componentField, "options": []fieldOption{option}}
+		if err := c.do(ctx, mutation, variables, &response); err != nil {
+			return fmt.Errorf("creating Component field: %w", err)
+		}
+		result = response.CreateProjectV2Field
+	} else {
+		options, err := c.fieldOptions(ctx, root.ComponentFieldID)
+		if err != nil {
+			return err
+		}
+		if result, err = c.writeFieldOptions(ctx, root.ComponentFieldID, append(options, option)); err != nil {
+			return err
+		}
+	}
+	options := make(map[string]string, len(result.ProjectV2Field.Options))
+	for _, option := range result.ProjectV2Field.Options {
+		options[option.Name] = option.ID
+	}
+	meta.setComponentField(root.Name, result.ProjectV2Field.ID, options)
+	return c.saveMetadata(meta)
+}
+
+// removeComponentOption deletes a component's option from its repository's board,
+// and the field with its last option. GitHub clears the value on every ticket that
+// had it, so those tickets fall back to the repository.
+func (c *Client) removeComponentOption(ctx context.Context, component Project) error {
+	if _, ok := component.ComponentOptions[component.componentName()]; !ok {
+		return nil
+	}
+	options, err := c.fieldOptions(ctx, component.ComponentFieldID)
+	if err != nil {
+		return err
+	}
+	options = slices.DeleteFunc(options, func(option fieldOption) bool { return option.Name == component.componentName() })
+	if len(options) > 0 {
+		_, err = c.writeFieldOptions(ctx, component.ComponentFieldID, options)
+		return err
+	}
+	mutation := `mutation($field: ID!) { deleteProjectV2Field(input: {fieldId: $field}) { clientMutationId } }`
+	if err := c.do(ctx, mutation, map[string]any{"field": component.ComponentFieldID}, nil); err != nil {
+		return fmt.Errorf("deleting Component field: %w", err)
+	}
+	return nil
+}
+
+// fieldOptions reads a field's options with their colors and descriptions, which
+// the cache does not hold.
+func (c *Client) fieldOptions(ctx context.Context, fieldID string) ([]fieldOption, error) {
+	var response struct {
+		Node struct{ Options []fieldOption }
+	}
+	query := `query($id: ID!) { node(id: $id) { ... on ProjectV2SingleSelectField { options { id name color description } } } }`
+	if err := c.do(ctx, query, map[string]any{"id": fieldID}, &response); err != nil {
+		return nil, fmt.Errorf("reading Component options: %w", err)
+	}
+	return response.Node.Options, nil
+}
+
+func (c *Client) writeFieldOptions(ctx context.Context, fieldID string, options []fieldOption) (fieldOptionsResult, error) {
+	var response struct{ UpdateProjectV2Field fieldOptionsResult }
+	mutation := `mutation($field: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]) {
+  updateProjectV2Field(input: {fieldId: $field, singleSelectOptions: $options}) { ` + fieldOptionsSelection + ` }
+}`
+	if err := c.do(ctx, mutation, map[string]any{"field": fieldID, "options": options}, &response); err != nil {
+		return fieldOptionsResult{}, fmt.Errorf("updating Component options: %w", err)
+	}
+	return response.UpdateProjectV2Field, nil
 }
 
 // writeLabel creates a routing label, or restores the registration on a label kept
@@ -362,6 +474,13 @@ func (c *Client) RemoveProject(ctx context.Context, name string) error {
 			return fmt.Errorf("deleting board: %w", err)
 		}
 	}
+	// The option goes first, so a failure leaves the component registered and the
+	// removal can simply be repeated.
+	if project.Component() {
+		if err := c.removeComponentOption(ctx, project); err != nil {
+			return err
+		}
+	}
 	if err := c.describeLabel(ctx, project.LabelID, ""); err != nil {
 		return err
 	}
@@ -387,7 +506,7 @@ func (c *Client) ProjectSummary(ctx context.Context, project Project) (ProjectSu
 // another project. It reports stale cached components instead of counting.
 func (c *Client) summarize(ctx context.Context, meta *metadata, project Project) (ProjectSummary, []Ticket, bool, error) {
 	labels := meta.scopeLabels(project)
-	onBoard, err := c.boardOnlyTickets(ctx, project, labels, []string{stateOpen, StateClosed}, ListOptions{})
+	onBoard, err := c.boardOnlyTickets(ctx, meta, project, []string{stateOpen, StateClosed}, ListOptions{})
 	if err != nil {
 		return ProjectSummary{}, nil, false, fmt.Errorf("counting tickets: %w", err)
 	}

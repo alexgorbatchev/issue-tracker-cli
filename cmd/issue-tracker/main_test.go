@@ -462,8 +462,8 @@ func TestProjectCommands(t *testing.T) {
 		{"inspect", []fakegithub.Route{boardOnly(), summary}, []string{"project", "inspect", "go-tui"}, "path: .\nvisibility: private\nboard: https://b/1\nopen: 2\nclosed: 5\n"},
 		{"list components", []fakegithub.Route{metadata, visibility}, []string{"project", "list"}, "go-tui/docs\to/go-tui\tpublic\thttps://b/1\tsite/docs\n"},
 		{"add existing", []fakegithub.Route{metadata, visibility}, []string{"project", "add", "o/go-tui"}, "OK: registered project go-tui"},
-		{"add existing component", []fakegithub.Route{metadata, visibility}, []string{"project", "add", "o/go-tui", "--path", "site/docs"}, "OK: registered project go-tui/docs for site/docs in o/go-tui"},
-		{"add component", []fakegithub.Route{metadata, visibility, {Match: "label(name: $label)", Body: `{"data":{"repository":{"label":null}}}`}, {Match: "createLabel(input", Body: `{"data":{"createLabel":{"label":{"id":"LN"}}}}`}},
+		{"add existing component", []fakegithub.Route{metadata, visibility, {Match: "createProjectV2Field(input", Body: `{"data":{"createProjectV2Field":{"projectV2Field":{"id":"FC","options":[{"id":"O1","name":"docs"},{"id":"O2","name":"example"}]}}}}`}}, []string{"project", "add", "o/go-tui", "--path", "site/docs"}, "OK: registered project go-tui/docs for site/docs in o/go-tui"},
+		{"add component", []fakegithub.Route{metadata, visibility, {Match: "createProjectV2Field(input", Body: `{"data":{"createProjectV2Field":{"projectV2Field":{"id":"FC","options":[{"id":"O1","name":"docs"},{"id":"O2","name":"example"}]}}}}`}, {Match: "label(name: $label)", Body: `{"data":{"repository":{"label":null}}}`}, {Match: "createLabel(input", Body: `{"data":{"createLabel":{"label":{"id":"LN"}}}}`}},
 			[]string{"project", "add", "o/go-tui", "--path", "cmd/demo", "--name", "example"}, "OK: registered project go-tui/example for cmd/demo in o/go-tui"},
 	}
 	for _, tt := range tests {
