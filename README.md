@@ -21,6 +21,7 @@
 # How it Really Works
 
 - Each project is a `repo:<name>` label and a private GitHub Project board in the tracker repository. Boards are never linked to your code repositories, and nothing is written to them, so a public repository shows no trace of the tracker.
+- A ticket you create inside a board on GitHub belongs to that project without a label. If a label and a board disagree, the label wins.
 - A claim is a Git ref named `refs/claims/<number>` in the tracker repository. GitHub refuses to create a ref that exists, so a second claimant fails at once. Refs do not appear on the Tags or Branches pages.
 - Claims never expire on their own. A Doing ticket with no ticket or board activity for `stale_days` is reported as stale and is left for you to release.
 - A ticket is ready when it is open, does not have the `blocked` label, has no open blockers, has no blocked parent or grandparent, has no open sub-issues, and is not in Doing or Done. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers. A ticket with sub-issues works as an epic: `issue sub list` shows its progress, and `issue sub close-eligible` closes it once they are all closed.

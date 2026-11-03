@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:52
-last_modified: 2026-11-02 13:40
+last_modified: 2026-11-02 16:51
 status: current
 ---
 
@@ -32,6 +32,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 - **Never Enable the go-gh Cache:** It can replay mutations and stored 429 responses. Cache only the IDs in `metadata`, never ticket data.
 - **Claims:** A claim is the ref `refs/claims/<number>` in the tracker repository, created through REST. GitHub rejects a second create, which makes it the only atomic operation this tool has; labels, assignees, milestones, and project fields accept concurrent writers. GraphQL cannot see this namespace.
 - **Readiness Follows Beads:** A ticket is ready when it is open, does not have the `blocked` label, has no open blockers, no blocked parent or grandparent, and no open sub-issues, and is not in Doing or Done. A parent with open sub-issues waits for them, so that the work gets claimed rather than its container. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers.
+- **Project Membership:** A ticket belongs to a project through its `repo:<name>` label or by being on its board, and the label wins if they disagree. People creating tickets inside a board fill in no routing, so read commands treat board membership as routing and never write the label back.
 - **Project Registration:** A project exists when a `repo:<name>` label's description holds `owner/name`. Write the label last so a failed `project add` can simply be repeated. Link boards to the tracker repository only, never to a code repository.
 - **Secrets on the Wire:** Send the GitHub token only to URLs matching `attachmentURL`.
 - **Hermetic Unit Tests:** All unit tests must remain offline. Use `internal/fakegithub` as the transport.

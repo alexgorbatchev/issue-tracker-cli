@@ -263,18 +263,29 @@ func (c *Client) RemoveProject(ctx context.Context, name string) error {
 // ProjectSummary counts a project's tickets in one request.
 func (c *Client) ProjectSummary(ctx context.Context, project Project) (ProjectSummary, error) {
 	base := fmt.Sprintf(`repo:%s label:"%s" is:issue`, c.repo, project.Label())
-	query := `query($open: String!, $closed: String!) {
+	onBoard := fmt.Sprintf(`repo:%s is:issue %s`, c.repo, c.boardOnlyScope(project))
+	query := `query($open: String!, $closed: String!, $boardOpen: String!, $boardClosed: String!, $hasBoard: Boolean!) {
   open: search(query: $open, type: ISSUE, first: 1) { issueCount }
   closed: search(query: $closed, type: ISSUE, first: 1) { issueCount }
+  boardOpen: search(query: $boardOpen, type: ISSUE, first: 1) @include(if: $hasBoard) { issueCount }
+  boardClosed: search(query: $boardClosed, type: ISSUE, first: 1) @include(if: $hasBoard) { issueCount }
 }`
 	var response struct {
-		Open, Closed struct{ IssueCount int }
+		Open, Closed, BoardOpen, BoardClosed struct{ IssueCount int }
 	}
-	variables := map[string]any{"open": base + " is:open", "closed": base + " is:closed"}
+	variables := map[string]any{
+		"open": base + " is:open", "closed": base + " is:closed",
+		"boardOpen": onBoard + " is:open", "boardClosed": onBoard + " is:closed",
+		"hasBoard": project.BoardURL != "",
+	}
 	if err := c.do(ctx, query, variables, &response); err != nil {
 		return ProjectSummary{}, fmt.Errorf("counting tickets: %w", err)
 	}
-	return ProjectSummary{Project: project, Open: response.Open.IssueCount, Closed: response.Closed.IssueCount}, nil
+	return ProjectSummary{
+		Project: project,
+		Open:    response.Open.IssueCount + response.BoardOpen.IssueCount,
+		Closed:  response.Closed.IssueCount + response.BoardClosed.IssueCount,
+	}, nil
 }
 
 // ResolveProject looks up a registered project by name.

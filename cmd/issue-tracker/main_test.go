@@ -166,7 +166,7 @@ func TestWriteCommandsReportResults(t *testing.T) {
 	}{
 		{"claim", []fakegithub.Route{ticketRoute("go-tui", "Todo"), claimRef, status}, []string{"issue", "claim", "1"}, "OK: claimed #1 in go-tui: Crash"},
 		{"claim public warns", []fakegithub.Route{ticketRoute("lib", "Todo"), claimRef, status}, []string{"issue", "claim", "1"}, "WARN: lib is public"},
-		{"claim next", []fakegithub.Route{listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")), claimRef, status}, []string{"issue", "claim", "--next", "--project", "go-tui"}, "OK: claimed #1"},
+		{"claim next", []fakegithub.Route{boardOnly(), listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")), claimRef, status}, []string{"issue", "claim", "--next", "--project", "go-tui"}, "OK: claimed #1"},
 		{"claim next empty", []fakegithub.Route{listRoute()}, []string{"issue", "claim", "--next"}, "OK: no ready tickets"},
 		{"release", []fakegithub.Route{ticketRoute("go-tui", "Doing"), drop, status}, []string{"issue", "release", "1"}, "OK: released #1"},
 		{"close", []fakegithub.Route{ticketRoute("go-tui", "Todo"), merged, ok("closeIssue")}, []string{"issue", "close", "1", "--pr", "88"}, "OK: closed #1"},
@@ -259,13 +259,13 @@ func TestSubCloseEligible(t *testing.T) {
 		writes   int
 		requests int
 	}{
-		{"dry run", []fakegithub.Route{list()}, []string{"--dry-run", "--project", "go-tui"}, "OK: would close #1 in go-tui: Crash\n", 0, 1},
-		{"closes", []fakegithub.Route{list(), parentRoute(parentJSON(1, closed)), ok("closeIssue")}, []string{"--project", "go-tui"}, "OK: closed #1 in go-tui: Crash\n", 1, 3},
-		{"claimed after the list", []fakegithub.Route{list(), parentRoute(claimed)}, []string{"--project", "go-tui"}, "OK: skipped #1: no longer eligible\n", 0, 2},
+		{"dry run", []fakegithub.Route{boardOnly(), list()}, []string{"--dry-run", "--project", "go-tui"}, "OK: would close #1 in go-tui: Crash\n", 0, 2},
+		{"closes", []fakegithub.Route{boardOnly(), list(), parentRoute(parentJSON(1, closed)), ok("closeIssue")}, []string{"--project", "go-tui"}, "OK: closed #1 in go-tui: Crash\n", 1, 4},
+		{"claimed after the list", []fakegithub.Route{boardOnly(), list(), parentRoute(claimed)}, []string{"--project", "go-tui"}, "OK: skipped #1: no longer eligible\n", 0, 3},
 		{
 			"continues past a skipped parent",
-			[]fakegithub.Route{listRoute(parentJSON(1, closed), parentJSON(3, closed)), firstRead(claimed), parentRoute(parentJSON(3, closed)), ok("closeIssue")},
-			[]string{"--project", "go-tui"}, "OK: skipped #1: no longer eligible\nOK: closed #3 in go-tui: Crash\n", 1, 4,
+			[]fakegithub.Route{boardOnly(), listRoute(parentJSON(1, closed), parentJSON(3, closed)), firstRead(claimed), parentRoute(parentJSON(3, closed)), ok("closeIssue")},
+			[]string{"--project", "go-tui"}, "OK: skipped #1: no longer eligible\nOK: closed #3 in go-tui: Crash\n", 1, 5,
 		},
 		{"nothing eligible", []fakegithub.Route{listRoute(parentJSON(2, open))}, []string{"--all-projects"}, "OK: no eligible parents\n", 0, 1},
 	}
@@ -344,28 +344,37 @@ func TestIssueListOutput(t *testing.T) {
 	})
 }
 
+// boardOnly answers the search for board tickets with no routing label.
+func boardOnly() fakegithub.Route {
+	return fakegithub.Route{
+		Match: "search(query: $search",
+		Body:  `{"data":{"repository":{"isPrivate":true},"search":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`,
+		Times: 1,
+	}
+}
+
 func TestCurrentRepositorySelectsProject(t *testing.T) {
 	t.Setenv("AGENT", "1")
 	t.Setenv("GH_TOKEN", "tok")
 	t.Setenv("GH_REPO", "o/go-tui")
-	gh := fakegithub.New(listRoute())
+	gh := fakegithub.New(boardOnly(), boardOnly(), listRoute())
 	open := fakeOpener(t, gh)
 	if _, _, err := execute(t, open, "issue", "list"); err != nil {
 		t.Fatal(err)
 	}
-	if labels := gh.Requests()[0].Variables["labels"]; labels == nil {
+	if labels := gh.Requests()[1].Variables["labels"]; labels == nil {
 		t.Fatal("a registered repository must scope the list")
 	}
 	if _, _, err := execute(t, open, "issue", "list", "--all-projects"); err != nil {
 		t.Fatal(err)
 	}
-	if labels := gh.Requests()[1].Variables["labels"]; labels != nil {
+	if labels := gh.Requests()[2].Variables["labels"]; labels != nil {
 		t.Fatalf("--all-projects must not scope: %v", labels)
 	}
 	if _, _, err := execute(t, open, "issue", "list", "--project", "lib"); err != nil {
 		t.Fatal(err)
 	}
-	if labels := gh.Requests()[2].Variables["labels"].([]any); labels[0] != "repo:lib" {
+	if labels := gh.Requests()[4].Variables["labels"].([]any); labels[0] != "repo:lib" {
 		t.Fatalf("an explicit project must win: %v", labels)
 	}
 }
@@ -378,7 +387,7 @@ func TestLabelAndSearchFlags(t *testing.T) {
 	if _, _, err := execute(t, fakeOpener(t, gh), "issue", "list", "--search", "crash resize", "--project", "go-tui"); err != nil {
 		t.Fatal(err)
 	}
-	if got := gh.Requests()[0].Variables["search"]; got != `repo:o/tracker is:issue sort:created-asc is:open label:"repo:go-tui" crash resize` {
+	if got := gh.Requests()[1].Variables["search"]; got != `repo:o/tracker is:issue sort:created-asc is:open label:"repo:go-tui" crash resize` {
 		t.Fatalf("search = %v", got)
 	}
 	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")))), "issue", "list", "--label", "bug")

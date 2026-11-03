@@ -236,7 +236,7 @@ func TestListTicketsScopesAndPages(t *testing.T) {
 	first := listRoute(ticketSpec{number: 1, project: "go-tui"})
 	first.Body = strings.Replace(first.Body, `"hasNextPage":false,"endCursor":""`, `"hasNextPage":true,"endCursor":"c1"`, 1)
 	first.Times = 1
-	c, gh := newClient(t, first, listRoute(ticketSpec{number: 2, project: "go-tui"}))
+	c, gh := newClient(t, boardOnlyRoute(), first, listRoute(ticketSpec{number: 2, project: "go-tui"}))
 	tickets, _, err := c.ListTickets(ctx, ListOptions{Project: "go-tui", State: "all"})
 	if err != nil {
 		t.Fatal(err)
@@ -244,12 +244,145 @@ func TestListTicketsScopesAndPages(t *testing.T) {
 	if len(tickets) != 2 || tickets[0].Project != "go-tui" {
 		t.Fatalf("tickets = %+v", tickets)
 	}
-	requests := gh.Requests()
+	requests := gh.Requests()[1:]
 	if requests[0].Variables["labels"].([]any)[0] != "repo:go-tui" {
 		t.Fatalf("labels = %v", requests[0].Variables["labels"])
 	}
 	if len(requests[0].Variables["states"].([]any)) != 2 || requests[1].Variables["after"] != "c1" {
 		t.Fatalf("variables = %v / %v", requests[0].Variables, requests[1].Variables)
+	}
+}
+
+func TestBoardOnlyTicketsBelongToTheirProject(t *testing.T) {
+	onBoard := ticketSpec{number: 5, status: "Todo", created: "2026-01-02T00:00:00Z"}
+	elsewhere := ticketSpec{number: 6, status: "Todo", project: "lib"}
+	specs := []ticketSpec{
+		{number: 1, project: "go-tui", status: "Todo", created: "2026-01-01T00:00:00Z"},
+		{number: 2, project: "go-tui", status: "Doing", created: "2026-01-03T00:00:00Z"},
+	}
+	tests := []struct {
+		name      string
+		opts      ListOptions
+		want      string
+		wantTotal int
+	}{
+		{"merged oldest first", ListOptions{}, "[1 5 2]", 3},
+		{"limit applies to the merge", ListOptions{Limit: 2}, "[1 5]", 3},
+		{"filters apply", ListOptions{Status: "Doing"}, "[2]", 1},
+		{"ready", ListOptions{Ready: true}, "[1 5]", 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, gh := newClient(t, boardOnlyRoute(onBoard, elsewhere), listRoute(specs...))
+			tt.opts.Project = "go-tui"
+			tickets, total, err := c.ListTickets(ctx, tt.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			numbers := make([]int, 0, len(tickets))
+			for _, ticket := range tickets {
+				numbers = append(numbers, ticket.Number)
+				if ticket.Project != "go-tui" {
+					t.Fatalf("ticket = %+v", ticket)
+				}
+			}
+			if got := fmt.Sprint(numbers); got != tt.want || total != tt.wantTotal {
+				t.Fatalf("tickets = %s of %d, want %s of %d", got, total, tt.want, tt.wantTotal)
+			}
+			wantCount(t, gh, 2)
+			want := `repo:o/tracker is:issue sort:created-asc is:open project:o/1 -label:"repo:go-tui"`
+			if got := gh.Requests()[0].Variables["search"]; got != want {
+				t.Fatalf("search = %v, want %s", got, want)
+			}
+		})
+	}
+}
+
+func TestBoardOnlySearchKeepsTheSearchTextAndPages(t *testing.T) {
+	first := boardOnlyRoute(ticketSpec{number: 5, status: "Todo"})
+	first.Body = strings.Replace(first.Body, `"hasNextPage":false,"endCursor":""`, `"hasNextPage":true,"endCursor":"c1"`, 1)
+	c, gh := newClient(t, first, boardOnlyRoute(ticketSpec{number: 6, status: "Todo"}), boardOnlyRoute())
+	tickets, _, err := c.ListTickets(ctx, ListOptions{Project: "go-tui", Search: "crash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 2 {
+		t.Fatalf("tickets = %+v", tickets)
+	}
+	requests := gh.Requests()
+	if got := requests[0].Variables["search"]; got != `repo:o/tracker is:issue sort:created-asc is:open project:o/1 -label:"repo:go-tui" crash` {
+		t.Fatalf("search = %v", got)
+	}
+	if requests[1].Variables["after"] != "c1" {
+		t.Fatalf("variables = %v", requests[1].Variables)
+	}
+}
+
+func TestBoardOnlySearchFailures(t *testing.T) {
+	c, _ := newClient(t, fakegithub.Route{Match: "search(query: $search", Status: 500, Body: "{}"})
+	_, _, err := c.ListTickets(ctx, ListOptions{Project: "go-tui"})
+	wantError(t, err, "listing tickets")
+
+	public := boardOnlyRoute()
+	public.Body = strings.Replace(public.Body, `"isPrivate":true`, `"isPrivate":false`, 1)
+	gh := fakegithub.New(public)
+	c, err = New(Options{Repo: Repo{Owner: "o", Name: "tracker"}, CacheDir: t.TempDir(), Transport: gh, Token: "tok", RequirePrivate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.saveMetadata(testMetadata()); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = c.ListTickets(ctx, ListOptions{Project: "go-tui"})
+	wantError(t, err, "not private")
+}
+
+func TestAProjectWithoutABoardMakesNoBoardSearch(t *testing.T) {
+	c, gh := newClient(t, listRoute())
+	if _, _, err := c.ListTickets(ctx, ListOptions{Project: "bare"}); err != nil {
+		t.Fatal(err)
+	}
+	wantCount(t, gh, 1)
+}
+
+func TestReadTicketRoutesByBoard(t *testing.T) {
+	c, _ := newClient(t, ticketRoute(ticketSpec{number: 1, status: "Todo"}))
+	ticket, err := c.readTicket(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket.Project != "go-tui" {
+		t.Fatalf("ticket = %+v", ticket)
+	}
+
+	labelled, _ := newClient(t, ticketRoute(ticketSpec{number: 1, project: "lib", status: "Todo"}))
+	if ticket, err = labelled.readTicket(ctx, 1); err != nil || ticket.Project != "lib" {
+		t.Fatalf("a label must win over the board: %+v, %v", ticket, err)
+	}
+
+	meta := testMetadata()
+	meta.Projects = meta.Projects[1:]
+	unknown := clientWith(t, fakegithub.New(ticketRoute(ticketSpec{number: 1, status: "Todo"})), meta)
+	if ticket, err = unknown.readTicket(ctx, 1); err != nil || ticket.Project != "" {
+		t.Fatalf("an unregistered board must not route: %+v, %v", ticket, err)
+	}
+
+	noCache, err := New(Options{Repo: Repo{Owner: "o", Name: "tracker"}, CacheDir: t.TempDir(), Transport: fakegithub.New(ticketRoute(ticketSpec{number: 1, status: "Todo"})), Token: "tok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket, err = noCache.readTicket(ctx, 1); err != nil || ticket.Project != "" {
+		t.Fatalf("unreadable metadata must leave the ticket unrouted: %+v, %v", ticket, err)
+	}
+}
+
+func TestMoveKeepsABoardOnlyTicketsMissingLabelOutOfTheWrite(t *testing.T) {
+	c, gh := newClient(t, ticketRoute(ticketSpec{number: 1, status: "Todo"}), okRoute("addLabelsToLabelable"), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))
+	if err := c.MoveTicket(ctx, 1, "lib"); err != nil {
+		t.Fatal(err)
+	}
+	if write := gh.Requests()[1].Description; strings.Contains(write, "removeLabelsFromLabelable") {
+		t.Fatalf("write = %s", write)
 	}
 }
 
@@ -745,8 +878,14 @@ func TestSetStatus(t *testing.T) {
 	c, _ = newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui", status: "Doing"}))
 	wantError(t, c.SetStatus(ctx, 1, StatusTodo), "is claimed")
 
-	c, _ = newClient(t, ticketRoute(ticketSpec{number: 1, status: "Todo"}))
+	c, _ = newClient(t, ticketRoute(ticketSpec{number: 1}))
 	wantError(t, c.SetStatus(ctx, 1, StatusDone), "no project label")
+
+	c, gh = newClient(t, ticketRoute(ticketSpec{number: 1, status: "Todo"}), okRoute("updateProjectV2ItemFieldValue"))
+	if err := c.SetStatus(ctx, 1, StatusDone); err != nil {
+		t.Fatalf("a ticket on a board needs no label: %v", err)
+	}
+	wantCount(t, gh, 2)
 
 	c, _ = newClient(t, ticketRoute(ticketSpec{number: 1, project: "bare", status: "Todo"}))
 	wantError(t, c.SetStatus(ctx, 1, StatusDone), "has no board")

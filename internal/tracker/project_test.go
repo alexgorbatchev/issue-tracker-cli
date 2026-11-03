@@ -260,3 +260,27 @@ func TestCurrentProjectFailures(t *testing.T) {
 	_, _, err = public.CurrentProject(ctx, false)
 	wantError(t, err, "not private")
 }
+
+func TestProjectSummaryCountsBoardOnlyTickets(t *testing.T) {
+	counts := `{"data":{"open":{"issueCount":2},"closed":{"issueCount":5},"boardOpen":{"issueCount":1},"boardClosed":{"issueCount":3}}}`
+	c, gh := newClient(t, fakegithub.Route{Match: "open: search", Body: counts})
+	summary, err := c.ProjectSummary(ctx, testMetadata().Projects[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Open != 3 || summary.Closed != 8 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	wantCount(t, gh, 1)
+	variables := gh.Requests()[0].Variables
+	if got := variables["boardOpen"]; got != `repo:o/tracker is:issue project:o/1 -label:"repo:go-tui" is:open` || variables["hasBoard"] != true {
+		t.Fatalf("variables = %v", variables)
+	}
+
+	if _, err := c.ProjectSummary(ctx, testMetadata().Projects[2]); err != nil {
+		t.Fatal(err)
+	}
+	if variables = gh.Requests()[1].Variables; variables["hasBoard"] != false {
+		t.Fatalf("a project without a board has nothing to search: %v", variables)
+	}
+}

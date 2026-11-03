@@ -103,7 +103,7 @@ func TestClaimReportsOtherFailures(t *testing.T) {
 }
 
 func TestClaimNextSkipsLostTickets(t *testing.T) {
-	c, gh := newClient(t, listRoute(
+	c, gh := newClient(t, boardOnlyRoute(), listRoute(
 		ticketSpec{number: 1, project: "go-tui", status: "Doing"},
 		ticketSpec{number: 2, project: "go-tui", status: "Todo"},
 		ticketSpec{number: 3, project: "go-tui", status: "Todo"},
@@ -117,7 +117,7 @@ func TestClaimNextSkipsLostTickets(t *testing.T) {
 	if ticket.Number != 3 {
 		t.Fatalf("ticket = %+v, want the next candidate after a lost race", ticket)
 	}
-	wantCount(t, gh, 4)
+	wantCount(t, gh, 5)
 }
 
 func TestClaimNextSkipsAParentWithOpenSubIssues(t *testing.T) {

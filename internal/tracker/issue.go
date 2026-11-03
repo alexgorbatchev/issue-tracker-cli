@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -121,8 +122,10 @@ type Ticket struct {
 	OpenSubIssues int
 	Activity      time.Time
 
-	itemID  string
-	boardID string
+	itemID      string
+	boardID     string
+	created     time.Time
+	boardRouted bool
 }
 
 // Ready reports whether a ticket can be picked up: open, unblocked, with no blocked
@@ -157,7 +160,7 @@ func (t Ticket) Stale(days int, now time.Time) bool {
 
 func (n ticketNode) ticket() Ticket {
 	t := Ticket{
-		ID: n.ID, Number: n.Number, Title: n.Title, State: n.State, URL: n.URL,
+		ID: n.ID, Number: n.Number, Title: n.Title, State: n.State, URL: n.URL, created: n.CreatedAt,
 		Blockers: openNumbers(n.BlockedBy.Nodes), Activity: n.UpdatedAt,
 		SubIssues: len(n.SubIssueStates.Nodes), OpenSubIssues: len(openNumbers(n.SubIssueStates.Nodes)),
 	}
@@ -223,7 +226,26 @@ func (c *Client) readTicket(ctx context.Context, number int) (Ticket, error) {
 	if err := c.checkPrivate(response.Repository.IsPrivate); err != nil {
 		return Ticket{}, err
 	}
-	return response.Repository.Issue.ticket(), nil
+	return c.routed(ctx, response.Repository.Issue.ticket()), nil
+}
+
+// routed gives a ticket with no routing label the project whose board holds it, so a
+// ticket created inside a board needs no label. A label wins when the two disagree.
+func (c *Client) routed(ctx context.Context, t Ticket) Ticket {
+	if t.Project != "" || t.boardID == "" {
+		return t
+	}
+	meta, err := c.metadata(ctx)
+	if err != nil {
+		return t
+	}
+	for _, project := range meta.Projects {
+		if project.BoardID == t.boardID {
+			t.Project, t.boardRouted = project.Name, true
+			break
+		}
+	}
+	return t
 }
 
 // ListOptions filters tickets. Project is empty for all projects.
@@ -297,17 +319,21 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, i
 	if err != nil {
 		return nil, 0, err
 	}
-	label := ""
+	label, scope := "", ""
+	var onBoard []Ticket
 	if opts.Project != "" {
 		project, err := c.lookupProject(ctx, opts.Project)
 		if err != nil {
 			return nil, 0, err
 		}
-		label = project.Label()
+		label, scope = project.Label(), fmt.Sprintf(`label:"%s"`, project.Label())
+		if onBoard, err = c.boardOnlyTickets(ctx, project, states, opts); err != nil {
+			return nil, 0, fmt.Errorf("listing tickets: %w", err)
+		}
 	}
 	read := c.issuesPage(states, label)
 	if opts.Search != "" {
-		read = c.searchPage(states, label, opts.Search)
+		read = c.searchPage(states, scope, opts.Search)
 	}
 	tickets := []Ticket{}
 	matched := 0
@@ -321,7 +347,7 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, i
 			return nil, 0, err
 		}
 		for _, node := range page.Nodes {
-			ticket := node.ticket()
+			ticket := c.routed(ctx, node.ticket())
 			if !opts.matches(ticket) {
 				continue
 			}
@@ -331,13 +357,66 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, i
 			}
 		}
 		if opts.Limit > 0 && len(tickets) == opts.Limit && !opts.clientFiltered() {
-			return tickets, page.Total, nil
+			return oldestFirst(tickets, onBoard, opts.Limit), page.Total + len(onBoard), nil
 		}
 		if !page.PageInfo.HasNextPage {
-			return tickets, matched, nil
+			return oldestFirst(tickets, onBoard, opts.Limit), matched + len(onBoard), nil
 		}
 		cursor = page.PageInfo.EndCursor
 	}
+}
+
+// boardOnlyTickets reads the tickets on a project's board that have no routing label.
+// The issues connection filters by label only, so these need a search of their own.
+func (c *Client) boardOnlyTickets(ctx context.Context, project Project, states []string, opts ListOptions) ([]Ticket, error) {
+	if project.BoardURL == "" {
+		return nil, nil
+	}
+	read := c.searchPage(states, c.boardOnlyScope(project), opts.Search)
+	tickets := []Ticket{}
+	var cursor any
+	for {
+		page, err := read(ctx, cursor)
+		if err != nil {
+			return nil, err
+		}
+		if err := c.checkPrivate(page.IsPrivate); err != nil {
+			return nil, err
+		}
+		for _, node := range page.Nodes {
+			ticket := node.ticket()
+			// The search cannot exclude a label from another project, which wins.
+			if ticket.Project != "" || ticket.boardID != project.BoardID {
+				continue
+			}
+			ticket.Project, ticket.boardRouted = project.Name, true
+			if opts.matches(ticket) {
+				tickets = append(tickets, ticket)
+			}
+		}
+		if !page.PageInfo.HasNextPage {
+			return tickets, nil
+		}
+		cursor = page.PageInfo.EndCursor
+	}
+}
+
+// boardOnlyScope is the search for a project's board without its routing label.
+func (c *Client) boardOnlyScope(project Project) string {
+	return fmt.Sprintf(`project:%s/%s -label:"%s"`, c.repo.Owner, path.Base(project.BoardURL), project.Label())
+}
+
+// oldestFirst merges board-only tickets into a list and applies the limit again.
+func oldestFirst(tickets, onBoard []Ticket, limit int) []Ticket {
+	if len(onBoard) == 0 {
+		return tickets
+	}
+	merged := append(tickets, onBoard...)
+	slices.SortStableFunc(merged, func(a, b Ticket) int { return a.created.Compare(b.created) })
+	if limit > 0 && len(merged) > limit {
+		return merged[:limit]
+	}
+	return merged
 }
 
 func (c *Client) issuesPage(states []string, label string) pageReader {
@@ -379,13 +458,13 @@ func (c *Client) issuesPage(states []string, label string) pageReader {
 // lacks. A search query stops at searchCap results, so a longer one continues with a
 // new query from the last creation time. That query starts with the tickets created
 // in the same second, which were already served.
-func (c *Client) searchPage(states []string, label, text string) pageReader {
+func (c *Client) searchPage(states []string, scope, text string) pageReader {
 	terms := []string{"repo:" + c.repo.String(), "is:issue", "sort:created-asc"}
 	if len(states) == 1 {
 		terms = append(terms, "is:"+strings.ToLower(states[0]))
 	}
-	if label != "" {
-		terms = append(terms, fmt.Sprintf(`label:"%s"`, label))
+	if scope != "" {
+		terms = append(terms, scope)
 	}
 	query := `query($owner: String!, $name: String!, $search: String!, $after: String) {
   repository(owner: $owner, name: $name) { isPrivate }
@@ -411,10 +490,13 @@ func (c *Client) searchPage(states []string, label, text string) pageReader {
 		if !since.IsZero() {
 			search = append(search, "created:>="+since.Format(time.RFC3339))
 		}
+		if text != "" {
+			search = append(search, text)
+		}
 		if cursor == "" {
 			cursor = nil
 		}
-		variables := c.variables(map[string]any{"search": strings.Join(append(search, text), " "), "after": cursor})
+		variables := c.variables(map[string]any{"search": strings.Join(search, " "), "after": cursor})
 		if err := c.do(ctx, query, variables, &response); err != nil {
 			return ticketPage{}, err
 		}
@@ -531,7 +613,7 @@ func (c *Client) InspectTicket(ctx context.Context, number int) (TicketDetail, e
 	}
 	issue := response.Repository.Issue
 	detail := TicketDetail{
-		Ticket: issue.ticket(), Body: issue.Body, Blocking: openNumbers(issue.Blocking.Nodes),
+		Ticket: c.routed(ctx, issue.ticket()), Body: issue.Body, Blocking: openNumbers(issue.Blocking.Nodes),
 		SubIssues: issue.SubIssues.Nodes, Comments: issue.Comments.comments(),
 	}
 	if issue.Comments.PageInfo.HasNextPage {
@@ -1039,7 +1121,7 @@ func (c *Client) MoveTicket(ctx context.Context, number int, target string) erro
 		return errNoBoard(project)
 	}
 	fields := []string{fmt.Sprintf(`add: addLabelsToLabelable(input: {labelableId: %q, labelIds: [%q]}) { clientMutationId }`, ticket.ID, project.LabelID)}
-	if ticket.Project != "" {
+	if ticket.Project != "" && !ticket.boardRouted {
 		previous, err := c.lookupProject(ctx, ticket.Project)
 		if err != nil {
 			return err

@@ -104,7 +104,20 @@ func listRoute(specs ...ticketSpec) fakegithub.Route {
 	}
 	return fakegithub.Route{
 		Match: "issues(first: 100",
-		Body:  `{"data":{"repository":{"isPrivate":true,"issues":{"nodes":[` + strings.Join(nodes, ",") + `],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`,
+		Body:  `{"data":{"repository":{"isPrivate":true,"issues":{"totalCount":` + fmt.Sprint(len(nodes)) + `,"nodes":[` + strings.Join(nodes, ",") + `],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`,
+	}
+}
+
+// boardOnlyRoute answers the search for board tickets with no routing label.
+func boardOnlyRoute(specs ...ticketSpec) fakegithub.Route {
+	nodes := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		nodes = append(nodes, spec.json()+"}")
+	}
+	return fakegithub.Route{
+		Match: "search(query: $search",
+		Body:  `{"data":{"repository":{"isPrivate":true},"search":{"nodes":[` + strings.Join(nodes, ",") + `],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`,
+		Times: 1,
 	}
 }
 
