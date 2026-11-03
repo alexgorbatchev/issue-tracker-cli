@@ -1215,10 +1215,12 @@ const (
 	ReasonDuplicate  = "duplicate"
 )
 
-// CloseOptions gives the evidence for closing a ticket: merged pull requests, or a reason.
+// CloseOptions gives the evidence for closing a ticket: merged pull requests, a pull
+// request whose head landed without GitHub marking it merged, or a reason.
 type CloseOptions struct {
-	PRs    []string
-	Reason string
+	PRs      []string
+	LandedPR string
+	Reason   string
 }
 
 // CloseTicket closes a ticket after confirming every pull request merged.
@@ -1254,8 +1256,14 @@ func (c *Client) closeTicket(ctx context.Context, ticket Ticket, opts CloseOptio
 		if err != nil {
 			return err
 		}
-		body := fmt.Sprintf("Merged in %s", strings.Join(urls, ", "))
-		fields = append(fields, fmt.Sprintf(`comment: addComment(input: {subjectId: %q, body: %q}) { clientMutationId }`, ticket.ID, body))
+		fields = append(fields, commentMutation(ticket, fmt.Sprintf("Merged in %s", strings.Join(urls, ", "))))
+	}
+	if opts.LandedPR != "" {
+		body, err := c.landedPullRequest(ctx, ticket, opts.LandedPR)
+		if err != nil {
+			return err
+		}
+		fields = append(fields, commentMutation(ticket, body))
 	}
 	fields = append(fields, fmt.Sprintf(`close: closeIssue(input: {issueId: %q, stateReason: %s}) { clientMutationId }`, ticket.ID, reason))
 	if ticket.Project != "" && ticket.itemID != "" {
@@ -1316,6 +1324,56 @@ func (c *Client) parsePullRef(ctx context.Context, ticket Ticket, value string) 
 		return pullRef{}, err
 	}
 	return pullRef{repo: repo, number: number}, nil
+}
+
+func commentMutation(ticket Ticket, body string) string {
+	return fmt.Sprintf(`comment: addComment(input: {subjectId: %q, body: %q}) { clientMutationId }`, ticket.ID, body)
+}
+
+// landedPullRequest proves that a closed, unmerged pull request's head is on its base
+// branch, and returns the comment recording it. GitHub marks a pull request merged
+// only when its head lands while it is open, so a closed one stays unmerged for good.
+func (c *Client) landedPullRequest(ctx context.Context, ticket Ticket, value string) (string, error) {
+	ref, err := c.parsePullRef(ctx, ticket, value)
+	if err != nil {
+		return "", err
+	}
+	query := `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { url state merged headRefOid baseRefName }
+  }
+}`
+	var response struct {
+		Repository *struct {
+			PullRequest *struct {
+				URL, State, HeadRefOid, BaseRefName string
+				Merged                              bool
+			}
+		}
+	}
+	variables := map[string]any{"owner": ref.repo.Owner, "name": ref.repo.Name, "number": ref.number}
+	if err := c.do(ctx, query, variables, &response); err != nil && !hasGraphQLType(err, graphQLNotFoundType) {
+		return "", fmt.Errorf("reading pull request: %w", err)
+	}
+	if response.Repository == nil || response.Repository.PullRequest == nil {
+		return "", fmt.Errorf("pull request %s#%d not found", ref.repo, ref.number)
+	}
+	pull := response.Repository.PullRequest
+	if pull.Merged {
+		return "", fmt.Errorf("pull request %s#%d is merged: use --pr", ref.repo, ref.number)
+	}
+	if pull.State != StateClosed {
+		return "", fmt.Errorf("pull request %s#%d is still open: refusing to close", ref.repo, ref.number)
+	}
+	var comparison struct{ Status string }
+	path := fmt.Sprintf("repos/%s/compare/%s...%s?per_page=1", ref.repo, url.PathEscape(pull.BaseRefName), pull.HeadRefOid)
+	if err := c.rest.DoWithContext(ctx, http.MethodGet, path, nil, &comparison); err != nil {
+		return "", fmt.Errorf("comparing pull request %s#%d: %w", ref.repo, ref.number, describeError(err))
+	}
+	if comparison.Status != "behind" && comparison.Status != "identical" {
+		return "", fmt.Errorf("pull request %s#%d head %s is not on %s: refusing to close", ref.repo, ref.number, pull.HeadRefOid, pull.BaseRefName)
+	}
+	return fmt.Sprintf("Landed from %s at %s on %s. GitHub does not report it as merged.", pull.URL, pull.HeadRefOid, pull.BaseRefName), nil
 }
 
 func (c *Client) mergedPullRequests(ctx context.Context, ticket Ticket, values []string) ([]string, error) {

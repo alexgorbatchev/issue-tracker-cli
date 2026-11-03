@@ -1070,6 +1070,66 @@ func TestCloseTicketWithMergedPR(t *testing.T) {
 	}
 }
 
+func landedPullRoute(state string, merged bool) fakegithub.Route {
+	return fakegithub.Route{Match: "headRefOid baseRefName", Body: fmt.Sprintf(`{"data":{"repository":{"pullRequest":{"url":"https://github.com/o/go-tui/pull/88","state":%q,"merged":%v,"headRefOid":"abc123","baseRefName":"main"}}}}`, state, merged)}
+}
+
+func compareRoute(status string) fakegithub.Route {
+	return fakegithub.Route{Match: "GET api.github.com/repos/o/go-tui/compare/main...abc123", Body: fmt.Sprintf(`{"status":%q}`, status)}
+}
+
+func TestCloseTicketWithALandedPR(t *testing.T) {
+	for _, status := range []string{"behind", "identical"} {
+		t.Run(status, func(t *testing.T) {
+			c, gh := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui", status: "Doing"}), landedPullRoute("CLOSED", false), compareRoute(status), okRoute("closeIssue"),
+				fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/git/refs/claims/1", Status: 204})
+			if err := c.CloseTicket(ctx, 1, CloseOptions{LandedPR: "88"}); err != nil {
+				t.Fatal(err)
+			}
+			wantCount(t, gh, 5)
+			write := gh.Requests()[3].Description
+			for _, want := range []string{"Landed from https://github.com/o/go-tui/pull/88 at abc123 on main", "stateReason: COMPLETED", `"opt-done"`} {
+				if !strings.Contains(write, want) {
+					t.Fatalf("write = %s, missing %s", write, want)
+				}
+			}
+		})
+	}
+}
+
+func TestCloseRefusesAPRThatDidNotLand(t *testing.T) {
+	ticket := ticketRoute(ticketSpec{number: 1, project: "go-tui", status: "Todo"})
+	failedRead := fakegithub.Route{Match: "headRefOid baseRefName", Status: 500, Body: "{}"}
+	missing := fakegithub.Route{Match: "headRefOid baseRefName", Body: notFoundJSON}
+	failedCompare := fakegithub.Route{Match: "GET api.github.com/repos/o/go-tui/compare", Status: 404, Body: "{}"}
+	tests := []struct {
+		name   string
+		routes []fakegithub.Route
+		value  string
+		want   string
+	}{
+		{"diverged", []fakegithub.Route{ticket, landedPullRoute("CLOSED", false), compareRoute("diverged")}, "88", "head abc123 is not on main: refusing to close"},
+		{"ahead", []fakegithub.Route{ticket, landedPullRoute("CLOSED", false), compareRoute("ahead")}, "88", "is not on main"},
+		{"open", []fakegithub.Route{ticket, landedPullRoute("OPEN", false)}, "88", "is still open"},
+		{"merged", []fakegithub.Route{ticket, landedPullRoute("MERGED", true)}, "88", "is merged: use --pr"},
+		{"not found", []fakegithub.Route{ticket, missing}, "88", "not found"},
+		{"read fails", []fakegithub.Route{ticket, failedRead}, "88", "reading pull request"},
+		{"compare fails", []fakegithub.Route{ticket, landedPullRoute("CLOSED", false), failedCompare}, "88", "comparing pull request"},
+		{"bad ref", []fakegithub.Route{ticket}, "x", "invalid pull request"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, gh := newClient(t, tt.routes...)
+			wantError(t, c.CloseTicket(ctx, 1, CloseOptions{LandedPR: tt.value}), tt.want)
+			for _, req := range gh.Requests() {
+				if strings.Contains(req.Description, "closeIssue") {
+					t.Fatal("a refused close must not write")
+				}
+			}
+		})
+	}
+}
+
 func TestCloseClaimedTicketDeletesClaim(t *testing.T) {
 	c, gh := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui", status: "Doing"}), pullRoute(true), okRoute("closeIssue"),
 		fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/git/refs/claims/1", Status: 204})

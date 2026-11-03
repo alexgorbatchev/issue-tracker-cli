@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-02 16:58
+  last_modified: 2026-11-02 17:09
   status: current
 ---
 
@@ -143,9 +143,10 @@ Gives up a claim and returns the ticket to Todo.
 
 ### issue-tracker issue close <number>
 
-Closes a ticket, sets it to Done, and removes its claim. Pass `--pr` or `--reason`.
+Closes a ticket, sets it to Done, and removes its claim. Pass one of `--pr`, `--landed-pr`, or `--reason`.
 
 - `--pr` stringArray: merged pull request. Repeatable. A bare number belongs to the ticket's project; `project#number` names another registered project. The command refuses to close when any pull request is unmerged. Links to the pull requests are added to the ticket.
+- `--landed-pr` string: closed pull request that GitHub does not report as merged, as a number or `project#number`. The command closes the ticket as completed only when the pull request's head commit is on its base branch, and records the pull request and commit on the ticket. It refuses an open pull request, a merged one, which takes `--pr`, and a head that is not on the base branch.
 - `--reason` string: close without a pull request: `completed`, `not-planned`, or `duplicate`.
 
 ### issue-tracker issue reopen <number>
@@ -237,6 +238,9 @@ Prints help for a command. `--help`, `-h` bool prints help on any command, and `
 
 ## Errors
 
+- `pull request <repo>#<number> head <sha> is not on <branch>: refusing to close`: the code did not land. Land it, or close with `--reason` if the work is abandoned.
+- `pull request <repo>#<number> is still open: refusing to close`: land it and use `--pr`.
+- `pull request <repo>#<number> is merged: use --pr`: GitHub reports the merge, so `--landed-pr` is not needed.
 - `listing tickets: more than 1000 tickets were created at <time>: search cannot page past them`: narrow the search text.
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
 - `GitHub rate limit reached: retry after <time>`: wait until that time.

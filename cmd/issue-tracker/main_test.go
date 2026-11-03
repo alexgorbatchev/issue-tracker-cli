@@ -431,6 +431,20 @@ func TestProjectCommands(t *testing.T) {
 	}
 }
 
+func TestCloseNeedsExactlyOneKindOfEvidence(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	outsideRepository(t)
+	for _, args := range [][]string{
+		{"issue", "close", "1"},
+		{"issue", "close", "1", "--pr", "2", "--landed-pr", "2"},
+		{"issue", "close", "1", "--landed-pr", "2", "--reason", "completed"},
+	} {
+		if _, _, err := execute(t, noSession, args...); err == nil {
+			t.Fatalf("%v must be refused", args)
+		}
+	}
+}
+
 func TestProjectRm(t *testing.T) {
 	t.Setenv("AGENT", "1")
 	outsideRepository(t)

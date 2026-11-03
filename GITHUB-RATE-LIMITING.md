@@ -76,6 +76,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | `issue release <number>` | 3 | Read the ticket, delete the claim ref, set Todo |
 | `issue close <number> --pr <n>` | 3 | Read the ticket, read the PRs, then one write combining comment, close, and Done. Add 1 when a claim exists |
 | `project rm <project>` | 6 to 7 | Search the board, count tickets, delete the board, clear the label, then refresh metadata with its visibility read. One more request labels every closed ticket that was only on the board |
+| `issue close <number> --landed-pr <n>` | 4 | Read the ticket, read the PR, compare its head with its base branch, then one write combining comment, close, and Done. Add 1 when a claim exists |
 | `issue status set <number> <status>` | 2 | Read the ticket, then write |
 | `issue label add <number> <label...>` | 1 | One REST write |
 | `issue label rm <number> <label...>` | 1 per label | One REST delete each |

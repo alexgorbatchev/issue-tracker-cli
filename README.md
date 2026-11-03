@@ -134,6 +134,7 @@ require_private = true
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--pr <ref>` | | | Merged pull request as `88` or `project#88`; repeatable |
+| `--landed-pr <ref>` | | | Closed pull request whose head is on its base branch, for when GitHub does not report it as merged |
 | `--reason <reason>` | | | Close without a pull request: `completed`, `not-planned`, or `duplicate` |
 
 `issue-tracker issue attachment pull`

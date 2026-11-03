@@ -181,9 +181,10 @@ func newIssueCloseCommand(open opener) *cobra.Command {
 		}),
 	}
 	cmd.Flags().StringArrayVar(&opts.PRs, "pr", nil, "Merged pull request as a number or project#number; repeatable")
+	cmd.Flags().StringVar(&opts.LandedPR, "landed-pr", "", "Closed pull request whose head is on its base branch, as a number or project#number")
 	cmd.Flags().StringVar(&opts.Reason, "reason", "", "Close without a pull request: completed, not-planned, or duplicate")
-	cmd.MarkFlagsOneRequired("pr", "reason")
-	cmd.MarkFlagsMutuallyExclusive("pr", "reason")
+	cmd.MarkFlagsOneRequired("pr", "landed-pr", "reason")
+	cmd.MarkFlagsMutuallyExclusive("pr", "landed-pr", "reason")
 	return cmd
 }
 
