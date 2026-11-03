@@ -406,7 +406,45 @@ func newAttachmentCommand(open opener) *cobra.Command {
 			return fmt.Sprintf("attached %d file(s) to #%d", len(files), number), s.client.AddAttachments(cmd.Context(), number, nil, files)
 		}),
 	}
-	cmd.AddCommand(add, pull)
+	rm := &cobra.Command{
+		Use:   "rm <number> <file...>",
+		Short: "Delete files from the attachments release and mark their links removed",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: withTicket(open, func(cmd *cobra.Command, s *session, number int) (string, error) {
+			names, err := s.client.RemoveAttachments(cmd.Context(), number, cmd.Flags().Args()[1:])
+			return fmt.Sprintf("removed %d file(s) from #%d", len(names), number), err
+		}),
+	}
+	var confirmed bool
+	prune := &cobra.Command{
+		Use:   "prune",
+		Short: "List attachment files their ticket no longer links to, and delete them with --yes",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := open()
+			if err != nil {
+				return err
+			}
+			names, err := s.client.PruneAttachments(cmd.Context(), confirmed)
+			if err != nil {
+				return err
+			}
+			for _, name := range names {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), name); err != nil {
+					return err
+				}
+			}
+			switch {
+			case len(names) == 0:
+				return report(cmd.OutOrStdout(), "no unlinked attachments")
+			case confirmed:
+				return report(cmd.OutOrStdout(), "deleted %d unlinked attachment(s)", len(names))
+			}
+			return warn(cmd.ErrOrStderr(), "found %d unlinked attachment(s): pass --yes to delete them", len(names))
+		},
+	}
+	prune.Flags().BoolVar(&confirmed, "yes", false, "Delete the unlinked files instead of only listing them")
+	cmd.AddCommand(add, pull, rm, prune)
 	return cmd
 }
 

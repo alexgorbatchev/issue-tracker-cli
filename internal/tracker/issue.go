@@ -703,6 +703,8 @@ type Comment struct {
 	Author    string
 	CreatedAt time.Time
 	Body      string
+
+	id string
 }
 
 // TicketDetail is a ticket with its text, relations, and attachment URLs.
@@ -725,6 +727,7 @@ type SubIssue struct {
 
 type commentPage struct {
 	Nodes []struct {
+		ID        string
 		Author    *struct{ Login string }
 		CreatedAt time.Time
 		Body      string
@@ -735,7 +738,7 @@ type commentPage struct {
 func (p commentPage) comments() []Comment {
 	comments := make([]Comment, 0, len(p.Nodes))
 	for _, node := range p.Nodes {
-		comment := Comment{CreatedAt: node.CreatedAt, Body: node.Body}
+		comment := Comment{CreatedAt: node.CreatedAt, Body: node.Body, id: node.ID}
 		if node.Author != nil {
 			comment.Author = node.Author.Login
 		}
@@ -762,7 +765,7 @@ var detailFields = fmt.Sprintf(`%s
       body
       blocking(first: %[2]d) { nodes { number state } }
       subIssues(first: %[3]d) { nodes { number title state } }
-      comments(first: %[3]d) { nodes { author { login } createdAt body } pageInfo { hasNextPage endCursor } }`, ticketFields, nestedLimit, commentsLimit)
+      comments(first: %[3]d) { nodes { id author { login } createdAt body } pageInfo { hasNextPage endCursor } }`, ticketFields, nestedLimit, commentsLimit)
 
 // InspectTicket reads a ticket with everything an agent needs to work on it.
 func (c *Client) InspectTicket(ctx context.Context, number int) (TicketDetail, error) {
@@ -780,6 +783,19 @@ func (c *Client) InspectTickets(ctx context.Context, numbers []int) ([]TicketDet
 	if len(numbers) > MaxInspect {
 		return nil, fmt.Errorf("inspect at most %d tickets at once, not %d", MaxInspect, len(numbers))
 	}
+	details, missing, err := c.readDetails(ctx, numbers)
+	if err != nil {
+		return nil, err
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%s not found in %s", ticketNumbers(missing), c.repo)
+	}
+	return details, nil
+}
+
+// readDetails reads up to MaxInspect tickets in one request, in order, and reports
+// the numbers GitHub has no ticket for instead of failing on them.
+func (c *Client) readDetails(ctx context.Context, numbers []int) ([]TicketDetail, []int, error) {
 	var query strings.Builder
 	query.WriteString("query($owner: String!, $name: String!) {\n  repository(owner: $owner, name: $name) {\n    isPrivate")
 	for _, number := range numbers {
@@ -791,10 +807,11 @@ func (c *Client) InspectTickets(ctx context.Context, numbers []int) ([]TicketDet
 	}
 	err := c.do(ctx, query.String(), c.variables(nil), &response)
 	if err != nil && !hasGraphQLType(err, graphQLNotFoundType) {
-		return nil, fmt.Errorf("reading %s: %w", ticketNumbers(numbers), err)
+		return nil, nil, fmt.Errorf("reading %s: %w", ticketNumbers(numbers), err)
 	}
 	nodes := make([]detailNode, len(numbers))
 	var missing []int
+	found := make([]bool, len(numbers))
 	for i, number := range numbers {
 		raw := response.Repository["n"+strconv.Itoa(number)]
 		if len(raw) == 0 || string(raw) == "null" {
@@ -802,31 +819,36 @@ func (c *Client) InspectTickets(ctx context.Context, numbers []int) ([]TicketDet
 			continue
 		}
 		if err := json.Unmarshal(raw, &nodes[i]); err != nil {
-			return nil, fmt.Errorf("reading ticket #%d: %w", number, err)
+			return nil, nil, fmt.Errorf("reading ticket #%d: %w", number, err)
 		}
+		found[i] = true
 	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("%s not found in %s", ticketNumbers(missing), c.repo)
+	// A not-found error with no missing ticket is about something else.
+	if err != nil && len(missing) == 0 {
+		return nil, nil, fmt.Errorf("reading %s: %w", ticketNumbers(numbers), err)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", ticketNumbers(numbers), err)
+	if len(missing) == len(numbers) {
+		return nil, missing, nil
 	}
 	var isPrivate bool
 	if err := json.Unmarshal(response.Repository["isPrivate"], &isPrivate); err != nil {
-		return nil, fmt.Errorf("reading tracker visibility: %w", err)
+		return nil, nil, fmt.Errorf("reading tracker visibility: %w", err)
 	}
 	if err := c.checkPrivate(isPrivate); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	details := make([]TicketDetail, 0, len(numbers))
 	for i, number := range numbers {
+		if !found[i] {
+			continue
+		}
 		detail, err := c.detail(ctx, number, nodes[i])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		details = append(details, detail)
 	}
-	return details, nil
+	return details, missing, nil
 }
 
 func uniqueNumbers(numbers []int) []int {
@@ -883,7 +905,7 @@ func (c *Client) remainingComments(ctx context.Context, number int, cursor strin
 	query := fmt.Sprintf(`query($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      comments(first: %d, after: $after) { nodes { author { login } createdAt body } pageInfo { hasNextPage endCursor } }
+      comments(first: %d, after: $after) { nodes { id author { login } createdAt body } pageInfo { hasNextPage endCursor } }
     }
   }
 }`, commentsLimit)

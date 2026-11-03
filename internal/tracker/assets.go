@@ -192,7 +192,7 @@ func (c *Client) releaseAssetURL() *regexp.Regexp {
 	return regexp.MustCompile(`https://github\.com/` + regexp.QuoteMeta(c.repo.String()) + `/releases/download/` + attachmentsTag + `/[^\s()<>\[\]]+`)
 }
 
-// assetIDs maps the attachments release's asset names to their IDs, 100 per request.
+// assetIDs maps the attachments release's asset names to their IDs.
 func (c *Client) assetIDs(ctx context.Context) (map[string]int64, error) {
 	releaseID, err := c.attachmentsRelease(ctx, false)
 	if err != nil {
@@ -201,6 +201,11 @@ func (c *Client) assetIDs(ctx context.Context) (map[string]int64, error) {
 	if releaseID == 0 {
 		return nil, errors.New("the tracker has no attachments release")
 	}
+	return c.listAssets(ctx, releaseID)
+}
+
+// listAssets maps a release's asset names to their IDs, 100 per request.
+func (c *Client) listAssets(ctx context.Context, releaseID int64) (map[string]int64, error) {
 	ids := map[string]int64{}
 	for page := 1; ; page++ {
 		var assets []releaseAsset

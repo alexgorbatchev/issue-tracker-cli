@@ -1021,3 +1021,38 @@ func TestProjectImportRejectsBadRepository(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestAttachmentCleanupCommands(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	outsideRepository(t)
+	link := "https://github.com/o/tracker/releases/download/attachments/1-a1b2c3d4-run.log"
+	ticket := fakegithub.Route{Match: "subIssues(first", Body: `{"data":{"repository":{"isPrivate":true,"n1":` + ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z") +
+		`,"body":"[log](` + link + `)","blocking":{"nodes":[]},"subIssues":{"nodes":[]},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`}
+	release := fakegithub.Route{Match: "GET api.github.com/repos/o/tracker/releases/tags/attachments", Body: `{"id":5}`}
+	assets := fakegithub.Route{Match: "GET api.github.com/repos/o/tracker/releases/5/assets", Body: `[{"id":8,"name":"1-a1b2c3d4-run.log"},{"id":9,"name":"1-b2c3d4e5-old.log"}]`}
+	deleted := fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/releases/assets", Status: 204}
+
+	gh := fakegithub.New(ticket, release, assets, deleted, ok("updateIssue"))
+	stdout, _, err := execute(t, fakeOpener(t, gh), "issue", "attachment", "rm", "1", link)
+	if err != nil || stdout != "OK: removed 1 file(s) from #1\n" {
+		t.Fatalf("stdout = %q, err = %v", stdout, err)
+	}
+
+	stdout, stderr, err := execute(t, fakeOpener(t, fakegithub.New(ticket, release, assets)), "issue", "attachment", "prune")
+	if err != nil || stdout != "1-b2c3d4e5-old.log\n" || !strings.Contains(stderr, "WARN: found 1 unlinked attachment(s): pass --yes to delete them") {
+		t.Fatalf("stdout = %q, stderr = %q, err = %v", stdout, stderr, err)
+	}
+	gh = fakegithub.New(ticket, release, assets, deleted)
+	stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "attachment", "prune", "--yes")
+	if err != nil || stdout != "1-b2c3d4e5-old.log\nOK: deleted 1 unlinked attachment(s)\n" {
+		t.Fatalf("stdout = %q, err = %v", stdout, err)
+	}
+	none := fakegithub.Route{Match: "GET api.github.com/repos/o/tracker/releases/5/assets", Body: `[{"id":8,"name":"1-a1b2c3d4-run.log"}]`}
+	stdout, _, err = execute(t, fakeOpener(t, fakegithub.New(ticket, release, none)), "issue", "attachment", "prune")
+	if err != nil || stdout != "OK: no unlinked attachments\n" {
+		t.Fatalf("stdout = %q, err = %v", stdout, err)
+	}
+	if _, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "attachment", "prune"); err == nil {
+		t.Fatal("a failed read must fail the command")
+	}
+}

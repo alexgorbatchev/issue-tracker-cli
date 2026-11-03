@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:46
-last_modified: 2026-11-03 13:41
+last_modified: 2026-11-03 14:14
 status: current
 ---
 
@@ -89,6 +89,8 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | `issue sub close-eligible` | 1 per 100 tickets | Reads every page, then 2 for each parent closed. `--dry-run` writes nothing |
 | `--attach` with images or video, and `issue attachment add` | Unmeasured | Runs `gh issue edit` or `gh issue comment` with `--attach`, passing any body on standard input |
 | `--attach` with other files | 2 per file, plus 1 | Read the `attachments` release (creating it adds 1), then one upload per file. The body is then written by `gh`, or by one GraphQL request, 2 for an edit. `issue attachment add` without media reads the current body first |
+| `issue attachment rm <number> <file...>` | 3 + 1 per 100 assets, then 1 per file and 1 write | Read the ticket, the release, and its assets, delete each file, then rewrite every changed body and comment in one request. Each delete is a REST write, 5 secondary points |
+| `issue attachment prune` | 2 + 1 per 100 assets + 1 per 50 tickets with files | Read the release and its assets, then the tickets their names point at, with further comment pages as `issue inspect` reads them. `--yes` adds one REST delete per listed file |
 | `issue attachment pull` with release files | Add 2, plus 1 per further 100 assets, then 1 per file | Read the release, list its assets, then download each file through the API |
 
 Claim refs use REST because GraphQL cannot see `refs/claims/`. Deleting one is therefore always a separate request.
