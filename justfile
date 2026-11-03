@@ -20,6 +20,12 @@ run-ai *args:
 test:
     go test -race -cover ./...
 
+# Check per-package coverage the way CI does
+coverage:
+    mkdir -p .tmp
+    go test -race -coverprofile=.tmp/coverage.out ./...
+    scripts/check-coverage.sh .tmp/coverage.out
+
 # Build binary into bin/
 build:
     mkdir -p bin

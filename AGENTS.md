@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:52
-last_modified: 2026-11-02 16:51
+last_modified: 2026-11-02 17:04
 status: current
 ---
 
@@ -14,6 +14,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 - **Run CLI with Arguments:** `just run [args...]`
 - **Run CLI in Agent Mode:** `just run-ai [args...]` (`AGENT=1`)
 - **Run Tests:** `just test` (`go test -race -cover ./...`)
+- **Check Coverage:** `just coverage` (fails under 90% statement or function coverage in any package, as CI does)
 - **Run Static Analysis & Tests:** `just check`
 - **Run Linter / Static Analysis:** `just vet` or `just lint`
 - **Format Source Code:** `just fmt` (`go fmt ./...`)
@@ -45,7 +46,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 - Write affirmative usage instructions and factual contracts in the skill. Keep development instructions and prohibitions in this file.
 
 ## Boundaries
-- **Always:** For code changes that alter executable behavior, add or update meaningful behavioral tests. Require at least 90% line coverage and 90% function coverage across the non-test source of each affected first-party package, including unexecuted files and excluding `scripts/` directories. Measure with `go test -coverprofile`. Do not weaken coverage gates or make token test edits.
+- **Always:** For code changes that alter executable behavior, add or update meaningful behavioral tests. Require at least 90% line coverage and 90% function coverage across the non-test source of each affected first-party package, including unexecuted files and excluding `scripts/` directories. Measure with `go test -coverprofile`, and let `scripts/check-coverage.sh` enforce it. Statement coverage stands in for line coverage. Do not weaken coverage gates or make token test edits.
 - **Always:** Run `just check` before committing changes.
 - **Always:** Persist standing project instructions in this file and update the relevant rule in place.
 - **Never:** Record task history, progress, handoffs, or dated user amendments in `AGENTS.md`.
