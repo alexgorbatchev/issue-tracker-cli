@@ -622,45 +622,114 @@ func (p commentPage) comments() []Comment {
 
 var attachmentURL = regexp.MustCompile(`https://github\.com/user-attachments/(?:assets|files)/[A-Za-z0-9._~%/-]+`)
 
-// InspectTicket reads a ticket with everything an agent needs to work on it.
-func (c *Client) InspectTicket(ctx context.Context, number int) (TicketDetail, error) {
-	var response struct {
-		Repository struct {
-			IsPrivate bool
-			Issue     *struct {
-				ticketNode
-				Body      string
-				Blocking  struct{ Nodes []issueRef }
-				SubIssues struct {
-					Nodes []SubIssue
-				}
-				Comments commentPage
-			}
-		}
-	}
-	query := fmt.Sprintf(`query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    isPrivate
-    issue(number: $number) {
-      %s
+// MaxInspect is the most tickets InspectTickets reads in one call. GitHub charges
+// 2 points for 20 of them and 5 points for 50.
+const MaxInspect = 50
+
+type detailNode struct {
+	ticketNode
+	Body      string
+	Blocking  struct{ Nodes []issueRef }
+	SubIssues struct{ Nodes []SubIssue }
+	Comments  commentPage
+}
+
+var detailFields = fmt.Sprintf(`%s
       body
       blocking(first: %[2]d) { nodes { number state } }
       subIssues(first: %[3]d) { nodes { number title state } }
-      comments(first: %[3]d) { nodes { author { login } createdAt body } pageInfo { hasNextPage endCursor } }
-    }
-  }
-}`, ticketFields, nestedLimit, commentsLimit)
-	err := c.do(ctx, query, c.variables(map[string]any{"number": number}), &response)
-	if hasGraphQLType(err, graphQLNotFoundType) || (err == nil && response.Repository.Issue == nil) {
-		return TicketDetail{}, fmt.Errorf("ticket #%d not found in %s", number, c.repo)
-	}
+      comments(first: %[3]d) { nodes { author { login } createdAt body } pageInfo { hasNextPage endCursor } }`, ticketFields, nestedLimit, commentsLimit)
+
+// InspectTicket reads a ticket with everything an agent needs to work on it.
+func (c *Client) InspectTicket(ctx context.Context, number int) (TicketDetail, error) {
+	details, err := c.InspectTickets(ctx, []int{number})
 	if err != nil {
-		return TicketDetail{}, fmt.Errorf("reading ticket #%d: %w", number, err)
-	}
-	if err := c.checkPrivate(response.Repository.IsPrivate); err != nil {
 		return TicketDetail{}, err
 	}
-	issue := response.Repository.Issue
+	return details[0], nil
+}
+
+// InspectTickets reads tickets in the order given, each repeated number once, in one
+// request plus one per further 100 comments on a ticket.
+func (c *Client) InspectTickets(ctx context.Context, numbers []int) ([]TicketDetail, error) {
+	numbers = uniqueNumbers(numbers)
+	if len(numbers) > MaxInspect {
+		return nil, fmt.Errorf("inspect at most %d tickets at once, not %d", MaxInspect, len(numbers))
+	}
+	var query strings.Builder
+	query.WriteString("query($owner: String!, $name: String!) {\n  repository(owner: $owner, name: $name) {\n    isPrivate")
+	for _, number := range numbers {
+		fmt.Fprintf(&query, "\n    n%d: issue(number: %[1]d) {\n      %s\n    }", number, detailFields)
+	}
+	query.WriteString("\n  }\n}")
+	var response struct {
+		Repository map[string]json.RawMessage
+	}
+	err := c.do(ctx, query.String(), c.variables(nil), &response)
+	if err != nil && !hasGraphQLType(err, graphQLNotFoundType) {
+		return nil, fmt.Errorf("reading %s: %w", ticketNumbers(numbers), err)
+	}
+	nodes := make([]detailNode, len(numbers))
+	var missing []int
+	for i, number := range numbers {
+		raw := response.Repository["n"+strconv.Itoa(number)]
+		if len(raw) == 0 || string(raw) == "null" {
+			missing = append(missing, number)
+			continue
+		}
+		if err := json.Unmarshal(raw, &nodes[i]); err != nil {
+			return nil, fmt.Errorf("reading ticket #%d: %w", number, err)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%s not found in %s", ticketNumbers(missing), c.repo)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", ticketNumbers(numbers), err)
+	}
+	var isPrivate bool
+	if err := json.Unmarshal(response.Repository["isPrivate"], &isPrivate); err != nil {
+		return nil, fmt.Errorf("reading tracker visibility: %w", err)
+	}
+	if err := c.checkPrivate(isPrivate); err != nil {
+		return nil, err
+	}
+	details := make([]TicketDetail, 0, len(numbers))
+	for i, number := range numbers {
+		detail, err := c.detail(ctx, number, nodes[i])
+		if err != nil {
+			return nil, err
+		}
+		details = append(details, detail)
+	}
+	return details, nil
+}
+
+func uniqueNumbers(numbers []int) []int {
+	seen := make(map[int]bool, len(numbers))
+	unique := make([]int, 0, len(numbers))
+	for _, number := range numbers {
+		if !seen[number] {
+			seen[number] = true
+			unique = append(unique, number)
+		}
+	}
+	return unique
+}
+
+// ticketNumbers names tickets in errors: "ticket #1" or "tickets #1, #2".
+func ticketNumbers(numbers []int) string {
+	parts := make([]string, 0, len(numbers))
+	for _, number := range numbers {
+		parts = append(parts, "#"+strconv.Itoa(number))
+	}
+	if len(parts) == 1 {
+		return "ticket " + parts[0]
+	}
+	return "tickets " + strings.Join(parts, ", ")
+}
+
+func (c *Client) detail(ctx context.Context, number int, issue detailNode) (TicketDetail, error) {
 	ticket, err := c.routed(ctx, issue.ticket())
 	if err != nil {
 		return TicketDetail{}, fmt.Errorf("reading ticket #%d: %w", number, err)

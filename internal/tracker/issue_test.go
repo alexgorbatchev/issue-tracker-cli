@@ -463,7 +463,7 @@ func TestRoutingFailsWhenMetadataCannotBeRead(t *testing.T) {
 	_, err = clientWith(t, fakegithub.New(ticketRoute(spec), failing), stale).readTicket(ctx, 1)
 	wantError(t, err, "reading ticket #1")
 
-	detail := fakegithub.Route{Match: "comments(first: 100)", Body: strings.Replace(ticketRoute(spec).Body, `"projectItems"`, `"body":"","blocking":{"nodes":[]},"subIssues":{"nodes":[]},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}},"projectItems"`, 1)}
+	detail := fakegithub.Route{Match: "comments(first: 100)", Body: strings.Replace(strings.Replace(ticketRoute(spec).Body, `"issue":`, `"n1":`, 1), `"projectItems"`, `"body":"","blocking":{"nodes":[]},"subIssues":{"nodes":[]},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}},"projectItems"`, 1)}
 	_, err = noCache(detail, failing).InspectTicket(ctx, 1)
 	wantError(t, err, "reading ticket #1")
 }
@@ -682,7 +682,7 @@ func TestListTicketsErrors(t *testing.T) {
 
 func inspectRoute(extra string) fakegithub.Route {
 	base := ticketSpec{number: 7, project: "lib", status: "Todo"}.json()
-	return fakegithub.Route{Match: "subIssues(first", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + base + `,` + extra + `}}}}`}
+	return fakegithub.Route{Match: "subIssues(first", Body: `{"data":{"repository":{"isPrivate":true,"n7":` + base + `,` + extra + `}}}}`}
 }
 
 func TestInspectTicket(t *testing.T) {
@@ -727,6 +727,69 @@ func TestInspectTicketErrors(t *testing.T) {
 	c, _ = newClient(t, route, fakegithub.Route{Match: "comments(first: 100, after: $after)", Status: 500, Body: "{}"})
 	_, err = c.InspectTicket(ctx, 7)
 	wantError(t, err, "reading comments")
+}
+
+// detailJSON is a ticket with the fields InspectTickets reads.
+func detailJSON(spec ticketSpec, comments string) string {
+	return spec.json() + `,"body":"","blocking":{"nodes":[]},"subIssues":{"nodes":[]},"comments":` + comments + `}`
+}
+
+const noMoreComments = `{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}`
+
+func TestInspectTicketsReadsEveryTicketInOneRequest(t *testing.T) {
+	more := `{"data":{"repository":{"issue":{"comments":{"nodes":[{"author":null,"createdAt":"2026-01-02T00:00:00Z","body":"later"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
+	tickets := `{"data":{"repository":{"isPrivate":true,` +
+		`"n8":` + detailJSON(ticketSpec{number: 8, project: "go-tui", status: "Todo"}, `{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"c"}}`) + `,` +
+		`"n7":` + detailJSON(ticketSpec{number: 7, project: "lib", status: "Doing"}, noMoreComments) + `}}}`
+	c, gh := newClient(t, fakegithub.Route{Match: "subIssues(first", Body: tickets}, fakegithub.Route{Match: "comments(first: 100, after: $after)", Body: more})
+	details, err := c.InspectTickets(ctx, []int{8, 7, 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(details) != 2 || details[0].Number != 8 || details[1].Number != 7 {
+		t.Fatalf("details = %+v, want #8 then #7 once each", details)
+	}
+	if len(details[0].Comments) != 1 || details[0].Comments[0].Body != "later" || details[0].PublicRepo || !details[1].PublicRepo || details[1].Status != "Doing" {
+		t.Fatalf("details = %+v", details)
+	}
+	if query := gh.Requests()[0].Description; strings.Count(query, ": issue(number:") != 2 {
+		t.Fatalf("query = %s, want one aliased issue per distinct ticket", query)
+	}
+	wantCount(t, gh, 2)
+}
+
+func TestInspectTicketsErrors(t *testing.T) {
+	two := []int{7, 8}
+	ticket7 := `"n7":` + detailJSON(ticketSpec{number: 7, project: "lib", status: "Todo"}, noMoreComments)
+	tests := []struct {
+		name    string
+		numbers []int
+		route   fakegithub.Route
+		want    string
+	}{
+		{"names every missing ticket", []int{7, 8, 9}, fakegithub.Route{Body: `{"data":{"repository":{"isPrivate":true,` + ticket7 + `,"n8":null,"n9":null}},"errors":[{"type":"NOT_FOUND","message":"x"},{"type":"NOT_FOUND","message":"y"}]}`}, "tickets #8, #9 not found in o/tracker"},
+		{"keeps another error alongside a missing one", two, fakegithub.Route{Body: `{"data":{"repository":{"isPrivate":true,` + ticket7 + `,"n8":{}}},"errors":[{"type":"NOT_FOUND","message":"gone"}]}`}, "reading tickets #7, #8: GraphQL: gone"},
+		{"wraps a failed request", two, fakegithub.Route{Status: 500, Body: "{}"}, "reading tickets #7, #8"},
+		{"rejects a malformed ticket", two, fakegithub.Route{Body: `{"data":{"repository":{"isPrivate":true,` + ticket7 + `,"n8":5}}}`}, "reading ticket #8"},
+		{"needs the tracker visibility", []int{7}, fakegithub.Route{Body: `{"data":{"repository":{` + ticket7 + `}}}`}, "reading tracker visibility"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.route.Match = "subIssues(first"
+			c, _ := newClient(t, tt.route)
+			_, err := c.InspectTickets(ctx, tt.numbers)
+			wantError(t, err, tt.want)
+		})
+	}
+
+	c, gh := newClient(t)
+	numbers := make([]int, MaxInspect+1)
+	for i := range numbers {
+		numbers[i] = i + 1
+	}
+	_, err := c.InspectTickets(ctx, numbers)
+	wantError(t, err, "inspect at most 50 tickets at once, not 51")
+	wantCount(t, gh, 0)
 }
 
 func TestReadTicketErrors(t *testing.T) {

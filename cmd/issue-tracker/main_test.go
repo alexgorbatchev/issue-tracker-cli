@@ -476,7 +476,7 @@ func TestIssueInspectPrintsDetail(t *testing.T) {
 	body = strings.Replace(body, `"parent":null`, `"parent":{"number":5,"state":"OPEN","blockedBy":{"nodes":[]},"parent":null}`, 1)
 	body = strings.Replace(body, `"blockedBy":{"nodes":[]},"parent":{`, `"blockedBy":{"nodes":[{"number":3,"state":"OPEN"}]},"parent":{`, 1)
 	body = strings.Replace(body, `{"name":"repo:lib"}`, `{"name":"repo:lib"},{"name":"bug"}`, 1)
-	route := fakegithub.Route{Match: "subIssues(first", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + body + `,"body":"Text https://github.com/user-attachments/assets/abc","blocking":{"nodes":[{"number":4,"state":"OPEN"}]},"subIssues":{"nodes":[{"number":6,"title":"Child","state":"OPEN"}]},"comments":{"nodes":[{"author":{"login":"a"},"createdAt":"2026-01-01T00:00:00Z","body":"Note"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`}
+	route := fakegithub.Route{Match: "subIssues(first", Body: `{"data":{"repository":{"isPrivate":true,"n1":` + body + `,"body":"Text https://github.com/user-attachments/assets/abc","blocking":{"nodes":[{"number":4,"state":"OPEN"}]},"subIssues":{"nodes":[{"number":6,"title":"Child","state":"OPEN"}]},"comments":{"nodes":[{"author":{"login":"a"},"createdAt":"2026-01-01T00:00:00Z","body":"Note"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`}
 	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(route)), "issue", "inspect", "1")
 	if err != nil {
 		t.Fatal(err)
@@ -485,6 +485,28 @@ func TestIssueInspectPrintsDetail(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
+	}
+}
+
+func TestIssueInspectWarnsOncePerPublicProject(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	outsideRepository(t)
+	detail := func(number int) string {
+		return fmt.Sprintf(`"n%d":`, number) + ticketJSON(number, "lib", "Todo", "2026-10-01T00:00:00Z") + `,"body":"Body","blocking":{"nodes":[]},"subIssues":{"nodes":[]},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}`
+	}
+	gh := fakegithub.New(fakegithub.Route{Match: "subIssues(first", Body: `{"data":{"repository":{"isPrivate":true,` + detail(2) + `,` + detail(1) + `}}}`})
+	stdout, _, err := execute(t, fakeOpener(t, gh), "issue", "inspect", "2", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(stdout, "WARN: lib is public") != 1 || !strings.HasPrefix(stdout, "WARN: ") {
+		t.Fatalf("stdout = %q, want one leading WARN for the shared public project", stdout)
+	}
+	if !strings.Contains(stdout, "body:\nBody\n\nnumber: 1\n") || strings.Index(stdout, "number: 2") > strings.Index(stdout, "number: 1") {
+		t.Fatalf("stdout = %q, want #2 then #1 separated by a blank line", stdout)
+	}
+	if gh.Count() != 1 {
+		t.Fatalf("made %d requests, want 1", gh.Count())
 	}
 }
 
@@ -504,7 +526,7 @@ func TestAttachmentCommands(t *testing.T) {
 
 	body := ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")
 	gh := fakegithub.New(
-		fakegithub.Route{Match: "subIssues(first", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + body + `,"body":"https://github.com/user-attachments/assets/abc","blocking":{"nodes":[]},"subIssues":{"nodes":[]},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`},
+		fakegithub.Route{Match: "subIssues(first", Body: `{"data":{"repository":{"isPrivate":true,"n1":` + body + `,"body":"https://github.com/user-attachments/assets/abc","blocking":{"nodes":[]},"subIssues":{"nodes":[]},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`},
 		fakegithub.Route{Match: "GET github.com/user-attachments/assets/abc", Body: "png", Headers: map[string]string{"Content-Type": "image/png"}},
 	)
 	home := t.TempDir()
@@ -566,6 +588,7 @@ func TestArgumentErrors(t *testing.T) {
 		{"claim rejects both", []string{"issue", "claim", "1", "--next"}, "pass a ticket number or --next"},
 		{"claim number", []string{"issue", "claim", "x"}, "invalid ticket number"},
 		{"inspect number", []string{"issue", "inspect", "0"}, "invalid ticket number"},
+		{"inspect at most 50", append([]string{"issue", "inspect"}, strings.Fields(strings.Repeat("1 ", 51))...), "accepts between 1 and 50 arg(s), received 51"},
 		{"attachment number", []string{"issue", "attachment", "pull", "x"}, "invalid ticket number"},
 		{"action number", []string{"issue", "release", "x"}, "invalid ticket number"},
 		{"relation number", []string{"issue", "blocker", "add", "1", "x"}, "invalid ticket number"},

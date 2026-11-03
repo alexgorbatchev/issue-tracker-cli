@@ -114,12 +114,32 @@ func joinNumbers(numbers []int) string {
 	return strings.Join(parts, ",")
 }
 
-func printDetail(w io.Writer, detail tracker.TicketDetail) error {
-	if detail.PublicRepo {
-		if err := warnPublic(w, detail.Project); err != nil {
+// printDetails warns once for each public project, then prints the tickets
+// separated by blank lines.
+func printDetails(w io.Writer, details []tracker.TicketDetail) error {
+	warned := map[string]bool{}
+	for _, detail := range details {
+		if detail.PublicRepo && !warned[detail.Project] {
+			warned[detail.Project] = true
+			if err := warnPublic(w, detail.Project); err != nil {
+				return err
+			}
+		}
+	}
+	for i, detail := range details {
+		if i > 0 {
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		if err := printDetail(w, detail); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func printDetail(w io.Writer, detail tracker.TicketDetail) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "number: %d\ntitle: %s\nstate: %s\nstatus: %s\nproject: %s\nurl: %s\n",
 		detail.Number, detail.Title, detail.State, detail.Status, detail.Project, detail.URL)

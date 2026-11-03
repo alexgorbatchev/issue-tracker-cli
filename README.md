@@ -60,6 +60,9 @@ issue-tracker issue list --ready
 issue-tracker issue claim --next
 issue-tracker issue inspect 12
 
+# Read several tickets in one request
+issue-tracker issue inspect 12 13 14
+
 # Close it after the pull request merges
 issue-tracker issue close 12 --pr 88
 ```

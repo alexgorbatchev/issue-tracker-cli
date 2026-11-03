@@ -260,11 +260,11 @@ func newIssueEditCommand(open opener) *cobra.Command {
 
 func newIssueInspectCommand(open opener) *cobra.Command {
 	return &cobra.Command{
-		Use:   "inspect <number>",
-		Short: "Show a ticket with its comments and attachments",
-		Args:  cobra.ExactArgs(1),
+		Use:   "inspect <number...>",
+		Short: "Show tickets with their comments and attachments",
+		Args:  cobra.RangeArgs(1, tracker.MaxInspect),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			number, err := parseNumber(args[0])
+			numbers, err := parseNumbers(args)
 			if err != nil {
 				return err
 			}
@@ -272,11 +272,11 @@ func newIssueInspectCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			detail, err := s.client.InspectTicket(cmd.Context(), number)
+			details, err := s.client.InspectTickets(cmd.Context(), numbers)
 			if err != nil {
 				return err
 			}
-			return printDetail(cmd.OutOrStdout(), detail)
+			return printDetails(cmd.OutOrStdout(), details)
 		},
 	}
 }

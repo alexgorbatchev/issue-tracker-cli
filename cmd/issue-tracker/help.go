@@ -6,6 +6,7 @@ import (
 
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/config"
+	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"
 	"github.com/spf13/cobra"
 )
 
@@ -43,7 +44,7 @@ var techCatalog = cobrahelptree.TechCatalog{
 	"issue-tracker issue close":              withArgs(true, numberArg),
 	"issue-tracker issue create":             writeInfo,
 	"issue-tracker issue edit":               withArgs(true, numberArg),
-	"issue-tracker issue inspect":            withArgs(false, numberArg),
+	"issue-tracker issue inspect":            withArgs(false, arg("<number...>", fmt.Sprintf("Tickets to show, at most %d", tracker.MaxInspect))),
 	"issue-tracker issue move":               withArgs(true, numberArg, arg("<project>", "Project that takes over the ticket")),
 	"issue-tracker issue release":            withArgs(true, numberArg),
 	"issue-tracker issue reopen":             withArgs(true, numberArg),

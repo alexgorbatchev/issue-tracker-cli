@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-02 17:09
+  last_modified: 2026-11-02 18:40
   status: current
 ---
 
@@ -17,7 +17,7 @@ Set `AGENT=1` on every invocation, or export it for the session. Read exit statu
 ## Workflow
 
 1. Run `issue-tracker issue claim --next` to take the oldest ready ticket, or `issue-tracker issue claim <number>` for a specific one. Claims are atomic: when another agent holds the ticket, the command fails with `ticket is already claimed`, so pick another ticket.
-2. Run `issue-tracker issue inspect <number>` to read the ticket, and `issue-tracker issue attachment pull <number>` to download its screenshots.
+2. Run `issue-tracker issue inspect <number>` to read the ticket, or pass several numbers to read related tickets in one call, and `issue-tracker issue attachment pull <number>` to download its screenshots.
 3. Work in the repository named by the ticket's project. A claim works from any directory, so a ticket for a dependency can be claimed from the application that needs it.
 4. Record unrelated problems with `issue-tracker issue create --title "..." --discovered-from <number>`.
 5. Open the pull request in the code repository.
@@ -105,9 +105,9 @@ Prints one tab-separated line per ticket, oldest first: number, status, project,
 - `--stale-days` int: stale window in days, overriding the configured value.
 - `--limit` int: maximum tickets. 0 shows all, and a negative value is an error. Default: 100. `--status`, `--label`, `--ready`, and `--stale` read every ticket whatever the limit, at one request per 100 tickets. When more tickets match, stdout holds the first `<limit>` and stderr gets `WARN: showing the first <limit> of <total> tickets: pass --limit 0 to list them all`.
 
-### issue-tracker issue inspect <number>
+### issue-tracker issue inspect <number...>
 
-Prints `number`, `title`, `state`, `status`, `project`, `url`, then `labels`, `parent`, `blocked_by`, `blocking`, `sub_issue`, and `attachment` lines when present, then `body:` followed by the body, then each comment as `comment: <author> <time>` followed by its text.
+Reads up to 50 tickets in one request, in the order given; a repeated number is shown once. For each ticket, prints `number`, `title`, `state`, `status`, `project`, `url`, then `labels`, `parent`, `blocked_by`, `blocking`, `sub_issue`, and `attachment` lines when present, then `body:` followed by the body, then each comment as `comment: <author> <time>` followed by its text. A blank line separates tickets. The `WARN:` line for a public project comes first, once per project.
 
 ### issue-tracker issue create
 
@@ -242,6 +242,8 @@ Prints help for a command. `--help`, `-h` bool prints help on any command, and `
 - `pull request <repo>#<number> is still open: refusing to close`: land it and use `--pr`.
 - `pull request <repo>#<number> is merged: use --pr`: GitHub reports the merge, so `--landed-pr` is not needed.
 - `listing tickets: more than 1000 tickets were created at <time>: search cannot page past them`: narrow the search text.
+- `ticket #<number> not found in <tracker>` or `tickets #<number>, #<number> not found in <tracker>`: no ticket has that number, and `issue inspect` printed nothing. Check the numbers and rerun.
+- `accepts between 1 and 50 arg(s)`: `issue inspect` takes at most 50 tickets. Split the numbers across calls.
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
 - `GitHub rate limit reached: retry after <time>`: wait until that time.
 - `your GitHub login has no access to project boards: run issue-tracker auth refresh`: the token lacks the `project` scope. Ask the user to run `issue-tracker auth refresh` in a terminal.
