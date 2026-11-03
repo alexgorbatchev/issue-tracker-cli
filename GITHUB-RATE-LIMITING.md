@@ -67,6 +67,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | --- | --- | --- |
 | `issue list`, up to 100 tickets | 1 | One query, about 6 points with parent and sub-issue checks. GitHub reports the total on that page |
 | `issue list` with `--status`, `--label`, `--ready`, or `--stale` | 1 per 100 tickets | Reads every page, whatever `--limit` says, because GitHub cannot count these filters and the total has to be counted here |
+| `issue list --search` | 1 per 100 matches | One search query. GitHub ends a query at 1,000 results, so each further 1,000 starts a new query from the last creation time |
 | `issue inspect <number>` | 1 | One query, plus one per extra 100 comments |
 | `issue create` | 3 | Create with routing label, add to the board, set Todo. Add 1 when relating tickets, 1 for `--label`, and 1 to 3 when GitHub has already added the item, which its sub-issue workflow can do. Passing the board to `createIssue` would save a request but makes that collision routine |
 | `issue claim <number>` | 3 | Read the ticket, create the claim ref, set Doing |

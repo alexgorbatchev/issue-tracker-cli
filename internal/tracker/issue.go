@@ -29,6 +29,8 @@ const (
 	// labelsLimit is the largest page GitHub serves. A shorter page could hide the
 	// blocked label or a routing label, and each ticket holds only a few labels.
 	labelsLimit = 100
+	// searchCap is the most results GitHub serves for one search query.
+	searchCap = 1000
 	// subIssuesLimit is GitHub's maximum per parent, so one page holds them all.
 	subIssuesLimit = 100
 
@@ -41,7 +43,7 @@ const (
 
 // ticketFields is the shared selection for one ticket. Reading blockers, parents,
 // and board status here keeps list and claim commands to a single request.
-var ticketFields = fmt.Sprintf(`id number title state url updatedAt
+var ticketFields = fmt.Sprintf(`id number title state url createdAt updatedAt
   labels(first: %[3]d) { nodes { name } }
   blockedBy(first: %[1]d) { nodes { number state } }
   parent {
@@ -81,6 +83,7 @@ type ticketNode struct {
 	Title     string
 	State     string
 	URL       string
+	CreatedAt time.Time
 	UpdatedAt time.Time
 	Labels    struct{ Nodes []struct{ Name string } }
 	BlockedBy struct{ Nodes []issueRef }
@@ -372,7 +375,10 @@ func (c *Client) issuesPage(states []string, label string) pageReader {
 	}
 }
 
-// searchPage matches ticket text with GitHub search, which the issues connection lacks.
+// searchPage matches ticket text with GitHub search, which the issues connection
+// lacks. A search query stops at searchCap results, so a longer one continues with a
+// new query from the last creation time. That query starts with the tickets created
+// in the same second, which were already served.
 func (c *Client) searchPage(states []string, label, text string) pageReader {
 	terms := []string{"repo:" + c.repo.String(), "is:issue", "sort:created-asc"}
 	if len(states) == 1 {
@@ -381,7 +387,6 @@ func (c *Client) searchPage(states []string, label, text string) pageReader {
 	if label != "" {
 		terms = append(terms, fmt.Sprintf(`label:"%s"`, label))
 	}
-	search := strings.Join(append(terms, text), " ")
 	query := `query($owner: String!, $name: String!, $search: String!, $after: String) {
   repository(owner: $owner, name: $name) { isPrivate }
   search(query: $search, type: ISSUE, first: ` + strconv.Itoa(listPageSize) + `, after: $after) {
@@ -390,6 +395,9 @@ func (c *Client) searchPage(states []string, label, text string) pageReader {
     pageInfo { hasNextPage endCursor }
   }
 }`
+	var since time.Time
+	served, total := 0, 0
+	seen := map[int]bool{}
 	return func(ctx context.Context, cursor any) (ticketPage, error) {
 		var response struct {
 			Repository struct{ IsPrivate bool }
@@ -399,11 +407,39 @@ func (c *Client) searchPage(states []string, label, text string) pageReader {
 				PageInfo   pageInfo
 			}
 		}
-		variables := c.variables(map[string]any{"search": search, "after": cursor})
+		search := slices.Clone(terms)
+		if !since.IsZero() {
+			search = append(search, "created:>="+since.Format(time.RFC3339))
+		}
+		if cursor == "" {
+			cursor = nil
+		}
+		variables := c.variables(map[string]any{"search": strings.Join(append(search, text), " "), "after": cursor})
 		if err := c.do(ctx, query, variables, &response); err != nil {
 			return ticketPage{}, err
 		}
-		return ticketPage{IsPrivate: response.Repository.IsPrivate, Total: response.Search.IssueCount, Nodes: response.Search.Nodes, PageInfo: response.Search.PageInfo}, nil
+		result := response.Search
+		if total == 0 {
+			total = result.IssueCount
+		}
+		page := ticketPage{IsPrivate: response.Repository.IsPrivate, Total: total, PageInfo: result.PageInfo}
+		for _, node := range result.Nodes {
+			if !seen[node.Number] {
+				seen[node.Number] = true
+				page.Nodes = append(page.Nodes, node)
+			}
+		}
+		served += len(result.Nodes)
+		if result.PageInfo.HasNextPage || served < searchCap || result.IssueCount <= served || len(result.Nodes) == 0 {
+			return page, nil
+		}
+		last := result.Nodes[len(result.Nodes)-1].CreatedAt
+		if !last.After(since) {
+			return ticketPage{}, fmt.Errorf("more than %d tickets were created at %s: search cannot page past them", searchCap, last.Format(time.RFC3339))
+		}
+		since, served = last, 0
+		page.PageInfo = pageInfo{HasNextPage: true}
+		return page, nil
 	}
 }
 

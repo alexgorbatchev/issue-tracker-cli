@@ -275,11 +275,11 @@ func TestListTicketsRejectsANegativeLimit(t *testing.T) {
 }
 
 func TestListTicketsSearchPages(t *testing.T) {
-	page := func(cursor string, next bool) string {
+	page := func(number int, cursor string, next bool) string {
 		return fmt.Sprintf(`{"data":{"repository":{"isPrivate":true},"search":{"nodes":[%s}],"pageInfo":{"hasNextPage":%v,"endCursor":%q}}}}`,
-			ticketSpec{number: 1, project: "go-tui", status: "Todo"}.json(), next, cursor)
+			ticketSpec{number: number, project: "go-tui", status: "Todo"}.json(), next, cursor)
 	}
-	c, gh := newClient(t, fakegithub.Route{Match: "search(query: $search", Body: page("c1", true), Times: 1}, fakegithub.Route{Match: "search(query: $search", Body: page("", false)})
+	c, gh := newClient(t, fakegithub.Route{Match: "search(query: $search", Body: page(1, "c1", true), Times: 1}, fakegithub.Route{Match: "search(query: $search", Body: page(2, "", false)})
 	tickets, _, err := c.ListTickets(ctx, ListOptions{Search: "crash", State: "all"})
 	if err != nil {
 		t.Fatal(err)
@@ -295,6 +295,89 @@ func TestListTicketsSearchPages(t *testing.T) {
 	failing, _ := newClient(t, fakegithub.Route{Match: "search(query", Status: 500, Body: "{}"})
 	_, _, err = failing.ListTickets(ctx, ListOptions{Search: "crash"})
 	wantError(t, err, "listing tickets")
+}
+
+// searchRoute serves tickets first to last as one page of a search for total matches.
+func searchRoute(first, last, total int, next bool, created string) fakegithub.Route {
+	nodes := make([]string, 0, last-first+1)
+	for number := first; number <= last; number++ {
+		nodes = append(nodes, ticketSpec{number: number, project: "go-tui", created: created}.json()+"}")
+	}
+	body := fmt.Sprintf(`{"data":{"repository":{"isPrivate":true},"search":{"issueCount":%d,"nodes":[%s],"pageInfo":{"hasNextPage":%v,"endCursor":"c%d"}}}}`, total, strings.Join(nodes, ","), next, last)
+	return fakegithub.Route{Match: "search(query: $search", Body: body, Times: 1}
+}
+
+// capRoutes serve the 1,000 results GitHub allows one query, out of total matches.
+func capRoutes(total int, created string) []fakegithub.Route {
+	routes := make([]fakegithub.Route, 0, 10)
+	for page := range 10 {
+		routes = append(routes, searchRoute(page*100+1, (page+1)*100, total, page < 9, created))
+	}
+	return routes
+}
+
+func TestListTicketsContinuesPastTheSearchCap(t *testing.T) {
+	const boundary = "2026-03-04T05:06:07Z"
+	routes := capRoutes(1003, boundary)
+	// GitHub repeats the boundary ticket because created:>= includes its second.
+	routes = append(routes, searchRoute(1000, 1003, 4, false, boundary))
+	c, gh := newClient(t, routes...)
+	tickets, total, err := c.ListTickets(ctx, ListOptions{Search: "crash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 1003 || total != 1003 {
+		t.Fatalf("delivered %d of %d, want every match once", len(tickets), total)
+	}
+	seen := map[int]bool{}
+	for _, ticket := range tickets {
+		if seen[ticket.Number] {
+			t.Fatalf("ticket #%d delivered twice", ticket.Number)
+		}
+		seen[ticket.Number] = true
+	}
+	wantCount(t, gh, 11)
+	next := gh.Requests()[10]
+	want := "repo:o/tracker is:issue sort:created-asc is:open created:>=" + boundary + " crash"
+	if next.Variables["search"] != want || next.Variables["after"] != nil {
+		t.Fatalf("continuation = %v, want %q with no cursor", next.Variables, want)
+	}
+}
+
+func TestListTicketsKeepsTheFirstSearchTotalPastTheCap(t *testing.T) {
+	const boundary = "2026-03-04T05:06:07Z"
+	routes := capRoutes(2000, boundary)
+	routes = append(routes, searchRoute(1000, 1099, 1001, true, boundary))
+	c, gh := newClient(t, routes...)
+	tickets, total, err := c.ListTickets(ctx, ListOptions{Search: "crash", Limit: 1050})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 1050 || total != 2000 {
+		t.Fatalf("delivered %d of %d", len(tickets), total)
+	}
+	wantCount(t, gh, 11)
+}
+
+func TestListTicketsStopsWhenTheCapMatchesEverything(t *testing.T) {
+	c, gh := newClient(t, capRoutes(1000, "2026-03-04T05:06:07Z")...)
+	tickets, _, err := c.ListTickets(ctx, ListOptions{Search: "crash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 1000 {
+		t.Fatalf("tickets = %d", len(tickets))
+	}
+	wantCount(t, gh, 10)
+}
+
+func TestListTicketsRefusesASecondItCannotPagePast(t *testing.T) {
+	const boundary = "2026-03-04T05:06:07Z"
+	routes := capRoutes(3000, boundary)
+	routes = append(routes, capRoutes(2000, boundary)...)
+	c, _ := newClient(t, routes...)
+	_, _, err := c.ListTickets(ctx, ListOptions{Search: "crash"})
+	wantError(t, err, "more than 1000 tickets were created at "+boundary)
 }
 
 func TestLabels(t *testing.T) {
