@@ -54,7 +54,7 @@ type Client struct {
 	cacheDir       string
 	requirePrivate bool
 	meta           *metadata
-	// boardsChecked keeps tickets on unregistered boards to one metadata refresh.
+	// boardsChecked keeps tickets on unregistered boards or projects to one metadata refresh.
 	boardsChecked bool
 	pause         func(context.Context, time.Duration) error
 }

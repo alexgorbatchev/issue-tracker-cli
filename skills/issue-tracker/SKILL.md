@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-03 14:14
+  last_modified: 2026-11-04 10:09
   status: current
 ---
 
@@ -12,7 +12,7 @@ metadata:
 
 Set `AGENT=1` on every invocation, or export it for the session. Read exit status as well as stdout: failures exit nonzero and print `ERR:` to stderr. Successful writes print one `OK:` line. Values `1`, `true`, and `yes` enable agent output, with case and surrounding whitespace ignored.
 
-`issue-tracker` keeps every ticket as a GitHub Issue in one private tracker repository. Code and pull requests stay in their own repositories. Each registered code repository is a project, with one `repo:<name>` label and one board with the columns Todo, Doing, and Done. A ticket belongs to a project through that label or by being on its board, so a ticket created inside a board in the GitHub web UI needs no label. If the two disagree, the label wins. A directory of a registered repository can be registered as a component: a project named `<repo>/<component>` with its own `repo:<repo>/<component>` label on the repository's board. The repository's board has a single-select `Component` field with one option per component. A ticket with a component's label belongs to the component; a ticket on the board with no routing label belongs to the component its `Component` value names, or else to the repository. Project-scoped lists find unlabelled board tickets through GitHub search, so a new or just-closed one can take several seconds to move in them; `issue inspect` is always current. A ticket with neither has no project: it appears in unscoped lists and in `issue list --unrouted`, is never ready, and cannot be claimed until it gets a label or a board.
+`issue-tracker` keeps every ticket as a GitHub Issue in one private tracker repository. Code and pull requests stay in their own repositories. Each registered code repository is a project, with one `repo:<name>` label and one board with the columns Todo, Doing, and Done. A ticket belongs to a project through that label or by being on its board, so a ticket created inside a board in the GitHub web UI needs no label. If the two disagree, the label wins. A ticket's status comes from its project's board only, so a ticket with no project has none; its items on other boards count toward activity and are never changed. A directory of a registered repository can be registered as a component: a project named `<repo>/<component>` with its own `repo:<repo>/<component>` label on the repository's board. The repository's board has a single-select `Component` field with one option per component. A ticket with a component's label belongs to the component; a ticket on the board with no routing label belongs to the component its `Component` value names, or else to the repository. Project-scoped lists find unlabelled board tickets through GitHub search, so a new or just-closed one can take several seconds to move in them; `issue inspect` is always current. A ticket with neither has no project: it appears in unscoped lists and in `issue list --unrouted`, is never ready, and cannot be claimed until it gets a label or a board.
 
 ## Workflow
 

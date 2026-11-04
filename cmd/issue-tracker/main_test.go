@@ -72,11 +72,14 @@ func outsideRepository(t *testing.T) {
 	t.Chdir(t.TempDir())
 }
 
+// boards maps each cached project to its board, which holds its tickets' items.
+var boards = map[string]string{"go-tui": "B1", "lib": "B2"}
+
 func ticketJSON(number int, project, status, updated string) string {
 	blob := `{"id":"I1","number":` + strconv.Itoa(number) + `,"title":"Crash","state":"OPEN","url":"https://t/1","updatedAt":"UPDATED",` +
 		`"labels":{"nodes":[{"name":"repo:PROJECT"}]},"blockedBy":{"nodes":[]},"parent":null,` +
-		`"projectItems":{"nodes":[{"id":"ITEM","updatedAt":"UPDATED","project":{"id":"B1"},"fieldValueByName":{"name":"STATUS"}}]}`
-	return strings.NewReplacer("UPDATED", updated, "PROJECT", project, "STATUS", status).Replace(blob)
+		`"projectItems":{"nodes":[{"id":"ITEM","updatedAt":"UPDATED","project":{"id":"BOARD"},"fieldValueByName":{"name":"STATUS"}}]}`
+	return strings.NewReplacer("UPDATED", updated, "PROJECT", project, "STATUS", status, "BOARD", boards[project]).Replace(blob)
 }
 
 func ticketRoute(project, status string) fakegithub.Route {

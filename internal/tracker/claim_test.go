@@ -33,6 +33,40 @@ func TestClaimTicket(t *testing.T) {
 	}
 }
 
+func TestClaimWritesTheStatusOfTheProjectsItem(t *testing.T) {
+	// GitHub can list another board's item first, and that item rejects the
+	// project's Status field.
+	spec := ticketSpec{number: 12, project: "go-tui", status: "Todo", otherBoard: "PERSONAL"}
+	stale := testMetadata()
+	stale.Projects = stale.Projects[1:]
+	gh := fakegithub.New(ticketRoute(spec), metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`),
+		fakegithub.Route{Match: refsPost, Status: 201, Body: "{}"}, okRoute("updateProjectV2ItemFieldValue"))
+	if _, err := clientWith(t, gh, stale).ClaimTicket(ctx, 12); err != nil {
+		t.Fatal(err)
+	}
+	write := lastDescription(gh)
+	if !strings.Contains(write, `itemId: "ITEM12"`) || strings.Contains(write, "OTHER12") {
+		t.Fatalf("a project registered elsewhere must use its own item after a refresh: %s", write)
+	}
+}
+
+func TestClaimAddsATicketMissingFromItsBoard(t *testing.T) {
+	spec := ticketSpec{number: 12, project: "lib", status: "Todo"}
+	c, gh := newClient(t, ticketRoute(spec), fakegithub.Route{Match: refsPost, Status: 201, Body: "{}"},
+		addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))
+	if _, err := c.ClaimTicket(ctx, 12); err != nil {
+		t.Fatal(err)
+	}
+	wantCount(t, gh, 4)
+	if add := gh.Requests()[2].Body; !strings.Contains(add, `"B2"`) {
+		t.Fatalf("add = %s, want the ticket added to its project's board", add)
+	}
+	write := lastDescription(gh)
+	if !strings.Contains(write, `itemId: "ITEM50"`) || strings.Contains(write, "deleteProjectV2Item") {
+		t.Fatalf("the other board's item must stay and take no write: %s", write)
+	}
+}
+
 func TestClaimLostRace(t *testing.T) {
 	c, gh := newClient(t, ticketRoute(ticketSpec{number: 12, project: "go-tui", status: "Todo"}),
 		fakegithub.Route{Match: refsPost, Status: 422, Body: claimExist})

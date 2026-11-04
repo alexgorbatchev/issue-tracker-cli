@@ -61,6 +61,8 @@ type ticketSpec struct {
 	otherBoard string
 	// component is the ticket's Component value on board B1.
 	component string
+	// board holds the item that status implies. Default: B1.
+	board string
 }
 
 func (s ticketSpec) json() string {
@@ -82,13 +84,17 @@ func (s ticketSpec) json() string {
 	if s.label != "" {
 		labels = fmt.Sprintf(`{"name":%q}`, s.label)
 	}
+	board := s.board
+	if board == "" {
+		board = "B1"
+	}
 	items := ""
 	if s.status != "" {
 		component := "null"
 		if s.component != "" {
 			component = fmt.Sprintf(`{"name":%q}`, s.component)
 		}
-		items = fmt.Sprintf(`{"id":"ITEM%d","updatedAt":%q,"project":{"id":"B1"},"fieldValueByName":{"name":%q},"component":%s}`, s.number, updated, s.status, component)
+		items = fmt.Sprintf(`{"id":"ITEM%d","updatedAt":%q,"project":{"id":%q},"fieldValueByName":{"name":%q},"component":%s}`, s.number, updated, board, s.status, component)
 	}
 	if s.otherBoard != "" {
 		items = strings.TrimSuffix(fmt.Sprintf(`{"id":"OTHER%d","updatedAt":%q,"project":{"id":%q},"fieldValueByName":{"name":"Elsewhere"}},%s`, s.number, updated, s.otherBoard, items), ",")

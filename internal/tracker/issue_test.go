@@ -395,6 +395,18 @@ func TestALabelledTicketUsesItsProjectsItem(t *testing.T) {
 	wantCount(t, gh, 1)
 }
 
+func TestALabelledTicketOnlyOnAnotherBoardHasNoStatus(t *testing.T) {
+	c, gh := newClient(t, ticketRoute(ticketSpec{number: 5, project: "lib", status: "Todo"}))
+	ticket, err := c.readTicket(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket.Project != "lib" || ticket.itemID != "" || ticket.Status != "" {
+		t.Fatalf("ticket = %+v, want no item from another project's board", ticket)
+	}
+	wantCount(t, gh, 1)
+}
+
 func TestActivityComesFromEveryBoard(t *testing.T) {
 	quiet := ticketSpec{number: 5, project: "go-tui", status: "Doing", otherBoard: "PERSONAL", updated: "2026-01-01T00:00:00Z"}
 	route := ticketRoute(quiet)
@@ -429,8 +441,8 @@ func TestAnUnknownBoardRefreshesTheCacheOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tickets) != 2 || tickets[0].Project != "" {
-		t.Fatalf("an unregistered board must not route: %+v", tickets)
+	if len(tickets) != 2 || tickets[0].Project != "" || tickets[0].Status != "" || tickets[0].itemID != "" {
+		t.Fatalf("an unregistered board must not route or give a status: %+v", tickets)
 	}
 	refreshes := 0
 	for _, req := range gh.Requests() {
@@ -741,7 +753,7 @@ func TestInspectTicketsReadsEveryTicketInOneRequest(t *testing.T) {
 	more := `{"data":{"repository":{"issue":{"comments":{"nodes":[{"author":null,"createdAt":"2026-01-02T00:00:00Z","body":"later"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
 	tickets := `{"data":{"repository":{"isPrivate":true,` +
 		`"n8":` + detailJSON(ticketSpec{number: 8, project: "go-tui", status: "Todo"}, `{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"c"}}`) + `,` +
-		`"n7":` + detailJSON(ticketSpec{number: 7, project: "lib", status: "Doing"}, noMoreComments) + `}}}`
+		`"n7":` + detailJSON(ticketSpec{number: 7, project: "lib", status: "Doing", board: "B2"}, noMoreComments) + `}}}`
 	c, gh := newClient(t, fakegithub.Route{Match: "subIssues(first", Body: tickets}, fakegithub.Route{Match: "comments(first: 100, after: $after)", Body: more})
 	details, err := c.InspectTickets(ctx, []int{8, 7, 8})
 	if err != nil {
@@ -1135,6 +1147,24 @@ func TestMoveTicketWithoutProject(t *testing.T) {
 	}
 	if !strings.Contains(lastDescription(gh), `"opt-todo"`) {
 		t.Fatalf("a ticket with no status starts at Todo: %s", lastDescription(gh))
+	}
+}
+
+func TestMoveKeepsAnUnregisteredBoardsItem(t *testing.T) {
+	visibility := visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`)
+	c, gh := newClient(t, ticketRoute(ticketSpec{number: 1, otherBoard: "PERSONAL"}), metadataRoute(), visibility,
+		okRoute("addLabelsToLabelable"), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))
+	// The refresh finds the board unregistered and keeps only go-tui.
+	if err := c.MoveTicket(ctx, 1, "go-tui"); err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range gh.Requests() {
+		if strings.Contains(req.Description, "deleteProjectV2Item") || strings.Contains(req.Description, "OTHER1") {
+			t.Fatalf("a board this tool does not manage must keep its item: %s", req.Description)
+		}
+	}
+	if !strings.Contains(lastDescription(gh), `itemId: "ITEM50"`) {
+		t.Fatalf("the ticket must get its own item on the target board: %s", lastDescription(gh))
 	}
 }
 

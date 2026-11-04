@@ -155,6 +155,7 @@ func (t *Ticket) useBoard(boardID string) bool {
 	return false
 }
 
+
 // Ready reports whether a ticket can be picked up: routed to a project, open,
 // unblocked, with no blocked ancestor and no open sub-issues, and not in progress.
 // An unrouted ticket waits for someone to give it a project. A parent waits for its
@@ -219,9 +220,6 @@ func (n ticketNode) ticket() Ticket {
 			t.Activity = item.UpdatedAt
 		}
 	}
-	if len(t.items) > 0 {
-		t.useBoard(t.items[0].boardID)
-	}
 	return t
 }
 
@@ -272,10 +270,13 @@ func (c *Client) readTicket(ctx context.Context, number int) (Ticket, error) {
 
 // routed gives a ticket with no routing label the project whose board holds it, so a
 // ticket created inside a board needs no label. A label wins when the two disagree.
-// An unknown board can be one registered on another machine, so it refreshes the
-// cached IDs once. A labelled ticket on several boards uses its project's item.
+// An unknown board or project can be one registered on another machine, so it
+// refreshes the cached IDs once. A ticket takes its item and status only from its
+// project's board, because GitHub lists a ticket's boards in no particular order
+// and an item on another board rejects that board's fields. A ticket on no
+// registered board has no item, so writes leave its other boards alone.
 func (c *Client) routed(ctx context.Context, t Ticket) (Ticket, error) {
-	if len(t.items) == 0 || (t.Project != "" && len(t.items) == 1) {
+	if len(t.items) == 0 {
 		return t, nil
 	}
 	meta, err := c.metadata(ctx)
@@ -283,9 +284,15 @@ func (c *Client) routed(ctx context.Context, t Ticket) (Ticket, error) {
 		return t, err
 	}
 	if t.Project != "" {
-		if project, ok := meta.project(t.Project); ok {
-			t.useBoard(project.BoardID)
+		project, ok := meta.project(t.Project)
+		if !ok && !c.boardsChecked {
+			c.boardsChecked = true
+			if meta, err = c.refreshMetadata(ctx); err != nil {
+				return t, err
+			}
+			project, _ = meta.project(t.Project)
 		}
+		t.useBoard(project.BoardID)
 		return t, nil
 	}
 	if t.routeTo(meta) || c.boardsChecked {
