@@ -155,7 +155,6 @@ func (t *Ticket) useBoard(boardID string) bool {
 	return false
 }
 
-
 // Ready reports whether a ticket can be picked up: routed to a project, open,
 // unblocked, with no blocked ancestor and no open sub-issues, and not in progress.
 // An unrouted ticket waits for someone to give it a project. A parent waits for its
