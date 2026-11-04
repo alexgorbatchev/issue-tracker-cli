@@ -16,7 +16,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 - **Run Tests:** `just test` (`go test -race -cover ./...`)
 - **Check Coverage:** `just coverage` (fails under 90% statement or function coverage in any package, as CI does)
 - **Run Static Analysis & Tests:** `just check`
-- **Run Linter / Static Analysis:** `just vet` or `just lint`
+- **Run Linter / Static Analysis:** `just vet` or `just lint` (module hygiene, `gofmt`, `go vet`)
 - **Format Source Code:** `just fmt` (`go fmt ./...`)
 
 ## Setup & Environment
