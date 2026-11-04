@@ -215,14 +215,15 @@ func (s *session) currentProject(cmd *cobra.Command, remedy string) (tracker.Pro
 	if err != nil || ok {
 		return project, err
 	}
-	// Projects are named after their repository, so another owner's repository of
-	// the same name blocks registering this one.
-	taken, ok, err := s.client.ProjectRepo(cmd.Context(), repo.Name)
+	// A repository's project name can already be held by another registration: an
+	// older one that gave another owner's repository its short name, or a component.
+	name := s.client.ProjectName(repo)
+	taken, ok, err := s.client.ProjectRepo(cmd.Context(), name)
 	if err != nil {
 		return tracker.Project{}, err
 	}
 	if ok {
-		return tracker.Project{}, fmt.Errorf("%s is not a registered project, and cannot be: project %s already belongs to %s: %s", repo, repo.Name, taken, remedy)
+		return tracker.Project{}, fmt.Errorf("%s is not a registered project, and cannot be: project %s already belongs to %s: %s", repo, name, taken, remedy)
 	}
 	return tracker.Project{}, fmt.Errorf("%[1]s is not a registered project: register it with issue-tracker project add %[1]s, or %[2]s", repo, remedy)
 }

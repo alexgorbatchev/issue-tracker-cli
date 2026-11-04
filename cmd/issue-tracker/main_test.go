@@ -538,8 +538,15 @@ func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
 	t.Setenv("GH_REPO", "me/go-tui")
 	gh = fakegithub.New(refresh(other), visibility)
 	_, _, err = execute(t, fakeOpener(t, gh), "issue", "list")
-	if err == nil || !strings.Contains(err.Error(), "me/go-tui is not a registered project, and cannot be: project go-tui already belongs to o/go-tui") || gh.Count() != 2 {
-		t.Fatalf("a taken name must not suggest project add: err = %v, requests = %d", err, gh.Count())
+	if err == nil || !strings.Contains(err.Error(), "register it with issue-tracker project add me/go-tui,") || gh.Count() != 2 {
+		t.Fatalf("another owner's repository of the same name can be registered: err = %v, requests = %d", err, gh.Count())
+	}
+
+	t.Setenv("GH_REPO", "go-tui/docs")
+	gh = fakegithub.New(refresh(other+`,{"id":"LD","name":"repo:go-tui/docs","description":"o/go-tui:docs"}`), visibility)
+	_, _, err = execute(t, fakeOpener(t, gh), "issue", "list")
+	if err == nil || !strings.Contains(err.Error(), "go-tui/docs is not a registered project, and cannot be: project go-tui/docs already belongs to o/go-tui") || gh.Count() != 2 {
+		t.Fatalf("a name a component holds must not suggest project add: err = %v, requests = %d", err, gh.Count())
 	}
 
 	t.Setenv("GH_REPO", "ghe.example.com/o/new")

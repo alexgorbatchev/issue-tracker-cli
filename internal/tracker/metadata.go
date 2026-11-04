@@ -49,14 +49,27 @@ func (p Project) Component() bool {
 // Root names the repository project whose board this project uses, which is the
 // project itself unless it is a component.
 func (p Project) Root() string {
-	root, _, _ := strings.Cut(p.Name, "/")
+	if !p.Component() {
+		return p.Name
+	}
+	root, _ := splitComponent(p.Name)
 	return root
+}
+
+// splitComponent separates a component's name into its repository project's name,
+// which can hold an owner and a slash, and the component, which cannot.
+func splitComponent(name string) (string, string) {
+	i := strings.LastIndex(name, "/")
+	if i < 0 {
+		return name, ""
+	}
+	return name[:i], name[i+1:]
 }
 
 // componentName is a component's name within its repository, the name of its
 // option in the board's Component field.
 func (p Project) componentName() string {
-	_, name, _ := strings.Cut(p.Name, "/")
+	_, name := splitComponent(p.Name)
 	return name
 }
 
@@ -66,22 +79,24 @@ func (p Project) registration() string {
 }
 
 // parseRegistration reads a routing label. A repository's label is named after it,
-// and a component's after its repository and the component, as in repo:name/api.
+// as name or owner/name, and a component's after its repository's project and the
+// component, as in repo:name/api or repo:owner/name/api.
 func parseRegistration(name, description string) (Project, bool) {
 	value, dir, component := strings.Cut(description, ":")
 	repo, err := ParseRepo(value)
 	if err != nil {
 		return Project{}, false
 	}
+	names := func(root string) bool { return root == repo.Name || root == repo.String() }
 	project := Project{Name: name, Repo: repo.String(), Path: dir}
 	if !component {
-		if name != repo.Name {
+		if !names(name) {
 			return Project{}, false
 		}
 		return project, true
 	}
-	root, child, ok := strings.Cut(name, "/")
-	if !ok || root != repo.Name || validComponent(child) != nil || validDir(dir) != nil {
+	root, child := splitComponent(name)
+	if !names(root) || validComponent(child) != nil || validDir(dir) != nil {
 		return Project{}, false
 	}
 	return project, true
@@ -106,6 +121,16 @@ type metadata struct {
 	IsPrivate    bool      `json:"is_private"`
 	Projects     []Project `json:"projects"`
 	Boards       []board   `json:"boards"`
+}
+
+// repoProject finds the project registered for a whole repository, whatever its name.
+func (m *metadata) repoProject(repo Repo) (Project, bool) {
+	for _, project := range m.Projects {
+		if !project.Component() && strings.EqualFold(project.Repo, repo.String()) {
+			return project, true
+		}
+	}
+	return Project{}, false
 }
 
 func (m *metadata) project(name string) (Project, bool) {

@@ -137,10 +137,46 @@ func TestAddProjectIsIdempotent(t *testing.T) {
 	wantCount(t, gh, 2)
 }
 
+func TestAddProjectNamesOtherOwnersRepositoriesInFull(t *testing.T) {
+	routes := append([]fakegithub.Route{metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`)}, boardRoutes()...)
+	gh := fakegithub.New(routes...)
+	project, err := clientWith(t, gh, nil).AddProject(ctx, Repo{"someorg", "go-tui"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Name != "someorg/go-tui" || project.Repo != "someorg/go-tui" {
+		t.Fatalf("project = %+v, want another owner's repository named owner/name beside o/go-tui", project)
+	}
+	for _, req := range gh.Requests() {
+		if strings.Contains(req.Description, "createLabel") && req.Variables["name"] != "repo:someorg/go-tui" {
+			t.Fatalf("label = %v", req.Variables)
+		}
+		if strings.Contains(req.Description, "createProjectV2(input") && req.Variables["title"] != "someorg/go-tui" {
+			t.Fatalf("board = %v", req.Variables)
+		}
+	}
+}
+
 func TestAddProjectRefusesNameCollision(t *testing.T) {
-	gh := fakegithub.New(metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
-	_, err := clientWith(t, gh, nil).AddProject(ctx, Repo{"someorg", "go-tui"})
-	wantError(t, err, "already registered for o/go-tui")
+	legacy := strings.Replace(metadataJSON, `"description":"o/go-tui"`, `"description":"someorg/go-tui"`, 1)
+	gh := fakegithub.New(fakegithub.Route{Match: "labels(first: 100, query", Body: legacy}, visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
+	_, err := clientWith(t, gh, nil).AddProject(ctx, Repo{"o", "go-tui"})
+	wantError(t, err, `project "go-tui" is already registered for someorg/go-tui`)
+
+	component := strings.Replace(metadataJSON, `{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},`, `{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},{"id":"LD","name":"repo:go-tui/docs","description":"o/go-tui:docs"},`, 1)
+	gh = fakegithub.New(fakegithub.Route{Match: "labels(first: 100, query", Body: component}, visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
+	_, err = clientWith(t, gh, nil).AddProject(ctx, Repo{"go-tui", "docs"})
+	wantError(t, err, `project "go-tui/docs" is already registered for o/go-tui`)
+}
+
+func TestAddProjectKeepsALegacyName(t *testing.T) {
+	legacy := strings.Replace(metadataJSON, `"description":"o/go-tui"`, `"description":"someorg/go-tui"`, 1)
+	gh := fakegithub.New(fakegithub.Route{Match: "labels(first: 100, query", Body: legacy}, visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
+	project, err := clientWith(t, gh, nil).AddProject(ctx, Repo{"someorg", "go-tui"})
+	if err != nil || project.Name != "go-tui" {
+		t.Fatalf("a repository registered under its short name keeps it: %+v, %v", project, err)
+	}
+	wantCount(t, gh, 2)
 }
 
 func TestAddProjectRestoresRemovedProject(t *testing.T) {
@@ -251,7 +287,7 @@ func TestRemoveProjectRefusals(t *testing.T) {
 	wantError(t, c.RemoveProject(ctx, "go-tui"), "updating label")
 }
 
-func TestCurrentProject(t *testing.T) {
+func TestProjectIn(t *testing.T) {
 	t.Setenv("GH_TOKEN", "tok")
 	t.Setenv("GH_REPO", "")
 	t.Setenv("GH_CONFIG_DIR", t.TempDir())
@@ -334,7 +370,7 @@ func TestProjectRepoReadsTheCache(t *testing.T) {
 	wantError(t, err, "reading tracker metadata")
 }
 
-func TestCurrentProjectFailures(t *testing.T) {
+func TestProjectInFailures(t *testing.T) {
 	t.Setenv("GH_TOKEN", "tok")
 	t.Setenv("GH_REPO", "o/unregistered")
 	c, _ := newClient(t, fakegithub.Route{Match: "labels(first: 100, query", Status: 500, Body: "{}"})

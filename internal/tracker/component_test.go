@@ -81,6 +81,11 @@ func TestParseRegistration(t *testing.T) {
 		{"mono/api", "o/mono:a//b", Project{}, false},
 		{"mono/api", "o/mono:a:b", Project{}, false},
 		{"mono/api", "bad:services/api", Project{}, false},
+		{"x/mono", "x/mono", Project{Name: "x/mono", Repo: "x/mono"}, true},
+		{"x/mono/api", "x/mono:services/api", Project{Name: "x/mono/api", Repo: "x/mono", Path: "services/api"}, true},
+		{"mono/api", "x/mono:services/api", Project{Name: "mono/api", Repo: "x/mono", Path: "services/api"}, true},
+		{"y/mono", "x/mono", Project{}, false},
+		{"y/mono/api", "x/mono:services/api", Project{}, false},
 	}
 	for _, tt := range tests {
 		got, ok := parseRegistration(tt.name, tt.description)
@@ -136,7 +141,7 @@ func TestProjectAtPicksTheDeepestComponent(t *testing.T) {
 	}
 }
 
-func TestCurrentProjectFollowsTheDirectory(t *testing.T) {
+func TestProjectInFollowsTheDirectory(t *testing.T) {
 	t.Setenv("GH_TOKEN", "tok")
 	t.Setenv("GH_REPO", "")
 	t.Setenv("GH_CONFIG_DIR", t.TempDir())
@@ -287,6 +292,28 @@ func componentAdded() fakegithub.Route {
 		`{"id":"LM","name":"repo:mono","description":"o/mono"},{"id":"LD","name":"repo:mono/docs","description":"o/mono:docs"},`, 1)
 	body = strings.Replace(body, `"title":"go-tui"`, `"title":"mono"`, 1)
 	return fakegithub.Route{Match: "labels(first: 100, query", Body: body}
+}
+
+func TestAnotherOwnersComponentIsNamedAfterItsProject(t *testing.T) {
+	body := strings.Replace(metadataJSON, `{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},`, `{"id":"LM","name":"repo:x/mono","description":"x/mono"},`, 1)
+	body = strings.Replace(body, `"title":"go-tui"`, `"title":"x/mono"`, 1)
+	label := fakegithub.Route{Match: "label(name: $label)", Body: `{"data":{"repository":{"label":null}}}`}
+	created := fakegithub.Route{Match: "createLabel(input", Body: `{"data":{"createLabel":{"label":{"id":"LN"}}}}`}
+	gh := fakegithub.New(fakegithub.Route{Match: "labels(first: 100, query", Body: body}, visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`), createdField("api"), label, created)
+	c := clientWith(t, gh, nil)
+	project, err := c.AddComponent(ctx, Repo{"x", "mono"}, "services/api", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Name != "x/mono/api" || project.Root() != "x/mono" || project.componentName() != "api" || project.BoardID != "B1" {
+		t.Fatalf("project = %+v, root = %q", project, project.Root())
+	}
+	if vars := gh.Requests()[len(gh.Requests())-1].Variables; vars["name"] != "repo:x/mono/api" || vars["description"] != "x/mono:services/api" {
+		t.Fatalf("label = %v", vars)
+	}
+	if root := (Project{Name: "x/mono", Repo: "x/mono"}); root.Root() != "x/mono" {
+		t.Fatalf("a repository is its own root: %q", root.Root())
+	}
 }
 
 func TestAComponentRegisteredElsewhereRefreshesTheList(t *testing.T) {

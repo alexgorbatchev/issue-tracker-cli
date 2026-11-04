@@ -154,38 +154,58 @@ func validComponent(name string) error {
 	return nil
 }
 
+// ProjectName is the name a repository is registered under: its short name when the
+// tracker's owner owns it, and owner/name for any other owner, so that repositories
+// of the same name under different owners can both be projects.
+func (c *Client) ProjectName(repo Repo) string {
+	if strings.EqualFold(repo.Owner, c.repo.Owner) {
+		return repo.Name
+	}
+	return repo.String()
+}
+
 // AddProject registers a code repository. Writing the label comes last, so a
-// failed run leaves nothing registered and can simply be repeated.
+// failed run leaves nothing registered and can simply be repeated. A repository
+// already registered under another name, as other owners' repositories once were,
+// keeps that name.
 func (c *Client) AddProject(ctx context.Context, repo Repo) (Project, error) {
 	meta, err := c.refreshMetadata(ctx)
 	if err != nil {
 		return Project{}, err
 	}
-	project, exists := meta.project(repo.Name)
-	if exists && !strings.EqualFold(project.Repo, repo.String()) {
-		return Project{}, fmt.Errorf("project %q is already registered for %s", repo.Name, project.Repo)
+	name := c.ProjectName(repo)
+	if found, ok := meta.repoProject(repo); ok {
+		name = found.Name
+	}
+	project, exists := meta.project(name)
+	if exists && (project.Component() || !strings.EqualFold(project.Repo, repo.String())) {
+		return Project{}, fmt.Errorf("project %q is already registered for %s", name, project.Repo)
 	}
 	if exists && project.BoardID != "" {
 		return project, nil
 	}
+	label := labelPrefix + name
+	if n := utf8.RuneCountInString(label); n > maxLabelName {
+		return Project{}, fmt.Errorf("label %s is %d characters, over GitHub's %d", label, n, maxLabelName)
+	}
 	if err := c.verifyRepo(ctx, repo); err != nil {
 		return Project{}, err
 	}
-	item, ok := meta.board(repo.Name)
+	item, ok := meta.board(name)
 	if !ok {
-		if item, err = c.createBoard(ctx, meta, repo.Name); err != nil {
+		if item, err = c.createBoard(ctx, meta, name); err != nil {
 			return Project{}, err
 		}
 	}
-	labelID, err := c.writeLabel(ctx, meta, labelPrefix+repo.Name, repo.String())
+	labelID, err := c.writeLabel(ctx, meta, label, repo.String())
 	if err != nil {
 		return Project{}, err
 	}
 	if meta, err = c.refreshMetadata(ctx); err != nil {
 		return Project{}, err
 	}
-	project, _ = meta.project(repo.Name)
-	project.LabelID, project.Name, project.Repo = labelID, repo.Name, repo.String()
+	project, _ = meta.project(name)
+	project.LabelID, project.Name, project.Repo = labelID, name, repo.String()
 	project.attach(item)
 	return project, nil
 }
@@ -271,7 +291,7 @@ func (c *Client) AddComponent(ctx context.Context, repo Repo, dir, component str
 	if err := validComponent(component); err != nil {
 		return Project{}, err
 	}
-	project := Project{Name: repo.Name + "/" + component, Repo: repo.String(), Path: dir}
+	project := Project{Name: c.ProjectName(repo) + "/" + component, Repo: repo.String(), Path: dir}
 	if n := utf8.RuneCountInString(project.Label()); n > maxLabelName {
 		return Project{}, fmt.Errorf("label %s is %d characters, over GitHub's %d: pass a shorter --name", project.Label(), n, maxLabelName)
 	}
@@ -282,8 +302,11 @@ func (c *Client) AddComponent(ctx context.Context, repo Repo, dir, component str
 	if err != nil {
 		return Project{}, err
 	}
-	root, ok := meta.project(repo.Name)
-	if !ok || !strings.EqualFold(root.Repo, repo.String()) {
+	root, ok := meta.repoProject(repo)
+	if ok {
+		project.Name = root.Name + "/" + component
+	}
+	if !ok {
 		return Project{}, fmt.Errorf("repository %s is not registered: run project add %s first", repo, repo)
 	}
 	if root.BoardID == "" {

@@ -14,7 +14,7 @@
 
 # How It Works
 
-- Register a repository with `issue-tracker project add`, which creates its board and label.
+- Register a repository with `issue-tracker project add`, which creates its board and label. A repository of the tracker's owner becomes the project `<name>`, and any other owner's becomes `<owner>/<name>`, so repositories from other organizations can be tracked beside your own.
 - Create tickets with `issue-tracker issue create`, from that repository or anywhere else with `--project`.
 - An agent runs `issue-tracker issue claim --next` to take the most urgent ready ticket, by its `priority:P0` to `priority:P3` label, then the oldest.
 - The agent reads the ticket and its attachments, then does the work in the ticket's repository.
