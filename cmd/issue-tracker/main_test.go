@@ -22,7 +22,7 @@ import (
 
 const skillAlert = "ALERT: Agents must read `AGENT=1 issue-tracker skill` before using this tool.\n"
 
-func noSession() (*session, error) {
+func noSession(*cobra.Command) (*session, error) {
 	return nil, errors.New("this command must not need a session")
 }
 
@@ -56,7 +56,7 @@ func fakeOpener(t *testing.T, gh *fakegithub.GitHub) opener {
 	if err := os.WriteFile(filepath.Join(cache, "o-tracker.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return func() (*session, error) {
+	return func(*cobra.Command) (*session, error) {
 		client, err := tracker.New(tracker.Options{Repo: tracker.Repo{Owner: "o", Name: "tracker"}, CacheDir: cache, Transport: gh, Token: "tok"})
 		if err != nil {
 			return nil, err
@@ -789,7 +789,7 @@ func TestArgumentErrors(t *testing.T) {
 }
 
 func TestSessionFailureStopsCommands(t *testing.T) {
-	failed := func() (*session, error) { return nil, errors.New("no session") }
+	failed := func(*cobra.Command) (*session, error) { return nil, errors.New("no session") }
 	for _, args := range [][]string{
 		{"project", "add", "o/r"}, {"project", "inspect", "x"}, {"project", "list"}, {"project", "rm", "x", "--yes"},
 		{"project", "scan"}, {"project", "import", "o/r"},
@@ -866,20 +866,20 @@ func TestOpenTracker(t *testing.T) {
 	t.Setenv(config.RequirePrivateEnv, "")
 	t.Setenv(config.AccountEnv, "")
 	t.Setenv(config.AgentAccountEnv, "")
-	if _, err := openTracker(); err == nil || !strings.Contains(err.Error(), "no tracker repository") {
+	if _, err := openTracker(&cobra.Command{}); err == nil || !strings.Contains(err.Error(), "no tracker repository") {
 		t.Fatalf("err = %v", err)
 	}
 	t.Setenv(config.RepoEnv, "bad")
-	if _, err := openTracker(); err == nil {
+	if _, err := openTracker(&cobra.Command{}); err == nil {
 		t.Fatal("want an invalid repository error")
 	}
 	t.Setenv(config.StaleDaysEnv, "x")
-	if _, err := openTracker(); err == nil {
+	if _, err := openTracker(&cobra.Command{}); err == nil {
 		t.Fatal("want a configuration error")
 	}
 	t.Setenv(config.StaleDaysEnv, "4")
 	t.Setenv(config.RepoEnv, "o/tracker")
-	s, err := openTracker()
+	s, err := openTracker(&cobra.Command{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -898,12 +898,73 @@ func TestOpenTrackerActsAsTheAgentAccountForAgents(t *testing.T) {
 	for agent, want := range map[string]string{"1": "--user bot", "0": "--user me"} {
 		t.Setenv("AGENT", agent)
 		log := stubGH(t, "echo tok")
-		if _, err := openTracker(); err != nil {
+		if _, err := openTracker(&cobra.Command{}); err != nil {
 			t.Fatal(err)
 		}
 		if data, err := os.ReadFile(log); err != nil || !strings.Contains(string(data), want) {
 			t.Fatalf("AGENT=%s: gh calls = %q, %v, want %s", agent, data, err, want)
 		}
+	}
+}
+
+func TestOwnerOnlyCommandsActAsTheAccount(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("GH_PATH", "")
+	t.Setenv("GH_TOKEN", "tok")
+	t.Setenv(config.RepoEnv, "o/tracker")
+	t.Setenv(config.AgentAccountEnv, "bot")
+	root := newRootCommand(noSession)
+	find := func(path ...string) *cobra.Command {
+		t.Helper()
+		cmd, _, err := root.Find(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stderr bytes.Buffer
+		cmd.SetErr(&stderr)
+		t.Cleanup(func() { cmd.SetErr(nil) })
+		return cmd
+	}
+	tests := []struct {
+		name, agent, account string
+		path                 []string
+		wantUser, wantWarn   string
+	}{
+		{"owner command as the account", "1", "me", []string{"project", "add"}, "--user me", "WARN: issue-tracker project add runs as me, not agent account bot, because only the tracker's owner can make its changes\n"},
+		{"owner command as the active account", "1", "", []string{"project", "import"}, "", "WARN: issue-tracker project import runs as the GitHub CLI's active account, not agent account bot, because only the tracker's owner can make its changes\n"},
+		{"other commands keep the agent account", "1", "me", []string{"issue", "list"}, "--user bot", ""},
+		{"people never switch", "0", "me", []string{"project", "rm"}, "--user me", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AGENT", tt.agent)
+			t.Setenv(config.AccountEnv, tt.account)
+			log := stubGH(t, "echo tok")
+			cmd := find(tt.path...)
+			if _, err := openTracker(cmd); err != nil {
+				t.Fatal(err)
+			}
+			calls, _ := os.ReadFile(log)
+			if tt.wantUser == "" && len(calls) > 0 || !strings.Contains(string(calls), tt.wantUser) {
+				t.Fatalf("gh calls = %q, want %q", calls, tt.wantUser)
+			}
+			if got := cmd.ErrOrStderr().(*bytes.Buffer).String(); got != tt.wantWarn {
+				t.Fatalf("stderr = %q, want %q", got, tt.wantWarn)
+			}
+		})
+	}
+}
+
+func TestOwnerOnlyHelpSaysWhichAccountRuns(t *testing.T) {
+	for _, command := range []string{"add", "rm", "scan", "import"} {
+		stdout, _, err := execute(t, noSession, "project", command, "--help")
+		if err != nil || !strings.Contains(stdout, "Runs as the account setting, or the GitHub CLI's active account, even when agent_account applies") {
+			t.Fatalf("project %s help = %q, %v", command, stdout, err)
+		}
+	}
+	if stdout, _, _ := execute(t, noSession, "project", "list", "--help"); strings.Contains(stdout, "agent_account applies") {
+		t.Fatalf("project list acts as the agent account: %q", stdout)
 	}
 }
 

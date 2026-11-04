@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
@@ -53,10 +54,45 @@ type session struct {
 	cacheRoot string
 }
 
-// opener builds a session on first use, so help and version need no configuration.
-type opener func() (*session, error)
+// opener builds a session for a command on first use, so help and version need no
+// configuration.
+type opener func(*cobra.Command) (*session, error)
 
-func openTracker() (*session, error) {
+// ownerAnnotation marks a command that changes what only the tracker's owner can:
+// boards under the owner, labels, and issues moved between the owner's
+// repositories. An agent account lacks those rights, so such a command acts as the
+// account setting instead.
+const ownerAnnotation = "owner-only"
+
+// ownerOnly marks cmd as acting as the account setting even in agent mode, and says
+// so in its help.
+func ownerOnly(cmd *cobra.Command) *cobra.Command {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[ownerAnnotation] = "true"
+	note := "Runs as the account setting, or the GitHub CLI's active account, even when agent_account applies, because only the tracker's owner can make these changes."
+	cmd.Long = strings.TrimSpace(cmd.Long + " " + note)
+	return cmd
+}
+
+// login picks the account for cmd, and warns when an owner-only command sets aside
+// the agent account.
+func login(cmd *cobra.Command, cfg config.Config) (string, error) {
+	agent := cobrahelptree.IsAgentMode()
+	chosen := cfg.Login(agent)
+	owner := cfg.Login(false)
+	if !agent || cmd.Annotations[ownerAnnotation] == "" || chosen == owner {
+		return chosen, nil
+	}
+	as := owner
+	if as == "" {
+		as = "the GitHub CLI's active account"
+	}
+	return owner, warn(cmd.ErrOrStderr(), "%s runs as %s, not agent account %s, because only the tracker's owner can make its changes", cmd.CommandPath(), as, chosen)
+}
+
+func openTracker(cmd *cobra.Command) (*session, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
@@ -72,9 +108,11 @@ func openTracker() (*session, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := tracker.New(tracker.Options{
-		Repo: repo, CacheDir: cacheRoot, RequirePrivate: cfg.RequirePrivate, Account: cfg.Login(cobrahelptree.IsAgentMode()),
-	})
+	account, err := login(cmd, cfg)
+	if err != nil {
+		return nil, err
+	}
+	client, err := tracker.New(tracker.Options{Repo: repo, CacheDir: cacheRoot, RequirePrivate: cfg.RequirePrivate, Account: account})
 	if err != nil {
 		return nil, err
 	}

@@ -10,7 +10,8 @@ import (
 
 func newProjectCommand(open opener) *cobra.Command {
 	cmd := &cobra.Command{Use: "project", Short: "Manage the repositories registered with the tracker"}
-	cmd.AddCommand(newProjectAddCommand(open), newProjectInspectCommand(open), newProjectListCommand(open), newProjectRmCommand(open), newProjectScanCommand(open), newProjectImportCommand(open))
+	cmd.AddCommand(ownerOnly(newProjectAddCommand(open)), newProjectInspectCommand(open), newProjectListCommand(open),
+		ownerOnly(newProjectRmCommand(open)), ownerOnly(newProjectScanCommand(open)), ownerOnly(newProjectImportCommand(open)))
 	return cmd
 }
 
@@ -25,7 +26,7 @@ func newProjectAddCommand(open opener) *cobra.Command {
 			if name != "" && dir == "" {
 				return errors.New("--name names a component: pass --path too")
 			}
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -70,7 +71,7 @@ func newProjectInspectCommand(open opener) *cobra.Command {
 		Short: "Show a project's repository, board, and ticket counts",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -97,7 +98,7 @@ func newProjectListCommand(open opener) *cobra.Command {
 		Short: "List registered projects",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -120,7 +121,7 @@ func newProjectRmCommand(open opener) *cobra.Command {
 			if !confirmed {
 				return errors.New("this unregisters the project and deletes a repository's board: pass --yes to confirm")
 			}
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -141,7 +142,7 @@ func newProjectScanCommand(open opener) *cobra.Command {
 		Short: "Count open issues across your repositories by who wrote them",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -168,7 +169,7 @@ func newProjectImportCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}

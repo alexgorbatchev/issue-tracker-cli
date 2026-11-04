@@ -54,7 +54,7 @@ func withTicket(open opener, action ticketAction) func(*cobra.Command, []string)
 		if err != nil {
 			return err
 		}
-		s, err := open()
+		s, err := open(cmd)
 		if err != nil {
 			return err
 		}
@@ -102,7 +102,7 @@ func newIssueClaimCommand(open opener) *cobra.Command {
 			if next == (len(args) == 1) {
 				return errors.New("pass a ticket number or --next")
 			}
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -221,7 +221,7 @@ func newIssueCreateCommand(open opener) *cobra.Command {
 		Short: "Create a ticket in one project",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -298,7 +298,7 @@ func newIssueInspectCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -319,7 +319,7 @@ func newIssueListCommand(open opener) *cobra.Command {
 		Short: "List tickets, oldest first; ready tickets most urgent first",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -409,7 +409,7 @@ func newAttachmentCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -449,7 +449,7 @@ func newAttachmentCommand(open opener) *cobra.Command {
 		Short: "List attachment files their ticket no longer links to, and delete them with --yes",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
@@ -543,7 +543,7 @@ func newSubCloseEligibleCommand(open opener) *cobra.Command {
 		Short: "Close parents whose sub-issues are all closed",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := open()
+			s, err := open(cmd)
 			if err != nil {
 				return err
 			}
