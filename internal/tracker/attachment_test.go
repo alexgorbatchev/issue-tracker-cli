@@ -58,6 +58,19 @@ func TestAddAttachmentsAppendsMediaThroughGH(t *testing.T) {
 	}
 }
 
+func TestGHUploadsAsTheClientsAccount(t *testing.T) {
+	t.Setenv("GH_TOKEN", "active-tok")
+	token := filepath.Join(t.TempDir(), "token")
+	fakeGH(t, `printf %s "$GH_TOKEN" > `+token)
+	c, _ := newClient(t)
+	if err := c.AddAttachments(ctx, 12, nil, tempFiles(t, "a.png")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, token); got != "tok" {
+		t.Fatalf("gh ran with token %q, want the client's", got)
+	}
+}
+
 func TestAddAttachmentsReportsGHFailure(t *testing.T) {
 	fakeGH(t, "echo upload refused >&2; exit 1")
 	c, _ := newClient(t)

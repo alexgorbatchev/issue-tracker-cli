@@ -808,6 +808,8 @@ func TestOpenTracker(t *testing.T) {
 	t.Setenv(config.RepoEnv, "")
 	t.Setenv(config.StaleDaysEnv, "")
 	t.Setenv(config.RequirePrivateEnv, "")
+	t.Setenv(config.AccountEnv, "")
+	t.Setenv(config.AgentAccountEnv, "")
 	if _, err := openTracker(); err == nil || !strings.Contains(err.Error(), "no tracker repository") {
 		t.Fatalf("err = %v", err)
 	}
@@ -827,6 +829,25 @@ func TestOpenTracker(t *testing.T) {
 	}
 	if s.cfg.StaleDays != 4 || s.client.Repo().Name != "tracker" {
 		t.Fatalf("session = %+v", s)
+	}
+}
+
+func TestOpenTrackerActsAsTheAgentAccountForAgents(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("GH_PATH", "")
+	t.Setenv(config.RepoEnv, "o/tracker")
+	t.Setenv(config.AccountEnv, "me")
+	t.Setenv(config.AgentAccountEnv, "bot")
+	for agent, want := range map[string]string{"1": "--user bot", "0": "--user me"} {
+		t.Setenv("AGENT", agent)
+		log := stubGH(t, "echo tok")
+		if _, err := openTracker(); err != nil {
+			t.Fatal(err)
+		}
+		if data, err := os.ReadFile(log); err != nil || !strings.Contains(string(data), want) {
+			t.Fatalf("AGENT=%s: gh calls = %q, %v, want %s", agent, data, err, want)
+		}
 	}
 }
 

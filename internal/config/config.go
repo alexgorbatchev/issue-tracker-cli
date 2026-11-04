@@ -23,6 +23,10 @@ const (
 	StaleDaysEnv = "ISSUE_TRACKER_STALE_DAYS"
 	// RequirePrivateEnv makes commands refuse a tracker that is not private.
 	RequirePrivateEnv = "ISSUE_TRACKER_REQUIRE_PRIVATE"
+	// AccountEnv names the gh login to use instead of the active one.
+	AccountEnv = "ISSUE_TRACKER_ACCOUNT"
+	// AgentAccountEnv names the gh login to use in agent mode.
+	AgentAccountEnv = "ISSUE_TRACKER_AGENT_ACCOUNT"
 )
 
 // Config holds resolved settings.
@@ -30,6 +34,17 @@ type Config struct {
 	Repo           string `toml:"repo"`
 	StaleDays      int    `toml:"stale_days"`
 	RequirePrivate bool   `toml:"require_private"`
+	Account        string `toml:"account"`
+	AgentAccount   string `toml:"agent_account"`
+}
+
+// Login picks the gh login to use, so that people can write as themselves while
+// agents write as another account. Empty means gh's own choice.
+func (c Config) Login(agent bool) string {
+	if agent && c.AgentAccount != "" {
+		return c.AgentAccount
+	}
+	return c.Account
 }
 
 // Load reads the config file when it exists, then applies the environment.
@@ -68,6 +83,12 @@ func readFile(path string, cfg *Config) error {
 func applyEnv(cfg *Config) error {
 	if value := os.Getenv(RepoEnv); value != "" {
 		cfg.Repo = value
+	}
+	if value := os.Getenv(AccountEnv); value != "" {
+		cfg.Account = value
+	}
+	if value := os.Getenv(AgentAccountEnv); value != "" {
+		cfg.AgentAccount = value
 	}
 	if value := os.Getenv(StaleDaysEnv); value != "" {
 		days, err := strconv.Atoi(value)

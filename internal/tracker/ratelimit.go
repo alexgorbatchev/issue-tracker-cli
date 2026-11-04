@@ -29,9 +29,15 @@ const (
 // names the fix; Detail holds GitHub's own explanation for agents.
 type BoardAccessError struct {
 	Detail string
+	// Account is the configured login, which gh auth refresh reaches only while it
+	// is gh's active account.
+	Account string
 }
 
 func (e *BoardAccessError) Error() string {
+	if e.Account != "" {
+		return fmt.Sprintf("GitHub account %[1]s has no access to project boards: run gh auth switch --user %[1]s and issue-tracker auth refresh, then switch back", e.Account)
+	}
 	return "your GitHub login has no access to project boards: run issue-tracker auth refresh"
 }
 

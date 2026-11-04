@@ -72,7 +72,9 @@ func openTracker() (*session, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := tracker.New(tracker.Options{Repo: repo, CacheDir: cacheRoot, RequirePrivate: cfg.RequirePrivate})
+	client, err := tracker.New(tracker.Options{
+		Repo: repo, CacheDir: cacheRoot, RequirePrivate: cfg.RequirePrivate, Account: cfg.Login(cobrahelptree.IsAgentMode()),
+	})
 	if err != nil {
 		return nil, err
 	}

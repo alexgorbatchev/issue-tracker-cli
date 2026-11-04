@@ -38,6 +38,43 @@ func TestNewUsesEnvironmentToken(t *testing.T) {
 	}
 }
 
+func TestNewUsesTheConfiguredAccount(t *testing.T) {
+	t.Setenv("GH_TOKEN", "env-tok")
+	t.Setenv("GH_PATH", "")
+	log := fakeGH(t, "echo bot-tok")
+	c, err := New(Options{Repo: Repo{"o", "r"}, Account: "bot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.token != "bot-tok" {
+		t.Fatalf("token = %q, want the account's token over GH_TOKEN", c.token)
+	}
+	if args := readFile(t, log); args != "auth token --hostname github.com --user bot\n" {
+		t.Fatalf("gh args = %q", args)
+	}
+
+	fakeGH(t, "echo 'no oauth token found for github.com account bot' >&2; exit 1")
+	_, err = New(Options{Repo: Repo{"o", "r"}, Account: "bot"})
+	wantError(t, err, "reading the token of GitHub account bot")
+	wantError(t, err, "no oauth token found")
+
+	t.Setenv("PATH", t.TempDir())
+	_, err = New(Options{Repo: Repo{"o", "r"}, Account: "bot"})
+	wantError(t, err, "using GitHub account bot needs the gh binary")
+}
+
+func TestBoardAccessNamesTheConfiguredAccount(t *testing.T) {
+	scopes := fakegithub.Route{Match: "isPrivate issue(number: $number)", Body: `{"errors":[{"type":"INSUFFICIENT_SCOPES","message":"needs read:project"}]}`}
+	c := clientWith(t, fakegithub.New(scopes), testMetadata())
+	c.account = "bot"
+	_, err := c.readTicket(ctx, 1)
+	wantError(t, err, "GitHub account bot has no access to project boards: run gh auth switch --user bot and issue-tracker auth refresh, then switch back")
+
+	c = clientWith(t, fakegithub.New(scopes), testMetadata())
+	_, err = c.readTicket(ctx, 1)
+	wantError(t, err, "your GitHub login has no access to project boards: run issue-tracker auth refresh")
+}
+
 func emptyMetadata() fakegithub.Route {
 	return fakegithub.Route{Match: "labels(first: 100, query", Body: strings.ReplaceAll(strings.ReplaceAll(metadataJSON, `{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},`, ""), `"title":"go-tui"`, `"title":"unrelated"`)}
 }

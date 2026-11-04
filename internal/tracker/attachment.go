@@ -51,9 +51,9 @@ func (c *Client) AddAttachments(ctx context.Context, number int, body *string, f
 	}
 	args := []string{"issue", "edit", strconv.Itoa(number), "--repo", c.repo.String()}
 	if !replace {
-		return runGH(ctx, nil, append(args, attachArgs(media)...))
+		return c.runGH(ctx, nil, append(args, attachArgs(media)...))
 	}
-	return runGH(ctx, strings.NewReader(text), append(append(args, "--body-file", "-"), attachArgs(media)...))
+	return c.runGH(ctx, strings.NewReader(text), append(append(args, "--body-file", "-"), attachArgs(media)...))
 }
 
 // AddComment adds a comment to a ticket, with files attached where its text
@@ -74,7 +74,7 @@ func (c *Client) AddComment(ctx context.Context, number int, body string, files 
 	}
 	if len(media) > 0 {
 		args := []string{"issue", "comment", strconv.Itoa(number), "--repo", c.repo.String(), "--body-file", "-"}
-		return runGH(ctx, strings.NewReader(text), append(args, attachArgs(media)...))
+		return c.runGH(ctx, strings.NewReader(text), append(args, attachArgs(media)...))
 	}
 	ids, err := c.issueIDs(ctx, []int{number})
 	if err != nil {
@@ -93,13 +93,15 @@ func attachArgs(files []string) []string {
 }
 
 // runGH runs gh with stdin, which carries a body so that gh can place the images
-// the body references.
-func runGH(ctx context.Context, stdin io.Reader, args []string) error {
+// the body references. It passes the client's token so that gh writes as the same
+// account, which can differ from gh's active one.
+func (c *Client) runGH(ctx context.Context, stdin io.Reader, args []string) error {
 	path, err := gh.Path()
 	if err != nil {
 		return fmt.Errorf("uploading attachments needs the gh binary: %w", err)
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Env = append(os.Environ(), "GH_TOKEN="+c.token)
 	cmd.Stdin = stdin
 	var stderr strings.Builder
 	cmd.Stderr = &stderr

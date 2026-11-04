@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/cli/go-gh/v2"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/cli/go-gh/v2/pkg/auth"
 )
@@ -42,6 +44,9 @@ type Options struct {
 	RequirePrivate bool
 	Transport      http.RoundTripper
 	Token          string
+	// Account is a login in gh's keyring to use instead of the active one, or
+	// GH_TOKEN. Empty keeps gh's own choice.
+	Account string
 }
 
 // Client talks to the tracker repository.
@@ -51,6 +56,7 @@ type Client struct {
 	rest           *api.RESTClient
 	http           *http.Client
 	token          string
+	account        string
 	cacheDir       string
 	requirePrivate bool
 	meta           *metadata
@@ -63,6 +69,12 @@ type Client struct {
 // cache can replay GraphQL mutations and stored 429 responses.
 func New(opts Options) (*Client, error) {
 	token := opts.Token
+	if token == "" && opts.Account != "" {
+		var err error
+		if token, err = accountToken(opts.Account); err != nil {
+			return nil, err
+		}
+	}
 	if token == "" {
 		token, _ = auth.TokenForHost(defaultHost)
 	}
@@ -89,10 +101,29 @@ func New(opts Options) (*Client, error) {
 		rest:           rest,
 		http:           &http.Client{Transport: transport},
 		token:          token,
+		account:        opts.Account,
 		cacheDir:       opts.CacheDir,
 		requirePrivate: opts.RequirePrivate,
 		pause:          sleepContext,
 	}, nil
+}
+
+// accountToken reads a login's token from gh. go-gh reads only the active login,
+// while gh auth token --user names one and ignores GH_TOKEN.
+func accountToken(account string) (string, error) {
+	path, err := gh.Path()
+	if err != nil {
+		return "", fmt.Errorf("using GitHub account %s needs the gh binary: %w", account, err)
+	}
+	cmd := exec.Command(path, "auth", "token", "--hostname", defaultHost, "--user", account)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("reading the token of GitHub account %s: %w: %s: log in with gh auth login --hostname %s",
+			account, err, strings.TrimSpace(stderr.String()), defaultHost)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // Repo returns the tracker repository.
@@ -110,7 +141,11 @@ func (c *Client) checkPrivate(isPrivate bool) error {
 
 func (c *Client) do(ctx context.Context, query string, variables map[string]any, response any) error {
 	if err := c.gql.DoWithContext(ctx, query, variables, response); err != nil {
-		return describeError(err)
+		err = describeError(err)
+		if access, ok := errors.AsType[*BoardAccessError](err); ok {
+			access.Account = c.account
+		}
+		return err
 	}
 	return nil
 }
