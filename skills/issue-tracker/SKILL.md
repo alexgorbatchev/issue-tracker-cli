@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-04 12:25
+  last_modified: 2026-11-04 12:33
   status: current
 ---
 
@@ -297,7 +297,7 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
 - `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or pass --all-projects for every project`: `issue list` or `issue sub close-eligible` ran in a repository that is not a project. Pass `--project` or `--all-projects`, or ask the user whether to register it.
 - `<owner/repo> is not a registered project, and cannot be: project <name> already belongs to <other/repo>: pass --project <name>, or --all-projects for every project`: projects are named after their repository, and another owner's repository of that name holds it. Pass `--project` or `--all-projects`.
-- `not inside a registered repository: <reason>: pass --project <name>, or --all-projects for every project`: `issue list` or `issue sub close-eligible` ran where no github.com repository was found. The reason is `no git checkout here`, `this checkout has no git remote`, `no git remote points to a GitHub host the GitHub CLI is logged in to`, `<host>/<owner>/<repo> is on <host>, and projects are github.com repositories`, or why `GH_REPO` could not be read. Pass one of those flags.
+- `not inside a registered repository: <reason>: pass --project <name>, or --all-projects for every project`: `issue list` or `issue sub close-eligible` ran where no github.com repository was found. The reason is `no git checkout here`, `this checkout has no git remote`, `no git remote points to a GitHub host the GitHub CLI is logged in to`, `<host>/<owner>/<repo> is on <host>, and projects are github.com repositories`, or, for any other failure, git's or the GitHub CLI's own reason on one line, such as a missing git or a checkout git refuses under its `safe.directory` rule. Pass one of those flags, or ask the user to fix git first when the reason is about git itself.
 - `ticket #<number> has no project: give it a repo: label on GitHub or run issue move <number> <project>`: the ticket is unrouted, and no claim was created. Ask the user which project owns it, or pick another ticket.
 - `GitHub rate limit reached: retry after <time>`: wait until that time.
 - `your GitHub login has no access to project boards: run issue-tracker auth refresh`: the token lacks the `project` scope. Ask the user to run `issue-tracker auth refresh` in a terminal.
