@@ -138,7 +138,7 @@ func TestListReportsTruncation(t *testing.T) {
 			t.Setenv("AGENT", "1")
 			outsideRepository(t)
 			gh := fakegithub.New(tt.pages...)
-			stdout, stderr, err := execute(t, fakeOpener(t, gh), append([]string{"issue", "list"}, tt.args...)...)
+			stdout, stderr, err := execute(t, fakeOpener(t, gh), append([]string{"issue", "list", "--all-projects"}, tt.args...)...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -317,7 +317,7 @@ func TestIssueListOutput(t *testing.T) {
 	t.Run("agent uses tabs", func(t *testing.T) {
 		t.Setenv("AGENT", "1")
 		outsideRepository(t)
-		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(old))), "issue", "list")
+		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(old))), "issue", "list", "--all-projects")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -328,7 +328,7 @@ func TestIssueListOutput(t *testing.T) {
 	t.Run("human uses a table", func(t *testing.T) {
 		t.Setenv("AGENT", "0")
 		outsideRepository(t)
-		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(old))), "issue", "list", "--stale", "--stale-days", "2")
+		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(old))), "issue", "list", "--all-projects", "--stale", "--stale-days", "2")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -362,7 +362,7 @@ func TestIssueListOutput(t *testing.T) {
 		t.Setenv("AGENT", "1")
 		outsideRepository(t)
 		urgent := strings.Replace(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z"), `{"name":"repo:go-tui"}`, `{"name":"repo:go-tui"},{"name":"priority:P2"},{"name":"bug"},{"name":"Priority:p1"}`, 1)
-		stdout, stderr, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(urgent))), "issue", "list", "--priority", "p1")
+		stdout, stderr, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(urgent))), "issue", "list", "--all-projects", "--priority", "p1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -372,7 +372,7 @@ func TestIssueListOutput(t *testing.T) {
 		if want := "WARN: #1 has priorities P1, P2: ranked as P1\n"; stderr != want {
 			t.Fatalf("stderr = %q, want %q", stderr, want)
 		}
-		_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "list", "--priority", "high")
+		_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "list", "--all-projects", "--priority", "high")
 		if err == nil || !strings.Contains(err.Error(), `invalid priority "high"`) {
 			t.Fatalf("err = %v", err)
 		}
@@ -391,7 +391,7 @@ func TestIssueListOutput(t *testing.T) {
 		}
 
 		t.Setenv("COLUMNS", "200")
-		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(long))), "issue", "list")
+		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(long))), "issue", "list", "--all-projects")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -401,7 +401,7 @@ func TestIssueListOutput(t *testing.T) {
 		}
 
 		t.Setenv("COLUMNS", "60")
-		stdout, _, err = execute(t, fakeOpener(t, fakegithub.New(listRoute(long))), "issue", "list")
+		stdout, _, err = execute(t, fakeOpener(t, fakegithub.New(listRoute(long))), "issue", "list", "--all-projects")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -417,7 +417,7 @@ func TestIssueListOutput(t *testing.T) {
 	t.Run("human reports an empty list", func(t *testing.T) {
 		t.Setenv("AGENT", "0")
 		outsideRepository(t)
-		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute())), "issue", "list")
+		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute())), "issue", "list", "--all-projects")
 		if err != nil || !strings.Contains(stdout, "No tickets found.") {
 			t.Fatalf("stdout = %q, err = %v", stdout, err)
 		}
@@ -430,6 +430,40 @@ func boardOnly() fakegithub.Route {
 		Match: "search(query: $search",
 		Body:  `{"data":{"repository":{"isPrivate":true},"search":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`,
 		Times: 1,
+	}
+}
+
+func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	t.Setenv("GH_TOKEN", "tok")
+	refresh := func(label string) fakegithub.Route {
+		return fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},
+"labels":{"nodes":[` + label + `],"pageInfo":{"hasNextPage":false,"endCursor":""}},
+"projectsV2":{"nodes":[{"id":"BN","title":"new","url":"https://b/9","field":{"id":"F","options":[{"id":"t","name":"Todo"}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
+	}
+	visibility := fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":true}}}`}
+
+	t.Setenv("GH_REPO", "o/unknown")
+	gh := fakegithub.New(refresh(""), visibility)
+	_, _, err := execute(t, fakeOpener(t, gh), "issue", "list")
+	if err == nil || !strings.Contains(err.Error(), "o/unknown is not a registered project: register it with issue-tracker project add o/unknown, or pass --all-projects") {
+		t.Fatalf("err = %v", err)
+	}
+	if gh.Count() != 1 {
+		t.Fatalf("made %d requests, want only the refresh that checks for a registration elsewhere", gh.Count())
+	}
+
+	t.Setenv("GH_REPO", "o/new")
+	gh = fakegithub.New(refresh(`{"id":"LN","name":"repo:new","description":"o/new"}`), visibility, boardOnly(), listRoute(ticketJSON(1, "new", "Todo", "2026-10-01T00:00:00Z")))
+	stdout, _, err := execute(t, fakeOpener(t, gh), "issue", "list")
+	if err != nil || !strings.HasPrefix(stdout, "1\t") {
+		t.Fatalf("a repository registered on another machine lists after a refresh: stdout = %q, err = %v", stdout, err)
+	}
+
+	outsideRepository(t)
+	_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "list")
+	if err == nil || !strings.Contains(err.Error(), "not inside a registered repository: pass --project <name>, or --all-projects") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -477,7 +511,7 @@ func TestLabelAndSearchFlags(t *testing.T) {
 	if got := gh.Requests()[1].Variables["search"]; got != `repo:o/tracker is:issue sort:created-asc is:open label:"repo:go-tui" crash resize` {
 		t.Fatalf("search = %v", got)
 	}
-	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")))), "issue", "list", "--label", "bug")
+	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")))), "issue", "list", "--all-projects", "--label", "bug")
 	if err != nil || stdout != "" {
 		t.Fatalf("stdout = %q, err = %v", stdout, err)
 	}

@@ -113,7 +113,7 @@ Set `agent_account` to have agents write as a separate GitHub account while you 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--project <name>` | | Current directory's project | Limit to a project |
-| `--all-projects` | | `false` | List every project from inside a registered repository |
+| `--all-projects` | | `false` | List every project; required outside a registered repository |
 | `--unrouted` | | `false` | Only tickets with no project, for triage. Excludes `--project`, `--all-projects`, and `--ready` |
 | `--state <state>` | | `open` | `open`, `closed`, or `all` |
 | `--status <status>` | | | `Todo`, `Doing`, or `Done` |

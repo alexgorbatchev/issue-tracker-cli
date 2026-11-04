@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-04 10:44
+  last_modified: 2026-11-04 10:53
   status: current
 ---
 
@@ -50,7 +50,7 @@ Authentication reuses the GitHub CLI login: `GH_TOKEN` when it is set, otherwise
 
 ## Project resolution
 
-Inside a registered repository, the current repository's git remote selects the project, so `--project` is optional. Inside a registered component's directory, or below it, the component is selected; when components are nested, the deepest one wins. Elsewhere in the repository, the repository's project is selected, and its lists, claims, and counts include its components' tickets. When `GH_REPO` is set, it names the repository and the directory is ignored. An explicit `--project` always wins. Outside a registered repository, `issue list` covers all projects, and `issue create` and `project inspect` need an explicit project.
+Inside a registered repository, the current repository's git remote selects the project, so `--project` is optional. Inside a registered component's directory, or below it, the component is selected; when components are nested, the deepest one wins. Elsewhere in the repository, the repository's project is selected, and its lists, claims, and counts include its components' tickets. When `GH_REPO` is set, it names the repository and the directory is ignored. An explicit `--project` always wins. Outside a registered repository, `issue list` needs `--project` or `--all-projects`: in a GitHub repository that is not registered, it fails with `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or pass --all-projects to list every project`, and outside any GitHub repository with `not inside a registered repository: pass --project <name>, or --all-projects to list every project`. `issue claim --next` and `issue sub close-eligible` cover all projects there, and `issue create` and `project inspect` need an explicit project.
 
 ## Commands
 
@@ -104,7 +104,7 @@ GitHub rewrites `#N` references in a moved issue's body and comments to `owner/r
 Prints one tab-separated line per ticket, oldest first: number, status, priority, project, comma-separated labels, title. With `--ready`, tickets come most urgent first and oldest first within a priority. A stale ticket's status is followed by ` (stale)`. The priority column holds `P0` to `P3`, or nothing, and priority labels are left out of the labels column. See Priority.
 
 - `--project` string: limit to a project. Defaults to the current repository's project.
-- `--all-projects` bool: list every project from inside a registered repository.
+- `--all-projects` bool: list every project. Required outside a registered repository unless `--project` or `--unrouted` is given.
 - `--unrouted` bool: only tickets with no project, for triage. Reads one search page per 100 tickets with no routing label, whatever the limit. Cannot be combined with `--project`, `--all-projects`, or `--ready`.
 - `--state` string: `open`, `closed`, or `all`. Default: open.
 - `--status` string: `Todo`, `Doing`, or `Done`.
@@ -295,6 +295,8 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `accepts between 1 and 50 arg(s)`: `issue inspect` takes at most 50 tickets. Split the numbers across calls.
 - `body is <n> characters, over GitHub's 65536: attach long output as a file with --attach`: GitHub caps a ticket or comment body at 65,536 characters. Nothing was sent. Shorten the text, or move long output such as logs into a file and attach it.
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
+- `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or pass --all-projects to list every project`: `issue list` ran in a repository that is not a project. Pass `--project` or `--all-projects`, or ask the user whether to register it.
+- `not inside a registered repository: pass --project <name>, or --all-projects to list every project`: `issue list` ran outside a GitHub repository. Pass one of those flags.
 - `ticket #<number> has no project: give it a repo: label on GitHub or run issue move <number> <project>`: the ticket is unrouted, and no claim was created. Ask the user which project owns it, or pick another ticket.
 - `GitHub rate limit reached: retry after <time>`: wait until that time.
 - `your GitHub login has no access to project boards: run issue-tracker auth refresh`: the token lacks the `project` scope. Ask the user to run `issue-tracker auth refresh` in a terminal.

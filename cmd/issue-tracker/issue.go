@@ -170,6 +170,24 @@ func (s *session) listScope(cmd *cobra.Command, name string, all bool) (string, 
 	return s.scope(cmd, name, all)
 }
 
+// listProject is the project issue list shows. Every project takes --all-projects,
+// so that a list never spans projects unasked. A repository missing from the cache
+// may have been registered on another machine, so the cache is refreshed before
+// telling the reader to register it.
+func (s *session) listProject(cmd *cobra.Command, name string, all bool) (string, error) {
+	if all || name != "" {
+		return s.listScope(cmd, name, all)
+	}
+	project, ok, err := s.client.CurrentProject(cmd.Context(), true)
+	if err != nil || ok {
+		return project.Name, err
+	}
+	if repo, ok := tracker.CurrentRepo(); ok {
+		return "", fmt.Errorf("%[1]s is not a registered project: register it with issue-tracker project add %[1]s, or pass --all-projects to list every project", repo)
+	}
+	return "", errors.New("not inside a registered repository: pass --project <name>, or --all-projects to list every project")
+}
+
 func newIssueCloseCommand(open opener) *cobra.Command {
 	var opts tracker.CloseOptions
 	cmd := &cobra.Command{
@@ -300,7 +318,7 @@ func newIssueListCommand(open opener) *cobra.Command {
 				return err
 			}
 			if !opts.Unrouted {
-				if opts.Project, err = s.listScope(cmd, opts.Project, allProjects); err != nil {
+				if opts.Project, err = s.listProject(cmd, opts.Project, allProjects); err != nil {
 					return err
 				}
 			}
@@ -322,7 +340,7 @@ func newIssueListCommand(open opener) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Limit to a project; defaults to the current repository's project")
-	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "List every project from inside a registered repository")
+	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "List every project; needed outside a registered repository")
 	cmd.Flags().StringVar(&opts.State, "state", "open", "Ticket state: open, closed, or all")
 	cmd.Flags().StringVar(&opts.Status, "status", "", "Board status: Todo, Doing, or Done")
 	cmd.Flags().StringVar(&opts.Label, "label", "", "Only tickets with this label")
