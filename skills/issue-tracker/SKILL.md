@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-04 14:06
+  last_modified: 2026-11-04 14:12
   status: current
 ---
 
@@ -50,7 +50,7 @@ Authentication reuses the GitHub CLI login: `GH_TOKEN` when it is set, otherwise
 
 ## Project resolution
 
-Inside a registered repository, the current repository's git remote selects the project, so `--project` is optional. Inside a registered component's directory, or below it, the component is selected; when components are nested, the deepest one wins. Elsewhere in the repository, the repository's project is selected, and its lists, claims, and counts include its components' tickets. When `GH_REPO` is set, it names the repository and the directory is ignored. An explicit `--project` always wins. Outside a registered repository, `issue list` and `issue sub close-eligible` need `--project` or `--all-projects`, and fail naming the reason: a GitHub repository that is not registered, one whose name another owner's repository already holds, a repository on another host, a checkout with no GitHub remote, or no git checkout. See Errors. `issue claim --next` covers all projects there, and `issue create` and `project inspect` need an explicit project.
+Inside a registered repository, the current repository's git remote selects the project, so `--project` is optional. Inside a registered component's directory, or below it, the component is selected; when components are nested, the deepest one wins. Elsewhere in the repository, the repository's project is selected, and its lists, claims, and counts include its components' tickets. When `GH_REPO` is set, it names the repository and the directory is ignored. An explicit `--project` always wins. Outside a registered repository, `issue list`, `issue claim --next`, and `issue sub close-eligible` need `--project` or `--all-projects`, and `issue create` and `project inspect` need an explicit project. They fail naming the reason: a GitHub repository that is not registered, one whose name another owner's repository already holds, a repository on another host, a checkout with no GitHub remote, or no git checkout. Each error ends with how that command takes a project. See Errors.
 
 ## Commands
 
@@ -150,6 +150,7 @@ Atomically takes a ticket and sets it to Doing. Pass a number or `--next`. Claim
 
 - `--next` bool: claim the most urgent ready ticket, oldest first within a priority, moving past tickets other agents win. Prints `OK: no ready tickets` when none remain.
 - `--project` string: limit `--next` to a project. Defaults to the current repository's project.
+- `--all-projects` bool: let `--next` claim from every project. Required outside a registered repository unless `--project` is given.
 
 ### issue-tracker issue release <number>
 
@@ -295,9 +296,9 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `accepts between 1 and 50 arg(s)`: `issue inspect` takes at most 50 tickets. Split the numbers across calls.
 - `body is <n> characters, over GitHub's 65536: attach long output as a file with --attach`: GitHub caps a ticket or comment body at 65,536 characters. Nothing was sent. Shorten the text, or move long output such as logs into a file and attach it.
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
-- `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or pass --all-projects for every project`: `issue list` or `issue sub close-eligible` ran in a repository that is not a project. Pass `--project` or `--all-projects`, or ask the user whether to register it.
-- `<owner/repo> is not a registered project, and cannot be: project <name> already belongs to <other/repo>: pass --project <name>, or --all-projects for every project`: projects are named after their repository, and another owner's repository of that name holds it. Pass `--project` or `--all-projects`.
-- `not inside a registered repository: <reason>: pass --project <name>, or --all-projects for every project`: `issue list` or `issue sub close-eligible` ran where no github.com repository was found. The reason is `no git checkout here`, `this checkout has no git remote`, `no git remote points to a GitHub host the GitHub CLI is logged in to`, `<host>/<owner>/<repo> is on <host>, and projects are github.com repositories`, or, for any other failure, git's or the GitHub CLI's own reason on one line, such as a missing git or a checkout git refuses under its `safe.directory` rule. Pass one of those flags, or ask the user to fix git first when the reason is about git itself.
+- `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or <remedy>`: a command ran in a repository that is not a project. `<remedy>` is `pass --project <name>, or --all-projects for every project` for `issue list`, `issue claim --next`, and `issue sub close-eligible`, `pass --project <name>` for `issue create`, and `name a project` for `project inspect`. Follow it, or ask the user whether to register the repository.
+- `<owner/repo> is not a registered project, and cannot be: project <name> already belongs to <other/repo>: <remedy>`: projects are named after their repository, and another owner's repository of that name holds it. Follow the remedy.
+- `not inside a registered repository: <reason>: <remedy>`: the command ran where no github.com repository was found. The reason is `no git checkout here`, `this checkout has no git remote`, `no git remote points to a GitHub host the GitHub CLI is logged in to`, `<host>/<owner>/<repo> is on <host>, and projects are github.com repositories`, or, for any other failure, git's or the GitHub CLI's own reason on one line, such as a missing git or a checkout git refuses under its `safe.directory` rule. Follow the remedy, or ask the user to fix git first when the reason is about git itself.
 - `ticket #<number> has no project: give it a repo: label on GitHub or run issue move <number> <project>`: the ticket is unrouted, and no claim was created. Ask the user which project owns it, or pick another ticket.
 - `GitHub rate limit reached: retry after <time>`: wait until that time.
 - `your GitHub login has no access to project boards: run issue-tracker auth refresh`: the token lacks the `project` scope. Ask the user to run `issue-tracker auth refresh` in a terminal.

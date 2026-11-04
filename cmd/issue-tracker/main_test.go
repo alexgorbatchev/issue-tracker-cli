@@ -171,7 +171,7 @@ func TestWriteCommandsReportResults(t *testing.T) {
 		{"claim", []fakegithub.Route{ticketRoute("go-tui", "Todo"), claimRef, status}, []string{"issue", "claim", "1"}, "OK: claimed #1 in go-tui: Crash"},
 		{"claim public warns", []fakegithub.Route{ticketRoute("lib", "Todo"), claimRef, status}, []string{"issue", "claim", "1"}, "WARN: lib is public"},
 		{"claim next", []fakegithub.Route{boardOnly(), listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")), claimRef, status}, []string{"issue", "claim", "--next", "--project", "go-tui"}, "OK: claimed #1"},
-		{"claim next empty", []fakegithub.Route{listRoute()}, []string{"issue", "claim", "--next"}, "OK: no ready tickets"},
+		{"claim next empty", []fakegithub.Route{listRoute()}, []string{"issue", "claim", "--next", "--all-projects"}, "OK: no ready tickets"},
 		{"release", []fakegithub.Route{ticketRoute("go-tui", "Doing"), drop, status}, []string{"issue", "release", "1"}, "OK: released #1"},
 		{"close", []fakegithub.Route{ticketRoute("go-tui", "Todo"), merged, ok("closeIssue")}, []string{"issue", "close", "1", "--pr", "88"}, "OK: closed #1"},
 		{"close reason", []fakegithub.Route{ticketRoute("go-tui", "Todo"), ok("closeIssue")}, []string{"issue", "close", "1", "--reason", "not-planned"}, "OK: closed #1"},
@@ -452,7 +452,7 @@ func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
 	t.Setenv("GH_REPO", "o/unknown")
 	gh := fakegithub.New(refresh(other), visibility)
 	_, _, err := execute(t, fakeOpener(t, gh), "issue", "list")
-	if err == nil || !strings.Contains(err.Error(), "o/unknown is not a registered project: register it with issue-tracker project add o/unknown, or pass --all-projects for every project") {
+	if err == nil || !strings.Contains(err.Error(), "o/unknown is not a registered project: register it with issue-tracker project add o/unknown, or pass --project <name>, or --all-projects for every project") {
 		t.Fatalf("err = %v", err)
 	}
 	if gh.Count() != 2 {
@@ -486,6 +486,20 @@ func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
 	_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "list")
 	if want := "not inside a registered repository: no git checkout here: pass --project <name>, or --all-projects for every project"; err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want exactly %q", err, want)
+	}
+}
+
+func TestClaimNextScopesToTheCurrentRepository(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	t.Setenv("GH_TOKEN", "tok")
+	t.Setenv("GH_REPO", "o/go-tui")
+	gh := fakegithub.New(boardOnly(), listRoute())
+	stdout, _, err := execute(t, fakeOpener(t, gh), "issue", "claim", "--next")
+	if err != nil || stdout != "OK: no ready tickets\n" {
+		t.Fatalf("stdout = %q, err = %v", stdout, err)
+	}
+	if labels := gh.Requests()[1].Variables["labels"]; labels == nil {
+		t.Fatal("a registered repository must scope claim --next")
 	}
 }
 
@@ -763,7 +777,9 @@ func TestArgumentErrors(t *testing.T) {
 		{"close needs evidence", []string{"issue", "close", "1"}, "at least one of the flags"},
 		{"close rejects both", []string{"issue", "close", "1", "--pr", "1", "--reason", "duplicate"}, "none of the others"},
 		{"create needs a title", []string{"issue", "create"}, "title"},
-		{"create needs a project", []string{"issue", "create", "--title", "T"}, "not in a registered repository"},
+		{"create needs a project", []string{"issue", "create", "--title", "T"}, "not inside a registered repository: no git checkout here: pass --project <name>"},
+		{"claim next needs a scope", []string{"issue", "claim", "--next"}, "not inside a registered repository: no git checkout here: pass --project <name>, or --all-projects for every project"},
+		{"claim scope conflict", []string{"issue", "claim", "--next", "--project", "x", "--all-projects"}, "not both"},
 		{"label number", []string{"issue", "label", "add", "x", "bug"}, "invalid ticket number"},
 		{"body conflict", []string{"issue", "comment", "add", "1", "--body", "a", "--body-file", "b"}, "none of the others"},
 		{"empty comment", []string{"issue", "comment", "add", "1"}, "comment is empty"},
@@ -775,7 +791,7 @@ func TestArgumentErrors(t *testing.T) {
 		{"project add outside a repository", []string{"project", "add"}, "pass owner/repo"},
 		{"project add bad repo", []string{"project", "add", "bad"}, "invalid repository"},
 		{"project add name without path", []string{"project", "add", "o/go-tui", "--name", "docs"}, "pass --path too"},
-		{"project inspect outside a repository", []string{"project", "inspect"}, "pass a project"},
+		{"project inspect outside a repository", []string{"project", "inspect"}, "not inside a registered repository: no git checkout here: name a project"},
 		{"unknown command", []string{"nope"}, "unknown command"},
 	}
 	for _, tt := range tests {

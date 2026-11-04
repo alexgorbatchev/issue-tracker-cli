@@ -79,7 +79,7 @@ func newProjectInspectCommand(open opener) *cobra.Command {
 			if len(args) == 1 {
 				name = args[0]
 			}
-			project, err := s.requireProject(cmd, name)
+			project, err := s.requireProject(cmd, name, "name a project")
 			if err != nil {
 				return err
 			}
@@ -190,17 +190,11 @@ func newProjectImportCommand(open opener) *cobra.Command {
 	return cmd
 }
 
-// requireProject resolves an explicit project name or the current repository's project.
-func (s *session) requireProject(cmd *cobra.Command, name string) (tracker.Project, error) {
+// requireProject resolves an explicit project name or the current repository's
+// project. Remedy names how the command takes a project.
+func (s *session) requireProject(cmd *cobra.Command, name, remedy string) (tracker.Project, error) {
 	if name != "" {
 		return s.client.ResolveProject(cmd.Context(), name)
 	}
-	project, ok, err := s.client.CurrentProject(cmd.Context(), true)
-	if err != nil {
-		return tracker.Project{}, err
-	}
-	if !ok {
-		return tracker.Project{}, errors.New("not in a registered repository: pass a project")
-	}
-	return project, nil
+	return s.currentProject(cmd, remedy)
 }

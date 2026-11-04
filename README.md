@@ -146,6 +146,7 @@ Set `agent_account` to have agents write as a separate GitHub account while you 
 | :--- | :--- | :--- | :--- |
 | `--next` | | `false` | Claim the most urgent ready ticket, oldest first within a priority |
 | `--project <name>` | | Current directory's project | Limit `--next` to a project |
+| `--all-projects` | | `false` | Let `--next` claim from every project; required outside a registered repository |
 
 `issue-tracker issue close`
 

@@ -92,7 +92,7 @@ func addBodyFlags(cmd *cobra.Command, body, file *string) {
 }
 
 func newIssueClaimCommand(open opener) *cobra.Command {
-	var next bool
+	var next, allProjects bool
 	var project string
 	cmd := &cobra.Command{
 		Use:   "claim [number]",
@@ -107,7 +107,7 @@ func newIssueClaimCommand(open opener) *cobra.Command {
 				return err
 			}
 			if next {
-				return claimNext(cmd, s, project)
+				return claimNext(cmd, s, project, allProjects)
 			}
 			number, err := parseNumber(args[0])
 			if err != nil {
@@ -122,11 +122,12 @@ func newIssueClaimCommand(open opener) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&next, "next", false, "Claim the most urgent ready ticket, oldest first within a priority")
 	cmd.Flags().StringVar(&project, "project", "", "Limit --next to this project; defaults to the current repository's project")
+	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "Let --next claim from every project; needed outside a registered repository")
 	return cmd
 }
 
-func claimNext(cmd *cobra.Command, s *session, name string) error {
-	name, err := s.scope(cmd, name, false)
+func claimNext(cmd *cobra.Command, s *session, name string, all bool) error {
+	name, err := s.listScope(cmd, name, all)
 	if err != nil {
 		return err
 	}
@@ -149,24 +150,12 @@ func reportClaim(cmd *cobra.Command, s *session, ticket tracker.Ticket) error {
 	return report(cmd.OutOrStdout(), "claimed #%d in %s: %s", ticket.Number, ticket.Project, ticket.Title)
 }
 
-// scope picks the project for a list: an explicit name, nothing with all set, or
-// the current repository's project using cached metadata.
-func (s *session) scope(cmd *cobra.Command, name string, all bool) (string, error) {
-	if name != "" || all {
-		return name, nil
-	}
-	project, ok, err := s.client.CurrentProject(cmd.Context(), false)
-	if err != nil || !ok {
-		return "", err
-	}
-	return project.Name, nil
-}
+// listRemedy ends the error of a command that can span every project.
+const listRemedy = "pass --project <name>, or --all-projects for every project"
 
 // listScope is the project for commands with both --project and --all-projects.
-// Every project takes --all-projects, so that a list or a bulk close never spans
-// projects unasked. A repository missing from the cache may have been registered
-// on another machine, so the cache is refreshed before telling the reader to
-// register it.
+// Every project takes --all-projects, so that a list, a claim, or a bulk close never
+// spans projects unasked.
 func (s *session) listScope(cmd *cobra.Command, name string, all bool) (string, error) {
 	if all && name != "" {
 		return "", errors.New("pass --project or --all-projects, not both")
@@ -174,24 +163,33 @@ func (s *session) listScope(cmd *cobra.Command, name string, all bool) (string, 
 	if all || name != "" {
 		return name, nil
 	}
+	project, err := s.currentProject(cmd, listRemedy)
+	return project.Name, err
+}
+
+// currentProject is the current repository's project, or an error that says why
+// there is none and ends with remedy. A repository missing from the cache may have
+// been registered on another machine, so the cache is refreshed before telling the
+// reader to register it.
+func (s *session) currentProject(cmd *cobra.Command, remedy string) (tracker.Project, error) {
 	repo, err := tracker.CurrentRepo()
 	if err != nil {
-		return "", fmt.Errorf("not inside a registered repository: %w: pass --project <name>, or --all-projects for every project", err)
+		return tracker.Project{}, fmt.Errorf("not inside a registered repository: %w: %s", err, remedy)
 	}
 	project, ok, err := s.client.ProjectIn(cmd.Context(), repo, true)
 	if err != nil || ok {
-		return project.Name, err
+		return project, err
 	}
 	// Projects are named after their repository, so another owner's repository of
 	// the same name blocks registering this one.
 	taken, ok, err := s.client.ProjectRepo(cmd.Context(), repo.Name)
 	if err != nil {
-		return "", err
+		return tracker.Project{}, err
 	}
 	if ok {
-		return "", fmt.Errorf("%s is not a registered project, and cannot be: project %s already belongs to %s: pass --project <name>, or --all-projects for every project", repo, repo.Name, taken)
+		return tracker.Project{}, fmt.Errorf("%s is not a registered project, and cannot be: project %s already belongs to %s: %s", repo, repo.Name, taken, remedy)
 	}
-	return "", fmt.Errorf("%[1]s is not a registered project: register it with issue-tracker project add %[1]s, or pass --all-projects for every project", repo)
+	return tracker.Project{}, fmt.Errorf("%[1]s is not a registered project: register it with issue-tracker project add %[1]s, or %[2]s", repo, remedy)
 }
 
 func newIssueCloseCommand(open opener) *cobra.Command {
@@ -229,7 +227,7 @@ func newIssueCreateCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := s.requireProject(cmd, opts.Project)
+			project, err := s.requireProject(cmd, opts.Project, "pass --project <name>")
 			if err != nil {
 				return err
 			}
