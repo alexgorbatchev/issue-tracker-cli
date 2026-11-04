@@ -132,22 +132,23 @@ func claimNext(cmd *cobra.Command, s *session, name string, all bool) error {
 	if err != nil {
 		return err
 	}
-	ticket, ok, err := s.client.ClaimNext(cmd.Context(), name)
+	var seen tracker.Tally
+	ticket, ok, err := s.client.ClaimNext(cmd.Context(), name, &seen)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return reportNone(cmd, s, "no ready tickets", name)
+		return reportNone(cmd, s, "no ready tickets", name, seen)
 	}
 	return reportClaim(cmd, s, ticket)
 }
 
 // reportNone reports that nothing qualified, and shows people the scope's counts.
-func reportNone(cmd *cobra.Command, s *session, message, project string) error {
+func reportNone(cmd *cobra.Command, s *session, message, project string, seen tracker.Tally) error {
 	if cobrahelptree.IsAgentMode() {
 		return report(cmd.OutOrStdout(), "%s", message)
 	}
-	counts, err := s.countTickets(cmd, project, false)
+	counts, err := s.countTickets(cmd, project, seen)
 	if err != nil {
 		return err
 	}
@@ -163,23 +164,25 @@ func reportClaim(cmd *cobra.Command, s *session, ticket tracker.Ticket) error {
 	return report(cmd.OutOrStdout(), "claimed #%d in %s: %s", ticket.Number, ticket.Project, ticket.Title)
 }
 
-// countTickets describes a scope after an empty result, for people. openKnown says
-// the empty result already covered every open ticket, so none is open and only the
-// closed ones need counting.
-func (s *session) countTickets(cmd *cobra.Command, project string, openKnown bool) (string, error) {
-	var open []tracker.Ticket
-	if !openKnown {
-		var err error
-		if open, _, err = s.client.ListTickets(cmd.Context(), tracker.ListOptions{Project: project}); err != nil {
+// countTickets describes a scope after an empty result, for people. seen holds what
+// the empty read counted, and only the states it did not read in full are read now.
+func (s *session) countTickets(cmd *cobra.Command, project string, seen tracker.Tally) (string, error) {
+	if !seen.OpenRead {
+		open := tracker.Tally{}
+		if _, _, err := s.client.ListTickets(cmd.Context(), tracker.ListOptions{Project: project, Tally: &open}); err != nil {
 			return "", err
 		}
+		seen.Open = open.Open
 	}
-	// GitHub counts an unfiltered list on its first page, so one ticket is enough.
-	_, closed, err := s.client.ListTickets(cmd.Context(), tracker.ListOptions{Project: project, State: "closed", Limit: 1})
-	if err != nil {
-		return "", err
+	if !seen.ClosedRead {
+		// GitHub counts an unfiltered list on its first page, so one ticket is enough.
+		_, closed, err := s.client.ListTickets(cmd.Context(), tracker.ListOptions{Project: project, State: "closed", Limit: 1})
+		if err != nil {
+			return "", err
+		}
+		seen.Closed = closed
 	}
-	return statusCounts(project, open, closed), nil
+	return statusCounts(project, seen.Open, seen.Closed), nil
 }
 
 // listRemedy ends the error of a command that can span every project.
@@ -362,12 +365,14 @@ func newIssueListCommand(open opener) *cobra.Command {
 				opts.StaleDays = s.cfg.StaleDays
 			}
 			opts.Now = time.Now()
+			var seen tracker.Tally
+			opts.Tally = &seen
 			tickets, total, err := s.client.ListTickets(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
 			if len(tickets) == 0 && !cobrahelptree.IsAgentMode() {
-				return printNoTickets(cmd, s, opts)
+				return printNoTickets(cmd, s, opts, seen)
 			}
 			if err := printTickets(cmd.OutOrStdout(), tickets, opts.Project, opts.StaleDays, opts.Now); err != nil {
 				return err
@@ -397,20 +402,16 @@ func newIssueListCommand(open opener) *cobra.Command {
 }
 
 // printNoTickets tells a person what the scope holds when a list comes back empty.
-// An empty list of open tickets with no other filter has already shown that none is
-// open.
-func printNoTickets(cmd *cobra.Command, s *session, opts tracker.ListOptions) error {
+func printNoTickets(cmd *cobra.Command, s *session, opts tracker.ListOptions, seen tracker.Tally) error {
 	if opts.Unrouted {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "0 unrouted tickets.")
 		return err
 	}
-	unfiltered := (opts.State == "" || opts.State == "open") && opts.Search == "" && opts.Status == "" && opts.Label == "" &&
-		opts.Priority == "" && !opts.Ready && !opts.Stale
-	counts, err := s.countTickets(cmd, opts.Project, unfiltered)
+	counts, err := s.countTickets(cmd, opts.Project, seen)
 	if err != nil {
 		return err
 	}
-	if !unfiltered {
+	if opts.Search != "" || opts.Status != "" || opts.Label != "" || opts.Priority != "" || opts.Ready || opts.Stale {
 		counts = "No tickets match. " + counts
 	}
 	_, err = fmt.Fprintln(cmd.OutOrStdout(), counts)
@@ -605,12 +606,13 @@ func newSubCloseEligibleCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			parents, _, err := s.client.ListTickets(cmd.Context(), tracker.ListOptions{Project: name, Closable: true})
+			var seen tracker.Tally
+			parents, _, err := s.client.ListTickets(cmd.Context(), tracker.ListOptions{Project: name, Closable: true, Tally: &seen})
 			if err != nil {
 				return err
 			}
 			if len(parents) == 0 {
-				return reportNone(cmd, s, "no eligible parents", name)
+				return reportNone(cmd, s, "no eligible parents", name, seen)
 			}
 			for _, parent := range parents {
 				if err := closeParent(cmd, s, parent, dryRun); err != nil {

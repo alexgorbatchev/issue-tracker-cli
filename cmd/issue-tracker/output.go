@@ -91,7 +91,7 @@ func printTickets(w io.Writer, tickets []tracker.Ticket, project string, staleDa
 		}
 		rows = append(rows, []string{strconv.Itoa(ticket.Number), status, ticket.Priority(), ticket.Project, strings.Join(ticket.OtherLabels(), separator), ticket.Title})
 	}
-	if cobrahelptree.IsAgentMode() || len(rows) == 0 {
+	if cobrahelptree.IsAgentMode() {
 		return tsv(w, rows)
 	}
 	if project == "" || slices.ContainsFunc(tickets, func(ticket tracker.Ticket) bool { return ticket.Project != project }) {
@@ -118,16 +118,16 @@ func warnPriorityConflicts(w io.Writer, tickets []tracker.Ticket) error {
 
 // statusCounts describes a scope's tickets for a person who got an empty result:
 // its open tickets by board status, then its closed ones.
-func statusCounts(scope string, open []tracker.Ticket, closed int) string {
+func statusCounts(scope string, open map[string]int, closed int) string {
 	if scope == "" {
 		scope = "All projects"
 	}
-	counts := map[string]int{}
-	for _, ticket := range open {
-		counts[ticket.Status]++
-	}
 	parts := []string{}
-	unset := len(open)
+	unset := 0
+	for _, n := range open {
+		unset += n
+	}
+	counts := open
 	for _, status := range []string{tracker.StatusTodo, tracker.StatusDoing, tracker.StatusDone} {
 		parts = append(parts, fmt.Sprintf("%d %s", counts[status], displayStatus(status)))
 		unset -= counts[status]

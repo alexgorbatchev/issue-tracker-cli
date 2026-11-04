@@ -332,6 +332,36 @@ type ListOptions struct {
 	StaleDays int
 	Limit     int
 	Now       time.Time
+	// Tally, when set, counts every ticket the listing reads, before filtering.
+	Tally *Tally
+}
+
+// Tally counts the tickets a listing read before filtering them: open tickets by
+// board status, and closed tickets. OpenRead and ClosedRead report that the listing
+// read every ticket in that state, which needs no search text and a read to the end.
+type Tally struct {
+	Open       map[string]int
+	Closed     int
+	OpenRead   bool
+	ClosedRead bool
+}
+
+func (t *Tally) reset() {
+	*t = Tally{Open: map[string]int{}}
+}
+
+func (t *Tally) add(ticket Ticket) {
+	if ticket.State == StateClosed {
+		t.Closed++
+		return
+	}
+	t.Open[ticket.Status]++
+}
+
+// read records that a listing read every ticket of its states.
+func (t *Tally) read(states []string) {
+	t.OpenRead = slices.Contains(states, stateOpen)
+	t.ClosedRead = slices.Contains(states, StateClosed)
 }
 
 // clientFiltered reports a filter GitHub does not apply, so its count excludes it.
@@ -498,6 +528,9 @@ func (c *Client) oldestTickets(ctx context.Context, opts ListOptions) ([]Ticket,
 // listTickets lists one project's tickets, or every ticket when project is empty. It
 // stops after the first page when the cached components are stale.
 func (c *Client) listTickets(ctx context.Context, opts ListOptions, states []string, meta *metadata, project Project) ([]Ticket, int, bool, error) {
+	if opts.Tally != nil {
+		opts.Tally.reset()
+	}
 	var labels []string
 	var onBoard []Ticket
 	if project.Name != "" {
@@ -533,6 +566,9 @@ func (c *Client) listTickets(ctx context.Context, opts ListOptions, states []str
 			if err != nil {
 				return nil, 0, false, fmt.Errorf("listing tickets: %w", err)
 			}
+			if opts.Tally != nil {
+				opts.Tally.add(ticket)
+			}
 			if !opts.matches(ticket) {
 				continue
 			}
@@ -545,6 +581,9 @@ func (c *Client) listTickets(ctx context.Context, opts ListOptions, states []str
 			return oldestFirst(tickets, onBoard, opts.Limit), page.Total + len(onBoard), false, nil
 		}
 		if !page.PageInfo.HasNextPage {
+			if opts.Tally != nil && opts.Search == "" && !opts.Unrouted {
+				opts.Tally.read(states)
+			}
 			return oldestFirst(tickets, onBoard, opts.Limit), matched + len(onBoard), false, nil
 		}
 		cursor = page.PageInfo.EndCursor
@@ -591,6 +630,9 @@ func (c *Client) boardOnlyTickets(ctx context.Context, meta *metadata, project P
 			ticket.Project, ticket.boardRouted = meta.boardProject(project.Root(), ticket.component), true
 			if project.Component() && ticket.Project != project.Name {
 				continue
+			}
+			if opts.Tally != nil {
+				opts.Tally.add(ticket)
 			}
 			if opts.matches(ticket) {
 				tickets = append(tickets, ticket)

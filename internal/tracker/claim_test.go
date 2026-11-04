@@ -144,7 +144,7 @@ func TestClaimNextSkipsLostTickets(t *testing.T) {
 	),
 		fakegithub.Route{Match: refsPost, Status: 422, Body: claimExist, Times: 1},
 		fakegithub.Route{Match: refsPost, Status: 201, Body: "{}"}, okRoute("updateProjectV2ItemFieldValue"))
-	ticket, ok, err := c.ClaimNext(ctx, "go-tui")
+	ticket, ok, err := c.ClaimNext(ctx, "go-tui", nil)
 	if err != nil || !ok {
 		t.Fatalf("ok = %v, err = %v", ok, err)
 	}
@@ -156,7 +156,7 @@ func TestClaimNextSkipsLostTickets(t *testing.T) {
 
 func TestClaimNextSkipsAParentWithOpenSubIssues(t *testing.T) {
 	c, _ := newClient(t, listRoute(ticketSpec{number: 1, status: "Todo", subs: openSub}))
-	_, ok, err := c.ClaimNext(ctx, "")
+	_, ok, err := c.ClaimNext(ctx, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,18 +167,18 @@ func TestClaimNextSkipsAParentWithOpenSubIssues(t *testing.T) {
 
 func TestClaimNextWithNothingReady(t *testing.T) {
 	c, _ := newClient(t, listRoute(ticketSpec{number: 1, status: "Doing"}))
-	if _, ok, err := c.ClaimNext(ctx, ""); ok || err != nil {
+	if _, ok, err := c.ClaimNext(ctx, "", nil); ok || err != nil {
 		t.Fatalf("ok = %v, err = %v", ok, err)
 	}
 }
 
 func TestClaimNextFailures(t *testing.T) {
 	c, _ := newClient(t, fakegithub.Route{Match: "issues(first", Status: 500, Body: "{}"})
-	_, _, err := c.ClaimNext(ctx, "")
+	_, _, err := c.ClaimNext(ctx, "", nil)
 	wantError(t, err, "listing tickets")
 
 	c, _ = newClient(t, listRoute(ticketSpec{number: 1, project: "go-tui"}), fakegithub.Route{Match: refsPost, Status: 500, Body: "{}"})
-	_, _, err = c.ClaimNext(ctx, "")
+	_, _, err = c.ClaimNext(ctx, "", nil)
 	wantError(t, err, "claiming ticket")
 }
 

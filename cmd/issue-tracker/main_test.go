@@ -434,16 +434,34 @@ func TestIssueListOutput(t *testing.T) {
 
 		todo := ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")
 		unset := strings.Replace(ticketJSON(2, "go-tui", "Todo", "2026-10-01T00:00:00Z"), `"fieldValueByName":{"name":"Todo"}`, `"fieldValueByName":null`, 1)
-		gh = fakegithub.New(listPage(false, 2, todo, unset), listPage(false, 2, todo, unset), closed)
+		gh = fakegithub.New(listPage(false, 2, todo, unset), closed)
 		stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "list", "--all-projects", "--status", "Doing")
 		if want := "No tickets match. All projects: 1 TODO, 0 DOING, 0 DONE, 1 without a status; 37 closed\n"; err != nil || stdout != want {
 			t.Fatalf("stdout = %q, err = %v, want %q", stdout, err, want)
 		}
-		if gh.Count() != 3 {
-			t.Fatalf("made %d requests, want the list, the open count, and the closed count", gh.Count())
+		if gh.Count() != 2 {
+			t.Fatalf("made %d requests, want the list, which counted the open tickets, and the closed count", gh.Count())
 		}
 
-		gh = fakegithub.New(listPage(false, 0), listPage(false, 0), fakegithub.Route{Match: "issues(first: 100", Status: 500, Body: "{}"})
+		gh = fakegithub.New(fakegithub.Route{Match: "search(query: $search", Body: `{"data":{"repository":{"isPrivate":true},"search":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`}, listPage(false, 2, todo, unset), closed)
+		stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "list", "--all-projects", "--search", "crash")
+		if want := "No tickets match. All projects: 1 TODO, 0 DOING, 0 DONE, 1 without a status; 37 closed\n"; err != nil || stdout != want || gh.Count() != 3 {
+			t.Fatalf("a search reads the open tickets again: stdout = %q, err = %v, requests = %d", stdout, err, gh.Count())
+		}
+
+		gh = fakegithub.New(listPage(false, 0), listPage(false, 2, todo, unset))
+		stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "list", "--all-projects", "--state", "closed")
+		if want := "All projects: 1 TODO, 0 DOING, 0 DONE, 1 without a status; 0 closed\n"; err != nil || stdout != want || gh.Count() != 2 {
+			t.Fatalf("an empty closed list needs only the open read: stdout = %q, err = %v, requests = %d", stdout, err, gh.Count())
+		}
+
+		gh = fakegithub.New(listPage(false, 0))
+		stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "list", "--all-projects", "--state", "all")
+		if want := "All projects: 0 TODO, 0 DOING, 0 DONE; 0 closed\n"; err != nil || stdout != want || gh.Count() != 1 {
+			t.Fatalf("an empty list of every state needs no more reads: stdout = %q, err = %v, requests = %d", stdout, err, gh.Count())
+		}
+
+		gh = fakegithub.New(listPage(false, 0), fakegithub.Route{Match: "issues(first: 100", Status: 500, Body: "{}"})
 		if _, _, err = execute(t, fakeOpener(t, gh), "issue", "list", "--all-projects", "--ready"); err == nil {
 			t.Fatal("a failed count must fail the command")
 		}
@@ -468,10 +486,10 @@ func TestIssueListOutput(t *testing.T) {
 		outsideRepository(t)
 		doing := ticketJSON(1, "go-tui", "Doing", "2026-10-01T00:00:00Z")
 		for _, args := range [][]string{{"issue", "claim", "--next", "--all-projects"}, {"issue", "sub", "close-eligible", "--all-projects"}} {
-			gh := fakegithub.New(listPage(false, 1, doing), listPage(false, 1, doing), listPage(false, 4, doing))
+			gh := fakegithub.New(listPage(false, 1, doing), listPage(false, 4, doing))
 			stdout, _, err := execute(t, fakeOpener(t, gh), args...)
-			if err != nil || !strings.HasSuffix(stdout, ". All projects: 0 TODO, 1 DOING, 0 DONE; 4 closed\n") || !strings.HasPrefix(stdout, "[OK] no ") {
-				t.Fatalf("%v: stdout = %q, err = %v", args, stdout, err)
+			if err != nil || !strings.HasSuffix(stdout, ". All projects: 0 TODO, 1 DOING, 0 DONE; 4 closed\n") || !strings.HasPrefix(stdout, "[OK] no ") || gh.Count() != 2 {
+				t.Fatalf("%v: stdout = %q, err = %v, requests = %d", args, stdout, err, gh.Count())
 			}
 		}
 	})

@@ -63,7 +63,7 @@ func TestAnUnroutedTicketIsNeverClaimed(t *testing.T) {
 	wantCount(t, gh, 1)
 
 	c, gh = newClient(t, listRoute(ticketSpec{number: 7}))
-	if _, ok, err := c.ClaimNext(ctx, ""); ok || err != nil {
+	if _, ok, err := c.ClaimNext(ctx, "", nil); ok || err != nil {
 		t.Fatalf("claim --next must pass over an unrouted ticket: ok = %v, err = %v", ok, err)
 	}
 	wantCount(t, gh, 1)

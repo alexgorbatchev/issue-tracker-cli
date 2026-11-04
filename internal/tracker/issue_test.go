@@ -3,6 +3,7 @@ package tracker
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -418,6 +419,35 @@ func TestActivityComesFromEveryBoard(t *testing.T) {
 	}
 	if now := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC); ticket.Stale(3, now) {
 		t.Fatalf("a ticket active on its board is not stale: %+v", ticket)
+	}
+}
+
+func TestListTicketsTalliesWhatItReads(t *testing.T) {
+	routes := func() []fakegithub.Route {
+		return []fakegithub.Route{boardOnlyRoute(ticketSpec{number: 9, status: "Doing"}), listRoute(ticketSpec{number: 1, project: "go-tui", status: "Todo"})}
+	}
+	c, _ := newClient(t, append(routes(), routes()...)...)
+	var seen Tally
+	for range 2 {
+		tickets, _, err := c.ListTickets(ctx, ListOptions{Project: "go-tui", Status: StatusDone, Tally: &seen})
+		if err != nil || len(tickets) != 0 {
+			t.Fatalf("tickets = %+v, err = %v", tickets, err)
+		}
+	}
+	want := Tally{Open: map[string]int{StatusTodo: 1, StatusDoing: 1}, OpenRead: true}
+	if !maps.Equal(seen.Open, want.Open) || seen.Closed != 0 || !seen.OpenRead || seen.ClosedRead {
+		t.Fatalf("tally = %+v, want board and labelled tickets counted once per read: %+v", seen, want)
+	}
+
+	search := fakegithub.Route{Match: "search(query: $search", Body: `{"data":{"repository":{"isPrivate":true},"search":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`}
+	c, _ = newClient(t, search)
+	if _, _, err := c.ListTickets(ctx, ListOptions{Search: "crash", Tally: &seen}); err != nil || seen.OpenRead {
+		t.Fatalf("a search reads only its matches: %+v, %v", seen, err)
+	}
+
+	c, _ = newClient(t, listRoute(ticketSpec{number: 1, state: "CLOSED", project: "go-tui", status: "Done"}))
+	if _, _, err := c.ListTickets(ctx, ListOptions{State: "all", Tally: &seen}); err != nil || seen.Closed != 1 || !seen.OpenRead || !seen.ClosedRead {
+		t.Fatalf("every state read: %+v, %v", seen, err)
 	}
 }
 

@@ -121,7 +121,7 @@ func TestClaimNextTakesTheMostUrgentTicket(t *testing.T) {
 		ticketSpec{number: 1, project: "go-tui", status: "Todo"},
 		ticketSpec{number: 2, project: "go-tui", status: "Todo", priorities: []string{"P2"}},
 	), fakegithub.Route{Match: refsPost, Status: 201, Body: "{}"}, okRoute("updateProjectV2ItemFieldValue"))
-	ticket, ok, err := c.ClaimNext(ctx, "go-tui")
+	ticket, ok, err := c.ClaimNext(ctx, "go-tui", nil)
 	if err != nil || !ok || ticket.Number != 2 {
 		t.Fatalf("claimed %+v, %v, %v, want #2", ticket, ok, err)
 	}
