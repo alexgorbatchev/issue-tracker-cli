@@ -69,6 +69,12 @@ func (c *Client) CurrentProject(ctx context.Context, refresh bool) (Project, boo
 	if err != nil {
 		return Project{}, false, nil
 	}
+	return c.ProjectIn(ctx, current, refresh)
+}
+
+// ProjectIn maps a repository, and the working directory within it, to a project the
+// way CurrentProject does, for a caller that has already looked the repository up.
+func (c *Client) ProjectIn(ctx context.Context, current Repo, refresh bool) (Project, bool, error) {
 	repo := current.String()
 	dir := currentDir(ctx)
 	meta, err := c.metadata(ctx)
@@ -100,23 +106,32 @@ func CurrentRepo() (Repo, error) {
 }
 
 // noRepoReason names why go-gh found no repository in one line. Its own errors span
-// lines when they quote git, which breaks the one-line results agents read.
+// lines when they quote git, which breaks the one-line results agents read. A
+// friendlier reason replaces go-gh's only when git confirms it, and any other
+// failure keeps go-gh's reason, folded onto one line.
 func noRepoReason(err error) error {
+	folded := errors.New(strings.Join(strings.Fields(err.Error()), " "))
 	if os.Getenv("GH_REPO") != "" {
-		return err
+		return folded
 	}
-	if exec.Command("git", "rev-parse", "--git-dir").Run() != nil {
-		return errors.New("no git checkout here")
+	probe := exec.Command("git", "rev-parse", "--git-dir")
+	// git's messages are translated, and this one is matched.
+	probe.Env = append(os.Environ(), "LC_ALL=C")
+	var stderr strings.Builder
+	probe.Stderr = &stderr
+	if probe.Run() != nil {
+		if strings.Contains(stderr.String(), "not a git repository") {
+			return errors.New("no git checkout here")
+		}
+		return folded
 	}
-	remotes, remoteErr := exec.Command("git", "remote").Output()
-	switch {
-	case remoteErr != nil:
-		first, _, _ := strings.Cut(err.Error(), "\n")
-		return errors.New(first)
-	case strings.TrimSpace(string(remotes)) == "":
+	if remotes, remoteErr := exec.Command("git", "remote").Output(); remoteErr == nil && strings.TrimSpace(string(remotes)) == "" {
 		return errors.New("this checkout has no git remote")
 	}
-	return errors.New("no git remote points to a GitHub host the GitHub CLI is logged in to")
+	if strings.Contains(err.Error(), "point to a known GitHub host") {
+		return errors.New("no git remote points to a GitHub host the GitHub CLI is logged in to")
+	}
+	return folded
 }
 
 // currentDir returns the working directory relative to the top of its checkout,

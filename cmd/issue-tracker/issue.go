@@ -174,13 +174,13 @@ func (s *session) listScope(cmd *cobra.Command, name string, all bool) (string, 
 	if all || name != "" {
 		return name, nil
 	}
-	project, ok, err := s.client.CurrentProject(cmd.Context(), true)
-	if err != nil || ok {
-		return project.Name, err
-	}
 	repo, err := tracker.CurrentRepo()
 	if err != nil {
 		return "", fmt.Errorf("not inside a registered repository: %w: pass --project <name>, or --all-projects for every project", err)
+	}
+	project, ok, err := s.client.ProjectIn(cmd.Context(), repo, true)
+	if err != nil || ok {
+		return project.Name, err
 	}
 	// Projects are named after their repository, so another owner's repository of
 	// the same name blocks registering this one.

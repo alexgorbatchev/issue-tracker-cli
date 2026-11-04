@@ -310,8 +310,14 @@ func TestCurrentProject(t *testing.T) {
 		}
 	}
 	t.Setenv("GH_REPO", "not a repository")
-	if _, err := CurrentRepo(); err == nil || strings.Contains(err.Error(), "git") {
+	if _, err := CurrentRepo(); err == nil || !strings.Contains(err.Error(), `expected the "[HOST/]OWNER/REPO" format`) {
 		t.Fatalf("a bad GH_REPO keeps go-gh's reason: %v", err)
+	}
+	t.Setenv("GH_REPO", "")
+	t.Setenv("PATH", t.TempDir())
+	_, err = CurrentRepo()
+	if err == nil || !strings.Contains(err.Error(), "git executable") || strings.Contains(err.Error(), "\n") || err.Error() == "no git checkout here" {
+		t.Fatalf("without git, go-gh's reason stays, on one line: %v", err)
 	}
 }
 
