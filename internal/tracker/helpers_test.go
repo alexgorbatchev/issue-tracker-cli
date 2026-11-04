@@ -63,6 +63,8 @@ type ticketSpec struct {
 	component string
 	// board holds the item that status implies. Default: B1.
 	board string
+	// priorities adds a priority:<value> label for each value.
+	priorities []string
 }
 
 func (s ticketSpec) json() string {
@@ -83,6 +85,9 @@ func (s ticketSpec) json() string {
 	}
 	if s.label != "" {
 		labels = fmt.Sprintf(`{"name":%q}`, s.label)
+	}
+	for _, priority := range s.priorities {
+		labels = strings.TrimPrefix(labels+fmt.Sprintf(`,{"name":"priority:%s"}`, priority), ",")
 	}
 	board := s.board
 	if board == "" {

@@ -120,7 +120,7 @@ func newIssueClaimCommand(open opener) *cobra.Command {
 			return reportClaim(cmd, s, ticket)
 		},
 	}
-	cmd.Flags().BoolVar(&next, "next", false, "Claim the oldest ready ticket")
+	cmd.Flags().BoolVar(&next, "next", false, "Claim the most urgent ready ticket, oldest first within a priority")
 	cmd.Flags().StringVar(&project, "project", "", "Limit --next to this project; defaults to the current repository's project")
 	return cmd
 }
@@ -292,7 +292,7 @@ func newIssueListCommand(open opener) *cobra.Command {
 	var allProjects bool
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List tickets, oldest first",
+		Short: "List tickets, oldest first; ready tickets most urgent first",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := open()
@@ -312,7 +312,10 @@ func newIssueListCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := printTickets(cmd.OutOrStdout(), tickets, opts.Project, opts.StaleDays, opts.Now); err != nil || total <= len(tickets) {
+			if err := printTickets(cmd.OutOrStdout(), tickets, opts.Project, opts.StaleDays, opts.Now); err != nil {
+				return err
+			}
+			if err := warnPriorityConflicts(cmd.ErrOrStderr(), tickets); err != nil || total <= len(tickets) {
 				return err
 			}
 			return warn(cmd.ErrOrStderr(), "showing the first %d of %d tickets: pass --limit 0 to list them all", len(tickets), total)
@@ -323,6 +326,7 @@ func newIssueListCommand(open opener) *cobra.Command {
 	cmd.Flags().StringVar(&opts.State, "state", "open", "Ticket state: open, closed, or all")
 	cmd.Flags().StringVar(&opts.Status, "status", "", "Board status: Todo, Doing, or Done")
 	cmd.Flags().StringVar(&opts.Label, "label", "", "Only tickets with this label")
+	cmd.Flags().StringVar(&opts.Priority, "priority", "", "Only tickets whose most urgent priority label is this, such as P1")
 	cmd.Flags().StringVar(&opts.Search, "search", "", "Only tickets matching this GitHub search text")
 	cmd.Flags().BoolVar(&opts.Ready, "ready", false, "Only tickets that can be picked up now")
 	cmd.Flags().BoolVar(&opts.Stale, "stale", false, "Only Doing tickets with no recent activity")

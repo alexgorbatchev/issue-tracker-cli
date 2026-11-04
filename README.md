@@ -16,7 +16,7 @@
 
 - Register a repository with `issue-tracker project add`, which creates its board and label.
 - Create tickets with `issue-tracker issue create`, from that repository or anywhere else with `--project`.
-- An agent runs `issue-tracker issue claim --next` to take the oldest ready ticket.
+- An agent runs `issue-tracker issue claim --next` to take the most urgent ready ticket, by its `priority:P0` to `priority:P3` label, then the oldest.
 - The agent reads the ticket and its attachments, then does the work in the ticket's repository.
 - After the pull request merges, `issue-tracker issue close <number> --pr <pull-request>` closes the ticket.
 
@@ -114,8 +114,9 @@ require_private = true
 | `--state <state>` | | `open` | `open`, `closed`, or `all` |
 | `--status <status>` | | | `Todo`, `Doing`, or `Done` |
 | `--label <label>` | | | Only tickets with this label, ignoring case |
+| `--priority <P1>` | | | Only tickets whose most urgent priority label is this |
 | `--search <text>` | | | Only tickets matching this search text |
-| `--ready` | | `false` | Only tickets that can start now |
+| `--ready` | | `false` | Only tickets that can start now, most urgent first |
 | `--stale` | | `false` | Only Doing tickets with no recent activity |
 | `--stale-days <days>` | | Configured value | Stale window |
 | `--limit <count>` | | `100` | Maximum tickets; `0` shows all. A warning gives the total when more tickets match |
@@ -139,7 +140,7 @@ require_private = true
 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--next` | | `false` | Claim the oldest ready ticket |
+| `--next` | | `false` | Claim the most urgent ready ticket, oldest first within a priority |
 | `--project <name>` | | Current directory's project | Limit `--next` to a project |
 
 `issue-tracker issue close`

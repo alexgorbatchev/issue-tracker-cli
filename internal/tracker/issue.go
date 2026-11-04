@@ -324,6 +324,7 @@ type ListOptions struct {
 	State     string
 	Status    string
 	Label     string
+	Priority  string
 	Search    string
 	Ready     bool
 	Closable  bool
@@ -335,7 +336,7 @@ type ListOptions struct {
 
 // clientFiltered reports a filter GitHub does not apply, so its count excludes it.
 func (o ListOptions) clientFiltered() bool {
-	return o.Status != "" || o.Label != "" || o.Ready || o.Closable || o.Stale || o.Unrouted
+	return o.Status != "" || o.Label != "" || o.Priority != "" || o.Ready || o.Closable || o.Stale || o.Unrouted
 }
 
 func (o ListOptions) matches(t Ticket) bool {
@@ -345,6 +346,8 @@ func (o ListOptions) matches(t Ticket) bool {
 	case o.Status != "" && !strings.EqualFold(t.Status, o.Status):
 		return false
 	case o.Label != "" && !t.labelled(o.Label):
+		return false
+	case o.Priority != "" && t.Priority() != o.Priority:
 		return false
 	case o.Ready && !t.Ready():
 		return false
@@ -426,11 +429,39 @@ func (c *Client) withProject(ctx context.Context, name string, read func(*metada
 // in all, which exceeds the tickets returned when Limit cuts the list. GitHub
 // counts what it filters on the first page. A client-side filter has no such
 // count, so it reads every page whatever the limit. A repository's list includes
-// its components' tickets.
+// its components' tickets. Ready tickets come most urgent first, then oldest
+// first, so that the next claim takes the most urgent work.
 func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, int, error) {
 	if opts.Limit < 0 {
 		return nil, 0, fmt.Errorf("invalid limit %d: expected 0 or more", opts.Limit)
 	}
+	if opts.Priority != "" {
+		priority, err := parsePriority(opts.Priority)
+		if err != nil {
+			return nil, 0, err
+		}
+		opts.Priority = priority
+	}
+	if !opts.Ready {
+		return c.oldestTickets(ctx, opts)
+	}
+	// Ready reads every page anyway, so sorting every match before the limit costs
+	// no request.
+	limit := opts.Limit
+	opts.Limit = 0
+	tickets, total, err := c.oldestTickets(ctx, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	mostUrgentFirst(tickets)
+	if limit > 0 && len(tickets) > limit {
+		tickets = tickets[:limit]
+	}
+	return tickets, total, nil
+}
+
+// oldestTickets lists matching tickets oldest first.
+func (c *Client) oldestTickets(ctx context.Context, opts ListOptions) ([]Ticket, int, error) {
 	states, err := listStates(opts.State)
 	if err != nil {
 		return nil, 0, err

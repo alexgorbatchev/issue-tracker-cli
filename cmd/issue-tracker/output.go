@@ -89,7 +89,7 @@ func printTickets(w io.Writer, tickets []tracker.Ticket, project string, staleDa
 		if ticket.Stale(staleDays, now) {
 			status += " (stale)"
 		}
-		rows = append(rows, []string{strconv.Itoa(ticket.Number), status, ticket.Project, strings.Join(ticket.Labels, separator), ticket.Title})
+		rows = append(rows, []string{strconv.Itoa(ticket.Number), status, ticket.Priority(), ticket.Project, strings.Join(ticket.OtherLabels(), separator), ticket.Title})
 	}
 	if cobrahelptree.IsAgentMode() {
 		return tsv(w, rows)
@@ -99,12 +99,25 @@ func printTickets(w io.Writer, tickets []tracker.Ticket, project string, staleDa
 		return err
 	}
 	if project == "" || slices.ContainsFunc(tickets, func(ticket tracker.Ticket) bool { return ticket.Project != project }) {
-		return table(w, []string{"#", "Status", "Project", "Labels", "Title"}, rows)
+		return table(w, []string{"#", "Status", "Priority", "Project", "Labels", "Title"}, rows)
 	}
 	for i, row := range rows {
-		rows[i] = slices.Delete(row, 2, 3)
+		rows[i] = slices.Delete(row, 3, 4)
 	}
-	return table(w, []string{"#", "Status", "Labels", "Title"}, rows)
+	return table(w, []string{"#", "Status", "Priority", "Labels", "Title"}, rows)
+}
+
+// warnPriorityConflicts names each ticket with more than one priority label, which
+// ranks by its most urgent one until someone removes the others.
+func warnPriorityConflicts(w io.Writer, tickets []tracker.Ticket) error {
+	for _, ticket := range tickets {
+		if conflicts := ticket.PriorityConflicts(); conflicts != nil {
+			if err := warn(w, "#%d has priorities %s: ranked as %s", ticket.Number, strings.Join(conflicts, ", "), conflicts[0]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func printProjects(w io.Writer, projects []tracker.Project) error {
@@ -164,6 +177,13 @@ func printDetails(w io.Writer, details []tracker.TicketDetail) error {
 			}
 		}
 	}
+	tickets := make([]tracker.Ticket, 0, len(details))
+	for _, detail := range details {
+		tickets = append(tickets, detail.Ticket)
+	}
+	if err := warnPriorityConflicts(w, tickets); err != nil {
+		return err
+	}
 	for i, detail := range details {
 		if i > 0 {
 			if _, err := fmt.Fprintln(w); err != nil {
@@ -181,8 +201,11 @@ func printDetail(w io.Writer, detail tracker.TicketDetail) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "number: %d\ntitle: %s\nstate: %s\nstatus: %s\nproject: %s\nurl: %s\n",
 		detail.Number, detail.Title, detail.State, displayStatus(detail.Status), detail.Project, detail.URL)
-	if len(detail.Labels) > 0 {
-		fmt.Fprintf(&b, "labels: %s\n", strings.Join(detail.Labels, ","))
+	if priority := detail.Priority(); priority != "" {
+		fmt.Fprintf(&b, "priority: %s\n", priority)
+	}
+	if labels := detail.OtherLabels(); len(labels) > 0 {
+		fmt.Fprintf(&b, "labels: %s\n", strings.Join(labels, ","))
 	}
 	if detail.Parent != 0 {
 		fmt.Fprintf(&b, "parent: %d\n", detail.Parent)

@@ -321,7 +321,7 @@ func TestIssueListOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := "1\tDoing (stale)\tgo-tui\t\tCrash\n"; stdout != want {
+		if want := "1\tDoing (stale)\t\tgo-tui\t\tCrash\n"; stdout != want {
 			t.Fatalf("stdout = %q, want %q", stdout, want)
 		}
 	})
@@ -354,8 +354,27 @@ func TestIssueListOutput(t *testing.T) {
 		}
 		t.Setenv("AGENT", "1")
 		gh = fakegithub.New(boardOnly(), listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")))
-		if stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "list"); err != nil || stdout != "1\tTodo\tgo-tui\t\tCrash\n" {
+		if stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "list"); err != nil || stdout != "1\tTodo\t\tgo-tui\t\tCrash\n" {
 			t.Fatalf("agents keep every column: stdout = %q, err = %v", stdout, err)
+		}
+	})
+	t.Run("priority has its own column and conflicts warn", func(t *testing.T) {
+		t.Setenv("AGENT", "1")
+		outsideRepository(t)
+		urgent := strings.Replace(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z"), `{"name":"repo:go-tui"}`, `{"name":"repo:go-tui"},{"name":"priority:P2"},{"name":"bug"},{"name":"Priority:p1"}`, 1)
+		stdout, stderr, err := execute(t, fakeOpener(t, fakegithub.New(listRoute(urgent))), "issue", "list", "--priority", "p1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "1\tTodo\tP1\tgo-tui\tbug\tCrash\n"; stdout != want {
+			t.Fatalf("stdout = %q, want %q", stdout, want)
+		}
+		if want := "WARN: #1 has priorities P1, P2: ranked as P1\n"; stderr != want {
+			t.Fatalf("stderr = %q, want %q", stderr, want)
+		}
+		_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "list", "--priority", "high")
+		if err == nil || !strings.Contains(err.Error(), `invalid priority "high"`) {
+			t.Fatalf("err = %v", err)
 		}
 	})
 	t.Run("human tables fit the terminal", func(t *testing.T) {
@@ -377,7 +396,7 @@ func TestIssueListOutput(t *testing.T) {
 			t.Fatal(err)
 		}
 		natural := widest(stdout)
-		if natural >= 200 || !strings.Contains(stdout, "priority:P2, dependencies, stdout-review") {
+		if natural >= 200 || !strings.Contains(stdout, " P2 ") || !strings.Contains(stdout, "dependencies, stdout-review") || strings.Contains(stdout, "priority:") {
 			t.Fatalf("a table narrower than the terminal keeps its width and one line per row:\n%s", stdout)
 		}
 
@@ -547,13 +566,13 @@ func TestIssueInspectPrintsDetail(t *testing.T) {
 	body := ticketJSON(1, "lib", "Todo", "2026-10-01T00:00:00Z")
 	body = strings.Replace(body, `"parent":null`, `"parent":{"number":5,"state":"OPEN","blockedBy":{"nodes":[]},"parent":null}`, 1)
 	body = strings.Replace(body, `"blockedBy":{"nodes":[]},"parent":{`, `"blockedBy":{"nodes":[{"number":3,"state":"OPEN"}]},"parent":{`, 1)
-	body = strings.Replace(body, `{"name":"repo:lib"}`, `{"name":"repo:lib"},{"name":"bug"}`, 1)
+	body = strings.Replace(body, `{"name":"repo:lib"}`, `{"name":"repo:lib"},{"name":"bug"},{"name":"priority:P3"},{"name":"priority:P0"}`, 1)
 	route := fakegithub.Route{Match: "subIssues(first", Body: `{"data":{"repository":{"isPrivate":true,"n1":` + body + `,"body":"Text https://github.com/user-attachments/assets/abc","blocking":{"nodes":[{"number":4,"state":"OPEN"}]},"subIssues":{"nodes":[{"number":6,"title":"Child","state":"OPEN"}]},"comments":{"nodes":[{"author":{"login":"a"},"createdAt":"2026-01-01T00:00:00Z","body":"Note"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`}
 	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(route)), "issue", "inspect", "1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"labels: bug", "WARN: lib is public", "status: Todo", "parent: 5", "blocked_by: 3", "blocking: 4", "sub_issue: 6 OPEN Child", "attachment: https://github.com/user-attachments/assets/abc", "body:\nText", "comment: a 2026-01-01T00:00:00Z\nNote"} {
+	for _, want := range []string{"\npriority: P0\nlabels: bug\n", "WARN: lib is public", "WARN: #1 has priorities P0, P3: ranked as P0", "status: Todo", "parent: 5", "blocked_by: 3", "blocking: 4", "sub_issue: 6 OPEN Child", "attachment: https://github.com/user-attachments/assets/abc", "body:\nText", "comment: a 2026-01-01T00:00:00Z\nNote"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout = %q, missing %q", stdout, want)
 		}
