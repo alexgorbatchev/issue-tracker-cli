@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-04 10:53
+  last_modified: 2026-11-04 11:00
   status: current
 ---
 
@@ -46,7 +46,7 @@ agent_account = "my-bot"
 | `ISSUE_TRACKER_ACCOUNT` | `account` | Login in the GitHub CLI's keyring to act as, instead of its active account or `GH_TOKEN`. Default: unset. |
 | `ISSUE_TRACKER_AGENT_ACCOUNT` | `agent_account` | Login to act as in agent mode, instead of `account`. Default: unset. |
 
-Authentication reuses the GitHub CLI login: `GH_TOKEN` when it is set, otherwise the active account. A configured account replaces both, so a person can write tickets as themselves while agents write as another account. Its token comes from `gh auth token --user <login>`, which fails with `reading the token of GitHub account <login>` until that login is added with `gh auth login`. Attachment uploads through `gh` use the same account. Boards need the `project` scope: `issue-tracker auth refresh` grants it to the GitHub CLI's active account, so to grant it to another configured account, run `gh auth switch --user <login>` first and switch back afterwards. Project IDs are cached in `$XDG_CACHE_HOME/issue-tracker/` (default `~/.cache/issue-tracker/`). Ticket data is always read live.
+Authentication reuses the GitHub CLI login: `GH_TOKEN` when it is set, otherwise the active account. A configured account replaces both, so a person can write tickets as themselves while agents write as another account. Its token comes from `gh auth token --user <login>`, which fails with `reading the token of GitHub account <login>` until that login is added with `gh auth login`. Attachment uploads through `gh` use the same account. That account needs write access to the tracker repository and Write access to each board, granted under the board's Settings, Manage access. Boards need the `project` scope: `issue-tracker auth refresh` grants it to the GitHub CLI's active account, so to grant it to another configured account, run `gh auth switch --user <login>` first and switch back afterwards. Project IDs are cached in `$XDG_CACHE_HOME/issue-tracker/` (default `~/.cache/issue-tracker/`). Ticket data is always read live.
 
 ## Project resolution
 
@@ -301,7 +301,7 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `GitHub rate limit reached: retry after <time>`: wait until that time.
 - `your GitHub login has no access to project boards: run issue-tracker auth refresh`: the token lacks the `project` scope. Ask the user to run `issue-tracker auth refresh` in a terminal.
 - `GitHub account <login> has no access to project boards: run gh auth switch --user <login> and issue-tracker auth refresh, then switch back`: the configured account lacks the `project` scope. Ask the user to run those commands in a terminal.
-- `reading the token of GitHub account <login>`: the configured account is not logged in to the GitHub CLI. Ask the user to run `gh auth login --hostname github.com` for it, or fix the `account` or `agent_account` setting.
+- `reading the token of GitHub account <login>`: the configured account is not logged in to the GitHub CLI, or `gh` printed no token for it. Ask the user to run `gh auth login --hostname github.com` for it, or fix the `account` or `agent_account` setting.
 - `auth refresh needs a person at a terminal to approve the login in a browser`: `auth refresh` ran in agent mode or without a terminal. Ask the user to run it.
 - `repository <owner/repo> is not registered: run project add <owner/repo> first`: `project add --path` needs the repository registered. Run the suggested command, then repeat.
 - `project "<repo>" has components: remove <repo>/<component> first`: `project rm` keeps a repository while components use its board. Remove each component first.

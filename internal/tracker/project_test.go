@@ -58,6 +58,14 @@ func TestNewUsesTheConfiguredAccount(t *testing.T) {
 	wantError(t, err, "reading the token of GitHub account bot")
 	wantError(t, err, "no oauth token found")
 
+	fakeGH(t, "exit 1")
+	_, err = New(Options{Repo: Repo{"o", "r"}, Account: "bot"})
+	wantError(t, err, "reading the token of GitHub account bot: exit status 1: log in with")
+
+	fakeGH(t, "echo")
+	_, err = New(Options{Repo: Repo{"o", "r"}, Account: "bot"})
+	wantError(t, err, "reading the token of GitHub account bot: gh printed no token: log in with")
+
 	t.Setenv("PATH", t.TempDir())
 	_, err = New(Options{Repo: Repo{"o", "r"}, Account: "bot"})
 	wantError(t, err, "using GitHub account bot needs the gh binary")

@@ -20,7 +20,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 - **Format Source Code:** `just fmt` (`go fmt ./...`)
 
 ## Setup & Environment
-- **Prerequisites:** Go 1.26.7+, `just`, and `gh` for image and video uploads.
+- **Prerequisites:** Go 1.26.7+, `just`, and `gh` for image and video uploads and for the `account` and `agent_account` settings.
 - **Temporary Files:** Temporary file operations use `.tmp/` within the project root.
 - **Layout:** `cmd/issue-tracker/` holds commands and output, `internal/tracker/` holds GitHub operations, `internal/config/` resolves settings, `internal/fakegithub/` is the test double, and `skills/issue-tracker/` holds the agent skill.
 

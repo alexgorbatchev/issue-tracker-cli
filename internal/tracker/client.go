@@ -119,11 +119,20 @@ func accountToken(account string) (string, error) {
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("reading the token of GitHub account %s: %w: %s: log in with gh auth login --hostname %s",
-			account, err, strings.TrimSpace(stderr.String()), defaultHost)
+	cause := err
+	if detail := strings.TrimSpace(stderr.String()); err != nil && detail != "" {
+		cause = fmt.Errorf("%w: %s", err, detail)
 	}
-	return strings.TrimSpace(string(out)), nil
+	token := strings.TrimSpace(string(out))
+	// An empty token would fall back to the active login, which is the account
+	// this setting exists to avoid.
+	if err == nil && token == "" {
+		cause = errors.New("gh printed no token")
+	}
+	if cause != nil {
+		return "", fmt.Errorf("reading the token of GitHub account %s: %w: log in with gh auth login --hostname %s", account, cause, defaultHost)
+	}
+	return token, nil
 }
 
 // Repo returns the tracker repository.
