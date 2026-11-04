@@ -28,7 +28,7 @@ jobs:
         run: go mod tidy -diff
 
       - name: Check formatting
-        run: test -z "$(gofmt -l $(git ls-files '*.go') | tee /dev/stderr)"
+        run: scripts/check-format.sh
 
       - name: Build
         run: go build ./...

@@ -35,11 +35,10 @@ build:
 install:
     go install ./cmd/issue-tracker
 
-# Check module hygiene and formatting, then vet; gofmt reads only tracked files,
-# because .workspaces/ holds other checkouts
+# Check module hygiene and formatting, then vet
 lint:
     go mod tidy -diff
-    test -z "$(gofmt -l $(git ls-files '*.go') | tee /dev/stderr)"
+    scripts/check-format.sh
     go vet ./...
 
 # Alias for lint
