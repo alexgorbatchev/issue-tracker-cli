@@ -21,7 +21,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 
 ## Setup & Environment
 - **Prerequisites:** Go 1.26.7+, `just`, and `gh` for image and video uploads and for the `account` and `agent_account` settings.
-- **Temporary Files:** Temporary file operations use `.tmp/` within the project root.
+- **Temporary Files:** Temporary file operations use `.tmp/` within the project root. It is shared by concurrent sessions and tools, so each task creates its own child, such as with `mktemp -d .tmp/<task>.XXXXXX`, and removes only that child. No recipe removes `.tmp/` itself; `just clean` removes only build outputs.
 - **Layout:** `cmd/issue-tracker/` holds commands and output, `internal/tracker/` holds GitHub operations, `internal/config/` resolves settings, `internal/fakegithub/` is the test double, and `skills/issue-tracker/` holds the agent skill.
 
 ## Conventions

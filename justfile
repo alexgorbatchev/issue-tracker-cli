@@ -20,11 +20,15 @@ run-ai *args:
 test:
     go test -race -cover ./...
 
-# Check per-package coverage the way CI does
+# Check per-package coverage the way CI does, in a scratch directory of its own
 coverage:
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p .tmp
-    go test -race -coverprofile=.tmp/coverage.out ./...
-    scripts/check-coverage.sh .tmp/coverage.out
+    scratch="$(mktemp -d .tmp/coverage.XXXXXX)"
+    trap 'rm -rf "$scratch"' EXIT
+    go test -race -coverprofile="$scratch/coverage.out" ./...
+    scripts/check-coverage.sh "$scratch/coverage.out"
 
 # Build binary into bin/
 build:
@@ -51,6 +55,6 @@ fmt:
 # Run static analysis and test suite in sequence
 check: lint test
 
-# Clean up build binaries and temporary files
+# Remove build outputs; .tmp/ holds other sessions' scratch and stays
 clean:
-    rm -rf bin coverage.out .tmp dist
+    rm -rf bin coverage.out dist
