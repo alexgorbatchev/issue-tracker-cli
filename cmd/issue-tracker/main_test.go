@@ -443,21 +443,25 @@ func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
 	}
 	visibility := fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":true}}}`}
 
+	other := `{"id":"L1","name":"repo:go-tui","description":"o/go-tui"}`
 	t.Setenv("GH_REPO", "o/unknown")
-	gh := fakegithub.New(refresh(""), visibility)
+	gh := fakegithub.New(refresh(other), visibility)
 	_, _, err := execute(t, fakeOpener(t, gh), "issue", "list")
 	if err == nil || !strings.Contains(err.Error(), "o/unknown is not a registered project: register it with issue-tracker project add o/unknown, or pass --all-projects") {
 		t.Fatalf("err = %v", err)
 	}
-	if gh.Count() != 1 {
-		t.Fatalf("made %d requests, want only the refresh that checks for a registration elsewhere", gh.Count())
+	if gh.Count() != 2 {
+		t.Fatalf("made %d requests, want only the refresh and its visibility read", gh.Count())
 	}
 
 	t.Setenv("GH_REPO", "o/new")
-	gh = fakegithub.New(refresh(`{"id":"LN","name":"repo:new","description":"o/new"}`), visibility, boardOnly(), listRoute(ticketJSON(1, "new", "Todo", "2026-10-01T00:00:00Z")))
+	gh = fakegithub.New(refresh(other+`,{"id":"LN","name":"repo:new","description":"o/new"}`), visibility, boardOnly(), listRoute(ticketJSON(1, "new", "Todo", "2026-10-01T00:00:00Z")))
 	stdout, _, err := execute(t, fakeOpener(t, gh), "issue", "list")
 	if err != nil || !strings.HasPrefix(stdout, "1\t") {
 		t.Fatalf("a repository registered on another machine lists after a refresh: stdout = %q, err = %v", stdout, err)
+	}
+	if gh.Count() != 4 {
+		t.Fatalf("made %d requests, want the refresh, its visibility read, the board search, and the list", gh.Count())
 	}
 
 	outsideRepository(t)
