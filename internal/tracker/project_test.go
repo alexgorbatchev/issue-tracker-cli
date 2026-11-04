@@ -147,14 +147,25 @@ func TestAddProjectNamesOtherOwnersRepositoriesInFull(t *testing.T) {
 	if project.Name != "someorg/go-tui" || project.Repo != "someorg/go-tui" {
 		t.Fatalf("project = %+v, want another owner's repository named owner/name beside o/go-tui", project)
 	}
+	labels, boards := 0, 0
 	for _, req := range gh.Requests() {
-		if strings.Contains(req.Description, "createLabel") && req.Variables["name"] != "repo:someorg/go-tui" {
-			t.Fatalf("label = %v", req.Variables)
+		if strings.Contains(req.Description, "createLabel(input") {
+			labels++
+			if req.Variables["name"] != "repo:someorg/go-tui" || req.Variables["description"] != "someorg/go-tui" {
+				t.Fatalf("label = %v", req.Variables)
+			}
 		}
-		if strings.Contains(req.Description, "createProjectV2(input") && req.Variables["title"] != "someorg/go-tui" {
-			t.Fatalf("board = %v", req.Variables)
+		if strings.Contains(req.Description, "createProjectV2(input") {
+			boards++
+			if req.Variables["title"] != "someorg/go-tui" {
+				t.Fatalf("board = %v", req.Variables)
+			}
 		}
 	}
+	if labels != 1 || boards != 1 {
+		t.Fatalf("created %d labels and %d boards, want one of each", labels, boards)
+	}
+	wantCount(t, gh, 9)
 }
 
 func TestAddProjectRefusesNameCollision(t *testing.T) {

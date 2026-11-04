@@ -316,6 +316,32 @@ func TestAnotherOwnersComponentIsNamedAfterItsProject(t *testing.T) {
 	}
 }
 
+func TestAddComponentKeepsAnotherOwnersRepository(t *testing.T) {
+	body := strings.Replace(metadataJSON, `{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},`,
+		`{"id":"LC","name":"repo:cli","description":"o/cli"},{"id":"LG","name":"repo:cli/go-gh","description":"cli/go-gh"},`, 1)
+	body = strings.Replace(body, `"title":"go-tui"`, `"title":"cli"`, 1)
+	gh := fakegithub.New(fakegithub.Route{Match: "labels(first: 100, query", Body: body}, visibilityRoute(`{"data":{"r0":{"isPrivate":true},"r1":{"isPrivate":true}}}`))
+	_, err := clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "cli"}, "go-gh", "")
+	wantError(t, err, `project "cli/go-gh" is already registered for cli/go-gh`)
+	wantCount(t, gh, 2)
+}
+
+func TestAddComponentUsesALegacyRootName(t *testing.T) {
+	body := strings.Replace(metadataJSON, `{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},`, `{"id":"LM","name":"repo:mono","description":"x/mono"},`, 1)
+	body = strings.Replace(body, `"title":"go-tui"`, `"title":"mono"`, 1)
+	label := fakegithub.Route{Match: "label(name: $label)", Body: `{"data":{"repository":{"label":null}}}`}
+	created := fakegithub.Route{Match: "createLabel(input", Body: `{"data":{"createLabel":{"label":{"id":"LN"}}}}`}
+	gh := fakegithub.New(fakegithub.Route{Match: "labels(first: 100, query", Body: body}, visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`), createdField("api"), label, created)
+	project, err := clientWith(t, gh, nil).AddComponent(ctx, Repo{"x", "mono"}, "services/api", "")
+	if err != nil || project.Name != "mono/api" || project.Root() != "mono" {
+		t.Fatalf("a component of a short-named repository takes its name: %+v, %v", project, err)
+	}
+	if vars := gh.Requests()[len(gh.Requests())-1].Variables; vars["name"] != "repo:mono/api" || vars["description"] != "x/mono:services/api" {
+		t.Fatalf("label = %v", vars)
+	}
+	wantCount(t, gh, 5)
+}
+
 func TestAComponentRegisteredElsewhereRefreshesTheList(t *testing.T) {
 	meta := monoMetadata()
 	meta.Projects = meta.Projects[:1]
@@ -569,8 +595,8 @@ func TestAddComponentFailures(t *testing.T) {
 		{"unclean path", nil, Repo{"o", "mono"}, "a/../b", "", "invalid path"},
 		{"name with slash", nil, Repo{"o", "mono"}, "a", "b/c", "invalid component name"},
 		{"name with space", nil, Repo{"o", "mono"}, "a", "b c", "invalid component name"},
-		{"long label", nil, Repo{"o", "mono"}, "a", long, "over GitHub's 50"},
-		{"long description", nil, Repo{"o", "mono"}, strings.Repeat("d/", 50) + "x", "", "over GitHub's 100"},
+		{"long label", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, "a", long, "over GitHub's 50"},
+		{"long description", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, strings.Repeat("d/", 50) + "x", "", "over GitHub's 100"},
 		{"unregistered", []fakegithub.Route{registered, visibility}, Repo{"o", "other"}, "a", "", "repository o/other is not registered: run project add o/other first"},
 		{"other owner", []fakegithub.Route{registered, visibility}, Repo{"p", "mono"}, "a", "", "repository p/mono is not registered"},
 		{"no board", []fakegithub.Route{noBoard, visibility}, Repo{"o", "mono"}, "a", "", "has no board"},

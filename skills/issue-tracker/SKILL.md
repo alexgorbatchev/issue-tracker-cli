@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-04 14:22
+  last_modified: 2026-11-04 14:39
   status: current
 ---
 
@@ -62,7 +62,7 @@ Runs `gh auth refresh --hostname github.com --scopes project` to add the `projec
 
 Registers a repository, creating its board and label. Defaults to the current repository. Repeating it is safe, and a repository already registered under another name keeps it. The project is named `<name>` for a repository of the tracker's owner and `<owner>/<name>` otherwise. Fails when that name is already registered for another repository or as a component, or when the label name exceeds 50 characters.
 
-With `--path`, registers that directory of an already registered repository as a component instead. It adds the component as an option of the board's `Component` field, creating the field on first use, then creates the label `repo:<repo>/<component>`, whose description `owner/repo:<path>` records the directory. It uses the repository's board. Repeating it for a component without an option adds the option. Prints `registered project <repo>/<component> for <path> in <owner/repo>`. Repeating it is safe. Fails when the repository is not registered, when the name or path is already registered to another component, or when the label name exceeds 50 characters or its description exceeds 100.
+With `--path`, registers that directory of an already registered repository as a component instead. It adds the component as an option of the board's `Component` field, creating the field on first use, then creates the label `repo:<repo>/<component>`, whose description `owner/repo:<path>` records the directory. It uses the repository's board. Repeating it for a component without an option adds the option. Prints `registered project <repo>/<component> for <path> in <owner/repo>`. Repeating it is safe. Fails when the repository is not registered, when the name or path is already registered to another component, when another owner's repository is registered under that name, or when the label name exceeds 50 characters or its description exceeds 100.
 
 - `--path` string: directory relative to the top of the repository, without `.`, `..`, or `:`.
 - `--name` string: component name used after `<repo>/`. Defaults to the last element of `--path`. Requires `--path`.

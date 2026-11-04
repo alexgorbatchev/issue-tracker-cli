@@ -291,26 +291,30 @@ func (c *Client) AddComponent(ctx context.Context, repo Repo, dir, component str
 	if err := validComponent(component); err != nil {
 		return Project{}, err
 	}
-	project := Project{Name: c.ProjectName(repo) + "/" + component, Repo: repo.String(), Path: dir}
+	meta, err := c.refreshMetadata(ctx)
+	if err != nil {
+		return Project{}, err
+	}
+	root, ok := meta.repoProject(repo)
+	if !ok {
+		return Project{}, fmt.Errorf("repository %s is not registered: run project add %s first", repo, repo)
+	}
+	if root.BoardID == "" {
+		return Project{}, errNoBoard(root)
+	}
+	// The repository's registered name, not the one it would get today, so that a
+	// repository registered under an older rule keeps its components beside it.
+	project := Project{Name: root.Name + "/" + component, Repo: repo.String(), Path: dir}
 	if n := utf8.RuneCountInString(project.Label()); n > maxLabelName {
 		return Project{}, fmt.Errorf("label %s is %d characters, over GitHub's %d: pass a shorter --name", project.Label(), n, maxLabelName)
 	}
 	if n := utf8.RuneCountInString(project.registration()); n > maxLabelDescription {
 		return Project{}, fmt.Errorf("registration %s is %d characters, over GitHub's %d for a label description", project.registration(), n, maxLabelDescription)
 	}
-	meta, err := c.refreshMetadata(ctx)
-	if err != nil {
-		return Project{}, err
-	}
-	root, ok := meta.repoProject(repo)
-	if ok {
-		project.Name = root.Name + "/" + component
-	}
-	if !ok {
-		return Project{}, fmt.Errorf("repository %s is not registered: run project add %s first", repo, repo)
-	}
-	if root.BoardID == "" {
-		return Project{}, errNoBoard(root)
+	// Another owner's repository is named owner/name, which a component name can
+	// equal; rewriting its label would take that registration over.
+	if taken, ok := meta.project(project.Name); ok && !taken.Component() {
+		return Project{}, fmt.Errorf("project %q is already registered for %s", project.Name, taken.Repo)
 	}
 	for _, other := range meta.components(root) {
 		switch {
