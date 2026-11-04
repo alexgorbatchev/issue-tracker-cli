@@ -915,7 +915,7 @@ func TestOwnerOnlyCommandsActAsTheAccount(t *testing.T) {
 	t.Setenv(config.RepoEnv, "o/tracker")
 	t.Setenv(config.AgentAccountEnv, "bot")
 	root := newRootCommand(noSession)
-	find := func(path ...string) *cobra.Command {
+	find := func(t *testing.T, path ...string) *cobra.Command {
 		t.Helper()
 		cmd, _, err := root.Find(path)
 		if err != nil {
@@ -932,7 +932,7 @@ func TestOwnerOnlyCommandsActAsTheAccount(t *testing.T) {
 		wantUser, wantWarn   string
 	}{
 		{"owner command as the account", "1", "me", []string{"project", "add"}, "--user me", "WARN: issue-tracker project add runs as me, not agent account bot, because only the tracker's owner can make its changes\n"},
-		{"owner command as the active account", "1", "", []string{"project", "import"}, "", "WARN: issue-tracker project import runs as the GitHub CLI's active account, not agent account bot, because only the tracker's owner can make its changes\n"},
+		{"owner command as GH_TOKEN", "1", "", []string{"project", "import"}, "", "WARN: issue-tracker project import runs as the GH_TOKEN login, not agent account bot, because only the tracker's owner can make its changes\n"},
 		{"other commands keep the agent account", "1", "me", []string{"issue", "list"}, "--user bot", ""},
 		{"people never switch", "0", "me", []string{"project", "rm"}, "--user me", ""},
 	}
@@ -941,7 +941,7 @@ func TestOwnerOnlyCommandsActAsTheAccount(t *testing.T) {
 			t.Setenv("AGENT", tt.agent)
 			t.Setenv(config.AccountEnv, tt.account)
 			log := stubGH(t, "echo tok")
-			cmd := find(tt.path...)
+			cmd := find(t, tt.path...)
 			if _, err := openTracker(cmd); err != nil {
 				t.Fatal(err)
 			}
@@ -956,10 +956,29 @@ func TestOwnerOnlyCommandsActAsTheAccount(t *testing.T) {
 	}
 }
 
+func TestDescribeLoginFollowsGoGHOrder(t *testing.T) {
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	if got := describeLogin(""); got != "the GitHub CLI's active account" {
+		t.Fatalf("describeLogin = %q", got)
+	}
+	t.Setenv("GITHUB_TOKEN", "x")
+	if got := describeLogin(""); got != "the GITHUB_TOKEN login" {
+		t.Fatalf("describeLogin = %q", got)
+	}
+	t.Setenv("GH_TOKEN", "x")
+	if got := describeLogin(""); got != "the GH_TOKEN login" {
+		t.Fatalf("describeLogin = %q", got)
+	}
+	if got := describeLogin("me"); got != "me" {
+		t.Fatalf("describeLogin = %q", got)
+	}
+}
+
 func TestOwnerOnlyHelpSaysWhichAccountRuns(t *testing.T) {
 	for _, command := range []string{"add", "rm", "scan", "import"} {
 		stdout, _, err := execute(t, noSession, "project", command, "--help")
-		if err != nil || !strings.Contains(stdout, "Runs as the account setting, or the GitHub CLI's active account, even when agent_account applies") {
+		if err != nil || !strings.Contains(stdout, "Runs as the account setting, or else the default GitHub login (GH_TOKEN, or the GitHub CLI's active account), even when agent_account applies") {
 			t.Fatalf("project %s help = %q, %v", command, stdout, err)
 		}
 	}

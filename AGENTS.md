@@ -38,6 +38,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 - **Component Cache Coherence:** A component registered on another machine causes no cache miss, so every query that scopes to a repository project also reads its component labels and refreshes the cache once when they differ. Do not add a request for this check.
 - **Secrets on the Wire:** Send the GitHub token only to GitHub's API hosts and to URLs matching `attachmentURL`. Downloads that redirect to a storage host rely on Go dropping the token across hosts; never copy it onto a redirect.
 - **Attachment Storage:** GitHub's attachment endpoint accepts only images and video, so other files are assets of the tracker's `attachments` prerelease. Upload media through `gh` so that it rewrites body references; send it the body on standard input. Asset names start with the ticket number; removal deletes assets before rewriting links, and pruning only touches names this tool wrote.
+- **Owner-Only Commands:** Wrap a command in `ownerOnly` when it changes what only the tracker's owner can, such as boards under the owner, registration labels, or issues moved out of the owner's repositories. It then acts as `account` even when `agent_account` applies.
 - **Hermetic Unit Tests:** All unit tests must remain offline. Use `internal/fakegithub` as the transport.
 
 ## Agent Skill

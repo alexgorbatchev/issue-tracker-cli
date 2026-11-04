@@ -71,7 +71,7 @@ func ownerOnly(cmd *cobra.Command) *cobra.Command {
 		cmd.Annotations = map[string]string{}
 	}
 	cmd.Annotations[ownerAnnotation] = "true"
-	note := "Runs as the account setting, or the GitHub CLI's active account, even when agent_account applies, because only the tracker's owner can make these changes."
+	note := "Runs as the account setting, or else the default GitHub login (GH_TOKEN, or the GitHub CLI's active account), even when agent_account applies, because only the tracker's owner can make these changes."
 	cmd.Long = strings.TrimSpace(cmd.Long + " " + note)
 	return cmd
 }
@@ -85,11 +85,21 @@ func login(cmd *cobra.Command, cfg config.Config) (string, error) {
 	if !agent || cmd.Annotations[ownerAnnotation] == "" || chosen == owner {
 		return chosen, nil
 	}
-	as := owner
-	if as == "" {
-		as = "the GitHub CLI's active account"
+	return owner, warn(cmd.ErrOrStderr(), "%s runs as %s, not agent account %s, because only the tracker's owner can make its changes", cmd.CommandPath(), describeLogin(owner), chosen)
+}
+
+// describeLogin names the credential an empty account falls back to, in the order
+// go-gh reads them.
+func describeLogin(account string) string {
+	switch {
+	case account != "":
+		return account
+	case os.Getenv("GH_TOKEN") != "":
+		return "the GH_TOKEN login"
+	case os.Getenv("GITHUB_TOKEN") != "":
+		return "the GITHUB_TOKEN login"
 	}
-	return owner, warn(cmd.ErrOrStderr(), "%s runs as %s, not agent account %s, because only the tracker's owner can make its changes", cmd.CommandPath(), as, chosen)
+	return "the GitHub CLI's active account"
 }
 
 func openTracker(cmd *cobra.Command) (*session, error) {

@@ -97,7 +97,7 @@ require_private = true
 | `stale_days` | `ISSUE_TRACKER_STALE_DAYS` | `3` | Days without activity before a Doing ticket is stale |
 | `require_private` | `ISSUE_TRACKER_REQUIRE_PRIVATE` | `false` | Refuse to read a tracker that is not private |
 | `account` | `ISSUE_TRACKER_ACCOUNT` | None | GitHub CLI login to act as, instead of the active account or `GH_TOKEN` |
-| `agent_account` | `ISSUE_TRACKER_AGENT_ACCOUNT` | None | Login to act as when `AGENT=1`, instead of `account`; `project add`, `rm`, `scan`, and `import` still act as `account` |
+| `agent_account` | `ISSUE_TRACKER_AGENT_ACCOUNT` | None | Login to act as when `AGENT=1`, instead of `account`; `project add`, `rm`, `scan`, and `import` still act as `account`, or else the default login |
 
 Set `agent_account` to have agents write as a separate GitHub account while you keep writing as yourself. Both logins must be in the GitHub CLI's keyring (`gh auth login`). The second account needs write access to the tracker repository and Write access to each board, which each board grants under Settings, Manage access; repository access does not include it. `issue-tracker auth refresh` grants board access to the CLI's active account, so run `gh auth switch --user <login>` first to grant it to another one, and switch back afterwards.
 
