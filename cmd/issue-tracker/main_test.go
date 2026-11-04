@@ -484,8 +484,8 @@ func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
 
 	outsideRepository(t)
 	_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "list")
-	if err == nil || !strings.Contains(err.Error(), "not inside a registered repository: ") || !strings.Contains(err.Error(), "not a git repository") {
-		t.Fatalf("git's reason must be kept: err = %v", err)
+	if want := "not inside a registered repository: no git checkout here: pass --project <name>, or --all-projects for every project"; err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want exactly %q", err, want)
 	}
 }
 

@@ -50,8 +50,8 @@ func (c *Client) Projects(ctx context.Context) ([]Project, error) {
 	return meta.Projects, nil
 }
 
-// ProjectRepo returns the repository registered under a project name, reading only
-// the cached IDs.
+// ProjectRepo returns the repository registered under a project name from the
+// cached IDs, which it reads from GitHub only when there is no cache.
 func (c *Client) ProjectRepo(ctx context.Context, name string) (string, bool, error) {
 	meta, err := c.metadata(ctx)
 	if err != nil {
@@ -91,12 +91,32 @@ func (c *Client) CurrentProject(ctx context.Context, refresh bool) (Project, boo
 func CurrentRepo() (Repo, error) {
 	repo, err := repository.Current()
 	if err != nil {
-		return Repo{}, err
+		return Repo{}, noRepoReason(err)
 	}
 	if repo.Host != defaultHost {
 		return Repo{}, fmt.Errorf("%s/%s/%s is on %s, and projects are %s repositories", repo.Host, repo.Owner, repo.Name, repo.Host, defaultHost)
 	}
 	return Repo{Owner: repo.Owner, Name: repo.Name}, nil
+}
+
+// noRepoReason names why go-gh found no repository in one line. Its own errors span
+// lines when they quote git, which breaks the one-line results agents read.
+func noRepoReason(err error) error {
+	if os.Getenv("GH_REPO") != "" {
+		return err
+	}
+	if exec.Command("git", "rev-parse", "--git-dir").Run() != nil {
+		return errors.New("no git checkout here")
+	}
+	remotes, remoteErr := exec.Command("git", "remote").Output()
+	switch {
+	case remoteErr != nil:
+		first, _, _ := strings.Cut(err.Error(), "\n")
+		return errors.New(first)
+	case strings.TrimSpace(string(remotes)) == "":
+		return errors.New("this checkout has no git remote")
+	}
+	return errors.New("no git remote points to a GitHub host the GitHub CLI is logged in to")
 }
 
 // currentDir returns the working directory relative to the top of its checkout,

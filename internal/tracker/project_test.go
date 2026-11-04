@@ -287,12 +287,32 @@ func TestCurrentProject(t *testing.T) {
 	if _, ok, err := c.CurrentProject(ctx, true); ok || err != nil {
 		t.Fatalf("outside a repository: ok = %v, err = %v", ok, err)
 	}
-	if _, err := CurrentRepo(); err == nil {
-		t.Fatal("no repository here")
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
 	}
-	t.Setenv("GH_REPO", "ghe.example.com/o/go-tui")
-	_, err = CurrentRepo()
-	wantError(t, err, "ghe.example.com/o/go-tui is on ghe.example.com, and projects are github.com repositories")
+	reasons := []struct {
+		name  string
+		setup func()
+		want  string
+	}{
+		{"no checkout", func() {}, "no git checkout here"},
+		{"no remote", func() { git("remote", "remove", "origin"); t.Chdir(repo) }, "this checkout has no git remote"},
+		{"no GitHub remote", func() { git("remote", "add", "origin", "git@gitlab.example.com:o/go-tui.git") }, "no git remote points to a GitHub host the GitHub CLI is logged in to"},
+		{"another host", func() { t.Setenv("GH_REPO", "ghe.example.com/o/go-tui") }, "ghe.example.com/o/go-tui is on ghe.example.com, and projects are github.com repositories"},
+	}
+	for _, tt := range reasons {
+		tt.setup()
+		if _, err := CurrentRepo(); err == nil || err.Error() != tt.want {
+			t.Fatalf("%s: CurrentRepo() error = %v, want exactly %q", tt.name, err, tt.want)
+		}
+	}
+	t.Setenv("GH_REPO", "not a repository")
+	if _, err := CurrentRepo(); err == nil || strings.Contains(err.Error(), "git") {
+		t.Fatalf("a bad GH_REPO keeps go-gh's reason: %v", err)
+	}
 }
 
 func TestProjectRepoReadsTheCache(t *testing.T) {
