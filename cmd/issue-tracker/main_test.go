@@ -219,7 +219,7 @@ func TestSubListOutput(t *testing.T) {
 	}{
 		{"agent", "1", route, []string{"3\tCLOSED\tDone one\n4\tOPEN\tOpen one\n", "OK: #1: 1 of 2 done, 1 open\n"}},
 		{"human", "0", route, []string{"Done one", "[OK] #1: 1 of 2 done, 1 open\n"}},
-		{"human empty", "0", empty, []string{"No sub-issues.\n", "[OK] #1: 0 of 0 done, 0 open\n"}},
+		{"human empty", "0", empty, []string{"[OK] #1: 0 of 0 done, 0 open\n"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -419,12 +419,60 @@ func TestIssueListOutput(t *testing.T) {
 			}
 		}
 	})
-	t.Run("human reports an empty list", func(t *testing.T) {
+	t.Run("an empty list shows people the counts", func(t *testing.T) {
 		t.Setenv("AGENT", "0")
 		outsideRepository(t)
-		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(listRoute())), "issue", "list", "--all-projects")
-		if err != nil || !strings.Contains(stdout, "No tickets found.") {
+		closed := listPage(false, 37, ticketJSON(9, "go-tui", "Done", "2026-10-01T00:00:00Z"))
+		gh := fakegithub.New(listPage(false, 0), closed)
+		stdout, _, err := execute(t, fakeOpener(t, gh), "issue", "list", "--all-projects")
+		if want := "All projects: 0 TODO, 0 DOING, 0 DONE; 37 closed\n"; err != nil || stdout != want {
+			t.Fatalf("stdout = %q, err = %v, want %q", stdout, err, want)
+		}
+		if gh.Count() != 2 {
+			t.Fatalf("made %d requests, want the list and the closed count", gh.Count())
+		}
+
+		todo := ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")
+		unset := strings.Replace(ticketJSON(2, "go-tui", "Todo", "2026-10-01T00:00:00Z"), `"fieldValueByName":{"name":"Todo"}`, `"fieldValueByName":null`, 1)
+		gh = fakegithub.New(listPage(false, 2, todo, unset), listPage(false, 2, todo, unset), closed)
+		stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "list", "--all-projects", "--status", "Doing")
+		if want := "No tickets match. All projects: 1 TODO, 0 DOING, 0 DONE, 1 without a status; 37 closed\n"; err != nil || stdout != want {
+			t.Fatalf("stdout = %q, err = %v, want %q", stdout, err, want)
+		}
+		if gh.Count() != 3 {
+			t.Fatalf("made %d requests, want the list, the open count, and the closed count", gh.Count())
+		}
+
+		gh = fakegithub.New(listPage(false, 0), listPage(false, 0), fakegithub.Route{Match: "issues(first: 100", Status: 500, Body: "{}"})
+		if _, _, err = execute(t, fakeOpener(t, gh), "issue", "list", "--all-projects", "--ready"); err == nil {
+			t.Fatal("a failed count must fail the command")
+		}
+
+		t.Setenv("AGENT", "1")
+		gh = fakegithub.New(listPage(false, 0))
+		if stdout, _, err = execute(t, fakeOpener(t, gh), "issue", "list", "--all-projects"); err != nil || stdout != "" || gh.Count() != 1 {
+			t.Fatalf("agents get an empty list and no count: stdout = %q, err = %v, requests = %d", stdout, err, gh.Count())
+		}
+	})
+	t.Run("an empty unrouted list says so", func(t *testing.T) {
+		t.Setenv("AGENT", "0")
+		outsideRepository(t)
+		search := fakegithub.Route{Match: "search(query: $search", Body: `{"data":{"repository":{"isPrivate":true},"search":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`}
+		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(search)), "issue", "list", "--unrouted")
+		if err != nil || stdout != "0 unrouted tickets.\n" {
 			t.Fatalf("stdout = %q, err = %v", stdout, err)
+		}
+	})
+	t.Run("claim and close-eligible show people the counts", func(t *testing.T) {
+		t.Setenv("AGENT", "0")
+		outsideRepository(t)
+		doing := ticketJSON(1, "go-tui", "Doing", "2026-10-01T00:00:00Z")
+		for _, args := range [][]string{{"issue", "claim", "--next", "--all-projects"}, {"issue", "sub", "close-eligible", "--all-projects"}} {
+			gh := fakegithub.New(listPage(false, 1, doing), listPage(false, 1, doing), listPage(false, 4, doing))
+			stdout, _, err := execute(t, fakeOpener(t, gh), args...)
+			if err != nil || !strings.HasSuffix(stdout, ". All projects: 0 TODO, 1 DOING, 0 DONE; 4 closed\n") || !strings.HasPrefix(stdout, "[OK] no ") {
+				t.Fatalf("%v: stdout = %q, err = %v", args, stdout, err)
+			}
 		}
 	})
 }
@@ -642,6 +690,15 @@ func TestProjectRm(t *testing.T) {
 	)
 	stdout, _, err := execute(t, fakeOpener(t, gh), "project", "rm", "go-tui", "--yes")
 	if err != nil || !strings.Contains(stdout, "OK: removed project go-tui") {
+		t.Fatalf("stdout = %q, err = %v", stdout, err)
+	}
+}
+
+func TestProjectListCountsNoProjects(t *testing.T) {
+	t.Setenv("AGENT", "0")
+	empty := fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},"labels":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}},"projectsV2":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
+	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(empty)), "project", "list")
+	if err != nil || stdout != "0 projects registered.\n" {
 		t.Fatalf("stdout = %q, err = %v", stdout, err)
 	}
 }
@@ -1175,7 +1232,7 @@ func TestProjectScanOutput(t *testing.T) {
 		t.Setenv("AGENT", "0")
 		empty := fakegithub.Route{Match: "repositoryOwner(login", Body: `{"data":{"repositoryOwner":{"repositories":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
 		stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(empty)), "project", "scan")
-		if err != nil || !strings.Contains(stdout, "No open issues found.") {
+		if err != nil || !strings.Contains(stdout, "0 repositories with open issues.") {
 			t.Fatalf("stdout = %q, err = %v", stdout, err)
 		}
 	})

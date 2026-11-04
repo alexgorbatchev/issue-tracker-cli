@@ -91,12 +91,8 @@ func printTickets(w io.Writer, tickets []tracker.Ticket, project string, staleDa
 		}
 		rows = append(rows, []string{strconv.Itoa(ticket.Number), status, ticket.Priority(), ticket.Project, strings.Join(ticket.OtherLabels(), separator), ticket.Title})
 	}
-	if cobrahelptree.IsAgentMode() {
+	if cobrahelptree.IsAgentMode() || len(rows) == 0 {
 		return tsv(w, rows)
-	}
-	if len(rows) == 0 {
-		_, err := fmt.Fprintln(w, "No tickets found.")
-		return err
 	}
 	if project == "" || slices.ContainsFunc(tickets, func(ticket tracker.Ticket) bool { return ticket.Project != project }) {
 		return table(w, []string{"#", "Status", "Priority", "Project", "Labels", "Title"}, rows)
@@ -120,6 +116,28 @@ func warnPriorityConflicts(w io.Writer, tickets []tracker.Ticket) error {
 	return nil
 }
 
+// statusCounts describes a scope's tickets for a person who got an empty result:
+// its open tickets by board status, then its closed ones.
+func statusCounts(scope string, open []tracker.Ticket, closed int) string {
+	if scope == "" {
+		scope = "All projects"
+	}
+	counts := map[string]int{}
+	for _, ticket := range open {
+		counts[ticket.Status]++
+	}
+	parts := []string{}
+	unset := len(open)
+	for _, status := range []string{tracker.StatusTodo, tracker.StatusDoing, tracker.StatusDone} {
+		parts = append(parts, fmt.Sprintf("%d %s", counts[status], displayStatus(status)))
+		unset -= counts[status]
+	}
+	if unset > 0 {
+		parts = append(parts, fmt.Sprintf("%d without a status", unset))
+	}
+	return fmt.Sprintf("%s: %s; %d closed", scope, strings.Join(parts, ", "), closed)
+}
+
 func printProjects(w io.Writer, projects []tracker.Project) error {
 	rows := make([][]string, 0, len(projects))
 	for _, project := range projects {
@@ -129,7 +147,7 @@ func printProjects(w io.Writer, projects []tracker.Project) error {
 		return tsv(w, rows)
 	}
 	if len(rows) == 0 {
-		_, err := fmt.Fprintln(w, "No projects registered.")
+		_, err := fmt.Fprintln(w, "0 projects registered.")
 		return err
 	}
 	return table(w, []string{"Project", "Repository", "Visibility", "Board", "Path"}, rows)
@@ -249,8 +267,8 @@ func printSubIssues(w io.Writer, subs []tracker.SubIssue) error {
 		return tsv(w, rows)
 	}
 	if len(rows) == 0 {
-		_, err := fmt.Fprintln(w, "No sub-issues.")
-		return err
+		// The progress line that follows already says 0 of 0.
+		return nil
 	}
 	return table(w, []string{"#", "State", "Title"}, rows)
 }
@@ -277,7 +295,7 @@ func printScans(w io.Writer, scans []tracker.RepoScan) error {
 		return tsv(w, rows)
 	}
 	if len(rows) == 0 {
-		_, err := fmt.Fprintln(w, "No open issues found.")
+		_, err := fmt.Fprintln(w, "0 repositories with open issues.")
 		return err
 	}
 	return table(w, []string{"Repository", "Visibility", "Open", "Can move", "From others"}, rows)
