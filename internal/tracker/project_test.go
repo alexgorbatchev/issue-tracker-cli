@@ -259,7 +259,7 @@ func TestCurrentProject(t *testing.T) {
 	t.Chdir(repo)
 
 	c, gh := newClient(t)
-	project, ok, err := c.CurrentProject(ctx, false)
+	project, ok, err := c.ProjectIn(ctx, here(t), false)
 	if err != nil || !ok || project.Name != "go-tui" {
 		t.Fatalf("project = %+v, ok = %v, err = %v", project, ok, err)
 	}
@@ -271,22 +271,19 @@ func TestCurrentProject(t *testing.T) {
 	if out, err := exec.Command("git", "-C", repo, "remote", "set-url", "origin", "git@github.com:o/unregistered.git").CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
-	_, ok, err = c.CurrentProject(ctx, false)
+	_, ok, err = c.ProjectIn(ctx, here(t), false)
 	if err != nil || ok {
 		t.Fatalf("ok = %v, err = %v", ok, err)
 	}
 	wantCount(t, gh, 0)
 
 	gh.Add(metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
-	if _, ok, err = c.CurrentProject(ctx, true); err != nil || ok {
+	if _, ok, err = c.ProjectIn(ctx, here(t), true); err != nil || ok {
 		t.Fatalf("ok = %v, err = %v", ok, err)
 	}
 	wantCount(t, gh, 2)
 
 	t.Chdir(t.TempDir())
-	if _, ok, err := c.CurrentProject(ctx, true); ok || err != nil {
-		t.Fatalf("outside a repository: ok = %v, err = %v", ok, err)
-	}
 	git := func(args ...string) {
 		t.Helper()
 		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
@@ -341,13 +338,13 @@ func TestCurrentProjectFailures(t *testing.T) {
 	t.Setenv("GH_TOKEN", "tok")
 	t.Setenv("GH_REPO", "o/unregistered")
 	c, _ := newClient(t, fakegithub.Route{Match: "labels(first: 100, query", Status: 500, Body: "{}"})
-	_, _, err := c.CurrentProject(ctx, true)
+	_, _, err := c.ProjectIn(ctx, here(t), true)
 	wantError(t, err, "reading tracker metadata")
 
 	public := clientWith(t, fakegithub.New(), &metadata{})
 	public.requirePrivate = true
 	public.meta = nil
-	_, _, err = public.CurrentProject(ctx, false)
+	_, _, err = public.ProjectIn(ctx, here(t), false)
 	wantError(t, err, "not private")
 }
 

@@ -61,19 +61,9 @@ func (c *Client) ProjectRepo(ctx context.Context, name string) (string, bool, er
 	return project.Repo, ok, nil
 }
 
-// CurrentProject maps the working directory's GitHub remote, and its directory in the
-// checkout, to a project without calling GitHub unless refresh is set and the cached
-// metadata has no match.
-func (c *Client) CurrentProject(ctx context.Context, refresh bool) (Project, bool, error) {
-	current, err := CurrentRepo()
-	if err != nil {
-		return Project{}, false, nil
-	}
-	return c.ProjectIn(ctx, current, refresh)
-}
-
-// ProjectIn maps a repository, and the working directory within it, to a project the
-// way CurrentProject does, for a caller that has already looked the repository up.
+// ProjectIn maps a repository, and the working directory's place in its checkout, to
+// a project without calling GitHub unless refresh is set and the cached metadata
+// has no match. The deepest component holding the directory wins.
 func (c *Client) ProjectIn(ctx context.Context, current Repo, refresh bool) (Project, bool, error) {
 	repo := current.String()
 	dir := currentDir(ctx)

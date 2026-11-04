@@ -155,17 +155,17 @@ func TestCurrentProjectFollowsTheDirectory(t *testing.T) {
 	c := clientWith(t, gh, meta)
 
 	t.Chdir(dir)
-	project, ok, err := c.CurrentProject(ctx, false)
+	project, ok, err := c.ProjectIn(ctx, here(t), false)
 	if err != nil || !ok || project.Name != "mono/web" {
 		t.Fatalf("in a component: project = %+v, ok = %v, err = %v", project, ok, err)
 	}
 	t.Chdir(repo)
-	if project, ok, err = c.CurrentProject(ctx, false); err != nil || !ok || project.Name != "mono" {
+	if project, ok, err = c.ProjectIn(ctx, here(t), false); err != nil || !ok || project.Name != "mono" {
 		t.Fatalf("at the top: project = %+v, ok = %v, err = %v", project, ok, err)
 	}
 	t.Chdir(dir)
 	t.Setenv("GH_REPO", "o/go-tui")
-	if project, ok, err = c.CurrentProject(ctx, false); err != nil || !ok || project.Name != "mono" {
+	if project, ok, err = c.ProjectIn(ctx, here(t), false); err != nil || !ok || project.Name != "mono" {
 		t.Fatalf("GH_REPO names a repository, not a directory: project = %+v, ok = %v, err = %v", project, ok, err)
 	}
 	wantCount(t, gh, 0)
@@ -307,9 +307,6 @@ func TestAComponentRegisteredElsewhereRefreshesTheList(t *testing.T) {
 	wantCount(t, gh, 6)
 	if labels := gh.Requests()[5].Variables["labels"].([]any); len(labels) != 2 || labels[1] != "repo:mono/docs" {
 		t.Fatalf("the second read must include the new component: %v", labels)
-	}
-	if project, ok, _ := c.CurrentProject(ctx, false); ok {
-		t.Fatalf("no repository here: %+v", project)
 	}
 }
 

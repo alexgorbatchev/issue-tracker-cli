@@ -154,8 +154,8 @@ func reportClaim(cmd *cobra.Command, s *session, ticket tracker.Ticket) error {
 const listRemedy = "pass --project <name>, or --all-projects for every project"
 
 // listScope is the project for commands with both --project and --all-projects.
-// Every project takes --all-projects, so that a list, a claim, or a bulk close never
-// spans projects unasked.
+// Spanning every project takes --all-projects, so that a list, a claim, or a bulk
+// close never spans projects unasked.
 func (s *session) listScope(cmd *cobra.Command, name string, all bool) (string, error) {
 	if all && name != "" {
 		return "", errors.New("pass --project or --all-projects, not both")

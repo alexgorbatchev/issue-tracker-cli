@@ -501,6 +501,22 @@ func TestClaimNextScopesToTheCurrentRepository(t *testing.T) {
 	if labels := gh.Requests()[1].Variables["labels"]; labels == nil {
 		t.Fatal("a registered repository must scope claim --next")
 	}
+	if gh.Count() != 2 {
+		t.Fatalf("made %d requests, want the board search and the ready list", gh.Count())
+	}
+
+	t.Setenv("GH_REPO", "o/unknown")
+	refresh := fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},
+"labels":{"nodes":[{"id":"L1","name":"repo:go-tui","description":"o/go-tui"}],"pageInfo":{"hasNextPage":false,"endCursor":""}},
+"projectsV2":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
+	gh = fakegithub.New(refresh, fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":true}}}`})
+	_, _, err = execute(t, fakeOpener(t, gh), "issue", "claim", "--next")
+	if want := "o/unknown is not a registered project: register it with issue-tracker project add o/unknown, or pass --project <name>, or --all-projects for every project"; err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+	if gh.Count() != 2 {
+		t.Fatalf("made %d requests, want only the refresh and its visibility read, and no claim", gh.Count())
+	}
 }
 
 func TestCurrentRepositorySelectsProject(t *testing.T) {

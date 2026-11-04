@@ -173,3 +173,13 @@ func lastDescription(gh *fakegithub.GitHub) string {
 func graphQLError(errorType string) error {
 	return &api.GraphQLError{Errors: []api.GraphQLErrorItem{{Type: errorType, Message: "failed"}}}
 }
+
+// here is the working directory's repository.
+func here(t *testing.T) Repo {
+	t.Helper()
+	repo, err := CurrentRepo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
