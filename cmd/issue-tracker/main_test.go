@@ -307,8 +307,13 @@ func TestSubCloseEligibleFailures(t *testing.T) {
 	}
 	list := listRoute(parentJSON(1, `{"state":"CLOSED"}`))
 	gh := fakegithub.New(list, fakegithub.Route{Match: "isPrivate issue(number: $number)", Status: 500, Body: "{}"})
-	if _, _, err := execute(t, fakeOpener(t, gh), "issue", "sub", "close-eligible"); err == nil {
+	if _, _, err := execute(t, fakeOpener(t, gh), "issue", "sub", "close-eligible", "--all-projects"); err == nil {
 		t.Fatal("a failed close must fail the command")
+	}
+	gh = fakegithub.New()
+	_, _, err := execute(t, fakeOpener(t, gh), "issue", "sub", "close-eligible")
+	if err == nil || !strings.Contains(err.Error(), "not inside a registered repository: ") || gh.Count() != 0 {
+		t.Fatalf("closing needs a project or --all-projects outside a repository: err = %v, requests = %d", err, gh.Count())
 	}
 }
 
@@ -447,7 +452,7 @@ func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
 	t.Setenv("GH_REPO", "o/unknown")
 	gh := fakegithub.New(refresh(other), visibility)
 	_, _, err := execute(t, fakeOpener(t, gh), "issue", "list")
-	if err == nil || !strings.Contains(err.Error(), "o/unknown is not a registered project: register it with issue-tracker project add o/unknown, or pass --all-projects") {
+	if err == nil || !strings.Contains(err.Error(), "o/unknown is not a registered project: register it with issue-tracker project add o/unknown, or pass --all-projects for every project") {
 		t.Fatalf("err = %v", err)
 	}
 	if gh.Count() != 2 {
@@ -464,10 +469,23 @@ func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
 		t.Fatalf("made %d requests, want the refresh, its visibility read, the board search, and the list", gh.Count())
 	}
 
+	t.Setenv("GH_REPO", "me/go-tui")
+	gh = fakegithub.New(refresh(other), visibility)
+	_, _, err = execute(t, fakeOpener(t, gh), "issue", "list")
+	if err == nil || !strings.Contains(err.Error(), "me/go-tui is not a registered project, and cannot be: project go-tui already belongs to o/go-tui") || gh.Count() != 2 {
+		t.Fatalf("a taken name must not suggest project add: err = %v, requests = %d", err, gh.Count())
+	}
+
+	t.Setenv("GH_REPO", "ghe.example.com/o/new")
+	_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "list")
+	if err == nil || !strings.Contains(err.Error(), "not inside a registered repository: ghe.example.com/o/new is on ghe.example.com, and projects are github.com repositories: pass --project <name>, or --all-projects for every project") {
+		t.Fatalf("another host must be named: err = %v", err)
+	}
+
 	outsideRepository(t)
 	_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "list")
-	if err == nil || !strings.Contains(err.Error(), "not inside a registered repository: pass --project <name>, or --all-projects") {
-		t.Fatalf("err = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "not inside a registered repository: ") || !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("git's reason must be kept: err = %v", err)
 	}
 }
 

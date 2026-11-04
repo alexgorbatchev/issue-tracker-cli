@@ -264,8 +264,8 @@ func TestCurrentProject(t *testing.T) {
 		t.Fatalf("project = %+v, ok = %v, err = %v", project, ok, err)
 	}
 	wantCount(t, gh, 0)
-	if detected, ok := CurrentRepo(); !ok || detected.String() != "o/go-tui" {
-		t.Fatalf("CurrentRepo() = %v, %v", detected, ok)
+	if detected, err := CurrentRepo(); err != nil || detected.String() != "o/go-tui" {
+		t.Fatalf("CurrentRepo() = %v, %v", detected, err)
 	}
 
 	if out, err := exec.Command("git", "-C", repo, "remote", "set-url", "origin", "git@github.com:o/unregistered.git").CombinedOutput(); err != nil {
@@ -287,9 +287,28 @@ func TestCurrentProject(t *testing.T) {
 	if _, ok, err := c.CurrentProject(ctx, true); ok || err != nil {
 		t.Fatalf("outside a repository: ok = %v, err = %v", ok, err)
 	}
-	if _, ok := CurrentRepo(); ok {
+	if _, err := CurrentRepo(); err == nil {
 		t.Fatal("no repository here")
 	}
+	t.Setenv("GH_REPO", "ghe.example.com/o/go-tui")
+	_, err = CurrentRepo()
+	wantError(t, err, "ghe.example.com/o/go-tui is on ghe.example.com, and projects are github.com repositories")
+}
+
+func TestProjectRepoReadsTheCache(t *testing.T) {
+	c, gh := newClient(t)
+	repo, ok, err := c.ProjectRepo(ctx, "lib")
+	if err != nil || !ok || repo != "o/lib" {
+		t.Fatalf("ProjectRepo(lib) = %q, %v, %v", repo, ok, err)
+	}
+	if _, ok, err = c.ProjectRepo(ctx, "missing"); err != nil || ok {
+		t.Fatalf("an unregistered name: ok = %v, err = %v", ok, err)
+	}
+	wantCount(t, gh, 0)
+
+	failing := fakegithub.New(fakegithub.Route{Match: "labels(first: 100, query", Status: 500, Body: "{}"})
+	_, _, err = clientWith(t, failing, nil).ProjectRepo(ctx, "lib")
+	wantError(t, err, "reading tracker metadata")
 }
 
 func TestCurrentProjectFailures(t *testing.T) {

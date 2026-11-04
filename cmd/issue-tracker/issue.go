@@ -162,30 +162,36 @@ func (s *session) scope(cmd *cobra.Command, name string, all bool) (string, erro
 	return project.Name, nil
 }
 
-// listScope is scope for commands with both --project and --all-projects.
+// listScope is the project for commands with both --project and --all-projects.
+// Every project takes --all-projects, so that a list or a bulk close never spans
+// projects unasked. A repository missing from the cache may have been registered
+// on another machine, so the cache is refreshed before telling the reader to
+// register it.
 func (s *session) listScope(cmd *cobra.Command, name string, all bool) (string, error) {
 	if all && name != "" {
 		return "", errors.New("pass --project or --all-projects, not both")
 	}
-	return s.scope(cmd, name, all)
-}
-
-// listProject is the project issue list shows. Every project takes --all-projects,
-// so that a list never spans projects unasked. A repository missing from the cache
-// may have been registered on another machine, so the cache is refreshed before
-// telling the reader to register it.
-func (s *session) listProject(cmd *cobra.Command, name string, all bool) (string, error) {
 	if all || name != "" {
-		return s.listScope(cmd, name, all)
+		return name, nil
 	}
 	project, ok, err := s.client.CurrentProject(cmd.Context(), true)
 	if err != nil || ok {
 		return project.Name, err
 	}
-	if repo, ok := tracker.CurrentRepo(); ok {
-		return "", fmt.Errorf("%[1]s is not a registered project: register it with issue-tracker project add %[1]s, or pass --all-projects to list every project", repo)
+	repo, err := tracker.CurrentRepo()
+	if err != nil {
+		return "", fmt.Errorf("not inside a registered repository: %w: pass --project <name>, or --all-projects for every project", err)
 	}
-	return "", errors.New("not inside a registered repository: pass --project <name>, or --all-projects to list every project")
+	// Projects are named after their repository, so another owner's repository of
+	// the same name blocks registering this one.
+	taken, ok, err := s.client.ProjectRepo(cmd.Context(), repo.Name)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return "", fmt.Errorf("%s is not a registered project, and cannot be: project %s already belongs to %s: pass --project <name>, or --all-projects for every project", repo, repo.Name, taken)
+	}
+	return "", fmt.Errorf("%[1]s is not a registered project: register it with issue-tracker project add %[1]s, or pass --all-projects for every project", repo)
 }
 
 func newIssueCloseCommand(open opener) *cobra.Command {
@@ -318,7 +324,7 @@ func newIssueListCommand(open opener) *cobra.Command {
 				return err
 			}
 			if !opts.Unrouted {
-				if opts.Project, err = s.listProject(cmd, opts.Project, allProjects); err != nil {
+				if opts.Project, err = s.listScope(cmd, opts.Project, allProjects); err != nil {
 					return err
 				}
 			}
@@ -561,7 +567,7 @@ func newSubCloseEligibleCommand(open opener) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "Limit to a project; defaults to the current repository's project")
-	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "Cover every project from inside a registered repository")
+	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "Cover every project; needed outside a registered repository")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "List the parents without closing them")
 	return cmd
 }

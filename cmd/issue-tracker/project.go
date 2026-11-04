@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"
 	"github.com/spf13/cobra"
@@ -56,9 +57,9 @@ func addTarget(args []string) (tracker.Repo, error) {
 	if len(args) == 1 {
 		return tracker.ParseRepo(args[0])
 	}
-	repo, ok := tracker.CurrentRepo()
-	if !ok {
-		return tracker.Repo{}, errors.New("not in a GitHub repository: pass owner/repo")
+	repo, err := tracker.CurrentRepo()
+	if err != nil {
+		return tracker.Repo{}, fmt.Errorf("not in a GitHub repository: %w: pass owner/repo", err)
 	}
 	return repo, nil
 }

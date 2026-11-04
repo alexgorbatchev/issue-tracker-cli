@@ -50,14 +50,26 @@ func (c *Client) Projects(ctx context.Context) ([]Project, error) {
 	return meta.Projects, nil
 }
 
+// ProjectRepo returns the repository registered under a project name, reading only
+// the cached IDs.
+func (c *Client) ProjectRepo(ctx context.Context, name string) (string, bool, error) {
+	meta, err := c.metadata(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	project, ok := meta.project(name)
+	return project.Repo, ok, nil
+}
+
 // CurrentProject maps the working directory's GitHub remote, and its directory in the
 // checkout, to a project without calling GitHub unless refresh is set and the cached
 // metadata has no match.
 func (c *Client) CurrentProject(ctx context.Context, refresh bool) (Project, bool, error) {
-	repo, ok := currentRepo()
-	if !ok {
+	current, err := CurrentRepo()
+	if err != nil {
 		return Project{}, false, nil
 	}
+	repo := current.String()
 	dir := currentDir(ctx)
 	meta, err := c.metadata(ctx)
 	if err != nil {
@@ -73,22 +85,18 @@ func (c *Client) CurrentProject(ctx context.Context, refresh bool) (Project, boo
 	return project, ok, nil
 }
 
-// CurrentRepo returns the working directory's GitHub repository.
-func CurrentRepo() (Repo, bool) {
-	value, ok := currentRepo()
-	if !ok {
-		return Repo{}, false
-	}
-	repo, err := ParseRepo(value)
-	return repo, err == nil
-}
-
-func currentRepo() (string, bool) {
+// CurrentRepo returns the working directory's github.com repository, or why it has
+// none: no git checkout, no remote on a known GitHub host, or a repository on
+// another host.
+func CurrentRepo() (Repo, error) {
 	repo, err := repository.Current()
-	if err != nil || repo.Host != defaultHost {
-		return "", false
+	if err != nil {
+		return Repo{}, err
 	}
-	return repo.Owner + "/" + repo.Name, true
+	if repo.Host != defaultHost {
+		return Repo{}, fmt.Errorf("%s/%s/%s is on %s, and projects are %s repositories", repo.Host, repo.Owner, repo.Name, repo.Host, defaultHost)
+	}
+	return Repo{Owner: repo.Owner, Name: repo.Name}, nil
 }
 
 // currentDir returns the working directory relative to the top of its checkout,
