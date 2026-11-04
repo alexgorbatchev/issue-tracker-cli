@@ -114,7 +114,7 @@ require_private = true
 | `--state <state>` | | `open` | `open`, `closed`, or `all` |
 | `--status <status>` | | | `Todo`, `Doing`, or `Done` |
 | `--label <label>` | | | Only tickets with this label, ignoring case |
-| `--priority <P1>` | | | Only tickets whose most urgent priority label is this |
+| `--priority <priority>` | | | Only tickets whose most urgent priority label is this: `P0`, `P1`, `P2`, or `P3` |
 | `--search <text>` | | | Only tickets matching this search text |
 | `--ready` | | `false` | Only tickets that can start now, most urgent first |
 | `--stale` | | `false` | Only Doing tickets with no recent activity |

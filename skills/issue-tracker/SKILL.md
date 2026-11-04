@@ -105,7 +105,7 @@ Prints one tab-separated line per ticket, oldest first: number, status, priority
 - `--state` string: `open`, `closed`, or `all`. Default: open.
 - `--status` string: `Todo`, `Doing`, or `Done`.
 - `--label` string: only tickets with this label, ignoring case as GitHub does.
-- `--priority` string: only tickets whose priority is this, such as `P1`, ignoring case.
+- `--priority` string: only tickets whose priority is this: `P0`, `P1`, `P2`, or `P3`, ignoring case.
 - `--search` string: only tickets matching this GitHub search text in their title, body, or comments. GitHub serves 1,000 results per search query, so a longer result continues with another query from the last creation time, and `--limit 0` delivers every match once. The one exception is more than 1,000 matches created in the same second, which fails with the error listed under Errors and prints no tickets. Leave `sort:` out of the search text, because continuing depends on creation order.
 - `--ready` bool: only tickets that can be picked up now: with a project, open, without the `blocked` label, with no open blockers, no blocked parent or grandparent, no open sub-issues, and not in Doing or Done. A parent with open sub-issues is left out so that its children get claimed instead; `issue claim <number>` can still claim it. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers.
 - `--stale` bool: only Doing tickets with no ticket or board activity within the stale window.
@@ -114,7 +114,7 @@ Prints one tab-separated line per ticket, oldest first: number, status, priority
 
 ### issue-tracker issue inspect <number...>
 
-Reads up to 50 tickets in one request, in the order given; a repeated number is shown once. For each ticket, prints `number`, `title`, `state`, `status`, `project`, `url`, then `priority`, `labels`, `parent`, `blocked_by`, `blocking`, `sub_issue`, and `attachment` lines when present, then `body:` followed by the body, then each comment as `comment: <author> <time>` followed by its text. A blank line separates tickets. The `WARN:` line for a public project comes first, once per project.
+Reads up to 50 tickets in one request, in the order given; a repeated number is shown once. For each ticket, prints `number`, `title`, `state`, `status`, `project`, `url`, then `priority`, `labels`, `parent`, `blocked_by`, `blocking`, `sub_issue`, and `attachment` lines when present, then `body:` followed by the body, then each comment as `comment: <author> <time>` followed by its text. A blank line separates tickets. The `WARN:` line for a public project comes first, once per project, followed by a `WARN:` line for each ticket with more than one priority label.
 
 ### issue-tracker issue create
 
@@ -261,7 +261,7 @@ Prints help for a command. `--help`, `-h` bool prints help on any command, and `
 
 ## Priority
 
-A `priority:P0`, `priority:P1`, `priority:P2`, or `priority:P3` label sets a ticket's priority, with `P0` the most urgent; label names ignore case. `issue list --ready` and `issue claim --next` take the most urgent tickets first, then the oldest, and a ticket with no priority label comes after `P3`. A ticket with more than one priority label ranks by its most urgent one, and `issue list` (on stderr) and `issue inspect` print `WARN: #<number> has priorities <P0, P2>: ranked as <P0>` until the extra labels are removed with `issue label rm`. Set a priority with `issue label add <number> priority:P1`.
+A `priority:P0`, `priority:P1`, `priority:P2`, or `priority:P3` label sets a ticket's priority, with `P0` the most urgent; label names ignore case, and any other `priority:` label is an ordinary label. `issue list --ready` and `issue claim --next` take the most urgent tickets first, then the oldest, and a ticket with no priority label comes after `P3`. A ticket with more than one priority label ranks by its most urgent one, and `issue list` (on stderr) and `issue inspect` print `WARN: #<number> has priorities <P0, P2>: ranked as <P0>` until the extra labels are removed with `issue label rm`. Set a priority with `issue label add <number> priority:P1`.
 
 ## Attachments
 

@@ -12,28 +12,31 @@ import (
 // ticket read already returns, so ordering by it costs no request.
 const priorityPrefix = "priority:"
 
-// unprioritized ranks a ticket with no priority label after every labelled one.
-const unprioritized = -1
+const (
+	// lowestPriority is P3. Any other priority:* label is an ordinary label.
+	lowestPriority = 3
+	// unprioritized ranks a ticket with no priority label after every labelled one.
+	unprioritized = -1
+)
 
 // priorityRank reads a label such as priority:P1 as 1. Label names ignore case on
 // GitHub, so priority:p1 counts too.
 func priorityRank(label string) (int, bool) {
-	if len(label) < len(priorityPrefix) || !strings.EqualFold(label[:len(priorityPrefix)], priorityPrefix) {
+	if len(label) != len(priorityPrefix)+2 || !strings.EqualFold(label[:len(priorityPrefix)], priorityPrefix) {
 		return 0, false
 	}
-	level := label[len(priorityPrefix):]
-	if len(level) < 2 || (level[0] != 'P' && level[0] != 'p') || strings.Trim(level[1:], "0123456789") != "" {
+	level, digit := label[len(priorityPrefix)], label[len(priorityPrefix)+1]
+	if (level != 'P' && level != 'p') || digit < '0' || digit > '0'+lowestPriority {
 		return 0, false
 	}
-	rank, err := strconv.Atoi(level[1:])
-	return rank, err == nil
+	return int(digit - '0'), true
 }
 
 // parsePriority reads a priority such as P1, ignoring case.
 func parsePriority(value string) (string, error) {
 	rank, ok := priorityRank(priorityPrefix + value)
 	if !ok {
-		return "", fmt.Errorf("invalid priority %q: expected P and a number, such as P1", value)
+		return "", fmt.Errorf("invalid priority %q: expected P0, P1, P2, or P3", value)
 	}
 	return priorityName(rank), nil
 }
@@ -42,8 +45,8 @@ func priorityName(rank int) string {
 	return "P" + strconv.Itoa(rank)
 }
 
-// IsPriorityLabel reports a label that sets a ticket's priority.
-func IsPriorityLabel(label string) bool {
+// isPriorityLabel reports a label that sets a ticket's priority.
+func isPriorityLabel(label string) bool {
 	_, ok := priorityRank(label)
 	return ok
 }
@@ -93,14 +96,18 @@ func (t Ticket) PriorityConflicts() []string {
 // OtherLabels are the ticket's labels without its priority labels, which lists
 // show in a column of their own.
 func (t Ticket) OtherLabels() []string {
-	return slices.DeleteFunc(slices.Clone(t.Labels), IsPriorityLabel)
+	return slices.DeleteFunc(slices.Clone(t.Labels), isPriorityLabel)
 }
 
 // mostUrgentFirst orders tickets by priority and keeps the existing order, oldest
 // first, within each priority. A ticket with no priority comes last.
 func mostUrgentFirst(tickets []Ticket) {
+	ranks := make(map[int]int, len(tickets))
+	for _, ticket := range tickets {
+		ranks[ticket.Number] = ticket.priorityRank()
+	}
 	slices.SortStableFunc(tickets, func(a, b Ticket) int {
-		ra, rb := a.priorityRank(), b.priorityRank()
+		ra, rb := ranks[a.Number], ranks[b.Number]
 		switch {
 		case ra == rb:
 			return 0

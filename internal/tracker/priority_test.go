@@ -20,8 +20,8 @@ func TestPriorityLabels(t *testing.T) {
 		{"case ignored", []string{"Priority:p1"}, "P1", nil, []string{}},
 		{"most urgent wins", []string{"priority:P3", "bug", "priority:P0"}, "P0", []string{"P0", "P3"}, []string{"bug"}},
 		{"repeated is no conflict", []string{"priority:P1", "PRIORITY:P1"}, "P1", nil, []string{}},
-		{"not a priority", []string{"priority:high", "priority:P", "priority:P-1", "priority:P+1", "prio:P1"}, "", nil,
-			[]string{"priority:high", "priority:P", "priority:P-1", "priority:P+1", "prio:P1"}},
+		{"not a priority", []string{"priority:high", "priority:P", "priority:P4", "priority:P10", "priority:P01", "priority:P-1", "prio:P1"}, "", nil,
+			[]string{"priority:high", "priority:P", "priority:P4", "priority:P10", "priority:P01", "priority:P-1", "prio:P1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -43,12 +43,12 @@ func TestPriorityLabels(t *testing.T) {
 }
 
 func TestParsePriority(t *testing.T) {
-	for value, want := range map[string]string{"P1": "P1", "p0": "P0", "P12": "P12"} {
+	for value, want := range map[string]string{"P1": "P1", "p0": "P0", "P3": "P3"} {
 		if got, err := parsePriority(value); err != nil || got != want {
 			t.Fatalf("parsePriority(%q) = %q, %v, want %q", value, got, err, want)
 		}
 	}
-	for _, value := range []string{"", "1", "high", "P", "P1a"} {
+	for _, value := range []string{"", "1", "high", "P", "P1a", "P4", "P01", "P11"} {
 		if _, err := parsePriority(value); err == nil {
 			t.Fatalf("parsePriority(%q) must fail", value)
 		}
