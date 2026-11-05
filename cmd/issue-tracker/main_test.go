@@ -681,6 +681,48 @@ func TestProjectCommands(t *testing.T) {
 	}
 }
 
+func TestProjectSync(t *testing.T) {
+	metadata := fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{"id":"R","isPrivate":true,"owner":{"id":"O"},"defaultBranchRef":{"target":{"oid":"s"}},
+"labels":{"nodes":[{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},{"id":"LD","name":"repo:go-tui/docs","description":"o/go-tui:site/docs"},{"id":"L3","name":"repo:bare","description":"o/bare"}],"pageInfo":{"hasNextPage":false,"endCursor":""}},
+"projectsV2":{"nodes":[{"id":"B1","title":"go-tui","url":"https://b/1","field":{"id":"F","options":[{"id":"t","name":"Todo"}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
+	visibility := fakegithub.Route{Match: "{ isPrivate }", Body: `{"data":{"r0":{"isPrivate":false},"r1":{"isPrivate":false},"r2":{"isPrivate":true}}}`}
+	stale := fakegithub.Route{Match: "b0: node(id:", Body: `{"data":{"b0":{"shortDescription":""},"r0":{"description":"Terminal UI","url":"https://github.com/o/go-tui"}}}`}
+	current := fakegithub.Route{Match: "b0: node(id:", Body: `{"data":{"b0":{"shortDescription":"https://github.com/o/lib"},"r0":{"description":"","url":"https://github.com/o/lib"}}}`}
+	write := ok("d0: updateProjectV2(input")
+	tests := []struct {
+		name     string
+		mode     string
+		routes   []fakegithub.Route
+		args     []string
+		stdout   string
+		err      string
+		requests int
+	}{
+		{"named project", "1", []fakegithub.Route{stale, write}, []string{"project", "sync", "go-tui"}, "OK: updated 1 of 1 board descriptions\n", "", 2},
+		{"current board", "0", []fakegithub.Route{current}, []string{"project", "sync", "lib"}, "[OK] updated 0 of 1 board descriptions\n", "", 1},
+		{"every project", "1", []fakegithub.Route{metadata, visibility, stale, write}, []string{"project", "sync", "--all-projects"}, "OK: updated 1 of 1 board descriptions\n", "could not sync 1 projects: project bare has no board: run project add o/bare", 4},
+		{"name and every project", "1", nil, []string{"project", "sync", "go-tui", "--all-projects"}, "", "name a project or pass --all-projects, not both", 0},
+		{"no project outside a repository", "1", nil, []string{"project", "sync"}, "", "not inside a registered repository: no git checkout here: name a project, or pass --all-projects for every project", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AGENT", tt.mode)
+			outsideRepository(t)
+			gh := fakegithub.New(tt.routes...)
+			stdout, _, err := execute(t, fakeOpener(t, gh), tt.args...)
+			if tt.err == "" && err != nil || tt.err != "" && (err == nil || err.Error() != tt.err) {
+				t.Fatalf("err = %v, want %q", err, tt.err)
+			}
+			if stdout != tt.stdout {
+				t.Fatalf("stdout = %q, want %q", stdout, tt.stdout)
+			}
+			if gh.Count() != tt.requests {
+				t.Fatalf("made %d requests, want %d", gh.Count(), tt.requests)
+			}
+		})
+	}
+}
+
 func TestCloseNeedsExactlyOneKindOfEvidence(t *testing.T) {
 	t.Setenv("AGENT", "1")
 	outsideRepository(t)
@@ -906,7 +948,7 @@ func TestSessionFailureStopsCommands(t *testing.T) {
 	failed := func(*cobra.Command) (*session, error) { return nil, errors.New("no session") }
 	for _, args := range [][]string{
 		{"project", "add", "o/r"}, {"project", "inspect", "x"}, {"project", "list"}, {"project", "rm", "x", "--yes"},
-		{"project", "scan"}, {"project", "import", "o/r"},
+		{"project", "sync", "x"}, {"project", "scan"}, {"project", "import", "o/r"},
 		{"issue", "claim", "1"}, {"issue", "create", "--title", "T"}, {"issue", "inspect", "1"}, {"issue", "list"},
 		{"issue", "attachment", "pull", "1"}, {"issue", "release", "1"},
 	} {
@@ -925,7 +967,7 @@ func TestGitHubFailuresPropagate(t *testing.T) {
 		{"issue", "attachment", "pull", "1", "--dir", t.TempDir()},
 		{"issue", "create", "--project", "go-tui", "--title", "T"},
 		{"project", "inspect", "go-tui"}, {"project", "list"}, {"project", "add", "o/r"},
-		{"project", "scan"}, {"project", "import", "o/r"},
+		{"project", "sync", "go-tui"}, {"project", "sync", "--all-projects"}, {"project", "scan"}, {"project", "import", "o/r"},
 	} {
 		if _, _, err := execute(t, fakeOpener(t, fakegithub.New(fail)), args...); err == nil {
 			t.Fatalf("%v: want an error", args)
@@ -1090,7 +1132,7 @@ func TestDescribeLoginFollowsGoGHOrder(t *testing.T) {
 }
 
 func TestOwnerOnlyHelpSaysWhichAccountRuns(t *testing.T) {
-	for _, command := range []string{"add", "rm", "scan", "import"} {
+	for _, command := range []string{"add", "rm", "sync", "scan", "import"} {
 		stdout, _, err := execute(t, noSession, "project", command, "--help")
 		if err != nil || !strings.Contains(stdout, "Runs as the account setting, or else the default GitHub login (GH_TOKEN, or the GitHub CLI's active account), even when agent_account applies") {
 			t.Fatalf("project %s help = %q, %v", command, stdout, err)

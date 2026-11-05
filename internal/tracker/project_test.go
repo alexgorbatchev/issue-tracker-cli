@@ -89,7 +89,7 @@ func emptyMetadata() fakegithub.Route {
 
 func boardRoutes() []fakegithub.Route {
 	return []fakegithub.Route{
-		{Match: "$owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }", Body: `{"data":{"repository":{"id":"CODE"}}}`},
+		{Match: "$owner: String!, $name: String!) { repository(owner: $owner, name: $name) { description url } }", Body: `{"data":{"repository":{"description":"Terminal UI","url":"https://github.com/o/new"}}}`},
 		{Match: "createProjectV2(input", Body: `{"data":{"createProjectV2":{"projectV2":{"id":"BN","url":"https://b/n","field":{"id":"FN"}}}}}`},
 		{Match: "updateProjectV2Field(input", Body: `{"data":{"columns":{"projectV2Field":{"options":[{"id":"t","name":"Todo"},{"id":"g","name":"Doing"},{"id":"d","name":"Done"}]}},"view":{}}}`},
 		{Match: "label(name: $label)", Body: `{"data":{"repository":{"label":null}}}`},
@@ -114,6 +114,10 @@ func TestAddProjectCreatesBoardThenLabel(t *testing.T) {
 			columns = i
 			if !strings.Contains(req.Description, `name: "Doing"`) || !strings.Contains(req.Description, "BOARD_LAYOUT") {
 				t.Fatalf("columns = %s", req.Description)
+			}
+			if !strings.Contains(req.Description, `updateProjectV2(input: {projectId: "BN", shortDescription: $description})`) ||
+				req.Variables["description"] != "Terminal UI\n\nhttps://github.com/o/new" {
+				t.Fatalf("the new board must be described in the same request: %s %v", req.Description, req.Variables)
 			}
 		}
 		if strings.Contains(req.Description, "createLabel") {
@@ -210,7 +214,7 @@ func TestAddProjectReusesBoardFromFailedRun(t *testing.T) {
 	metadata := strings.ReplaceAll(emptyMetadata().Body, `"title":"unrelated"`, `"title":"new"`)
 	routes := []fakegithub.Route{
 		{Match: "labels(first: 100, query", Body: metadata},
-		boardRoutes()[0], boardRoutes()[3], boardRoutes()[4],
+		boardRoutes()[0], boardRoutes()[3], boardRoutes()[4], okRoute("d0: updateProjectV2(input"),
 	}
 	gh := fakegithub.New(routes...)
 	project, err := clientWith(t, gh, nil).AddProject(ctx, Repo{"o", "new"})
@@ -220,6 +224,24 @@ func TestAddProjectReusesBoardFromFailedRun(t *testing.T) {
 	if project.BoardID != "B1" {
 		t.Fatalf("project = %+v", project)
 	}
+	described := false
+	for _, req := range gh.Requests() {
+		if strings.Contains(req.Description, `d0: updateProjectV2(input: {projectId: "B1", shortDescription: $d0})`) {
+			described = req.Variables["d0"] == "Terminal UI\n\nhttps://github.com/o/new"
+		}
+		if strings.Contains(req.Description, "createProjectV2(input") {
+			t.Fatal("the board from the failed run must be reused")
+		}
+	}
+	if !described {
+		t.Fatalf("the reused board must be described: %v", gh.Requests())
+	}
+	// An empty tracker skips both visibility reads.
+	wantCount(t, gh, 6)
+
+	failing := append(routes[:4:4], fakegithub.Route{Match: "d0: updateProjectV2(input", Status: 500, Body: "{}"})
+	_, err = clientWith(t, fakegithub.New(failing...), nil).AddProject(ctx, Repo{"o", "new"})
+	wantError(t, err, "writing board descriptions")
 }
 
 func TestAddProjectFailures(t *testing.T) {
@@ -235,7 +257,7 @@ func TestAddProjectFailures(t *testing.T) {
 		want   string
 	}{
 		{"metadata", []fakegithub.Route{{Match: "labels(first: 100, query", Status: 500, Body: "{}"}}, "reading tracker metadata"},
-		{"missing repo", []fakegithub.Route{emptyMetadata(), {Match: "{ repository(owner: $owner, name: $name) { id } }", Body: `{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"x"}]}`}}, "not found"},
+		{"missing repo", []fakegithub.Route{emptyMetadata(), {Match: "{ repository(owner: $owner, name: $name) { description url } }", Body: `{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"x"}]}`}}, "not found"},
 		{"board", fail(1), "creating board"},
 		{"columns", fail(2), "configuring board"},
 		{"label read", fail(3), "reading label"},

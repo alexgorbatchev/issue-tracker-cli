@@ -188,14 +188,20 @@ func (c *Client) AddProject(ctx context.Context, repo Repo) (Project, error) {
 	if n := utf8.RuneCountInString(label); n > maxLabelName {
 		return Project{}, fmt.Errorf("label %s is %d characters, over GitHub's %d", label, n, maxLabelName)
 	}
-	if err := c.verifyRepo(ctx, repo); err != nil {
+	details, err := c.readRepo(ctx, repo)
+	if err != nil {
 		return Project{}, err
 	}
+	description := boardDescription(details.Description, details.URL)
 	item, ok := meta.board(name)
-	if !ok {
-		if item, err = c.createBoard(ctx, meta, name); err != nil {
-			return Project{}, err
-		}
+	if ok {
+		// A board left by a failed run may predate its description.
+		err = c.writeDescriptions(ctx, []boardUpdate{{Project: name, BoardID: item.ID, Description: description}})
+	} else {
+		item, err = c.createBoard(ctx, meta, name, description)
+	}
+	if err != nil {
+		return Project{}, err
 	}
 	labelID, err := c.writeLabel(ctx, meta, label, repo.String())
 	if err != nil {
@@ -210,19 +216,18 @@ func (c *Client) AddProject(ctx context.Context, repo Repo) (Project, error) {
 	return project, nil
 }
 
-func (c *Client) verifyRepo(ctx context.Context, repo Repo) error {
-	var response struct {
-		Repository struct{ ID string }
-	}
+// readRepo confirms a code repository exists and reads what its board describes.
+func (c *Client) readRepo(ctx context.Context, repo Repo) (repoDetails, error) {
+	var response struct{ Repository repoDetails }
 	variables := map[string]any{"owner": repo.Owner, "name": repo.Name}
-	err := c.do(ctx, `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }`, variables, &response)
+	err := c.do(ctx, `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { description url } }`, variables, &response)
 	if hasGraphQLType(err, graphQLNotFoundType) {
-		return fmt.Errorf("repository %s not found", repo)
+		return repoDetails{}, fmt.Errorf("repository %s not found", repo)
 	}
-	return err
+	return response.Repository, err
 }
 
-func (c *Client) createBoard(ctx context.Context, meta *metadata, title string) (board, error) {
+func (c *Client) createBoard(ctx context.Context, meta *metadata, title, description string) (board, error) {
 	var created struct {
 		CreateProjectV2 struct {
 			ProjectV2 struct {
@@ -241,25 +246,27 @@ func (c *Client) createBoard(ctx context.Context, meta *metadata, title string) 
 		return board{}, fmt.Errorf("creating board: %w", err)
 	}
 	node := created.CreateProjectV2.ProjectV2
-	options, err := c.writeColumns(ctx, node.ID, node.Field.ID)
+	options, err := c.writeColumns(ctx, node.ID, node.Field.ID, description)
 	if err != nil {
 		return board{}, err
 	}
 	return board{ID: node.ID, Title: title, URL: node.URL, StatusFieldID: node.Field.ID, StatusOptions: options}, nil
 }
 
-// writeColumns replaces the default status options and adds a board layout view
-// in one request, because a new project opens as a table with an In Progress column.
-func (c *Client) writeColumns(ctx context.Context, boardID, fieldID string) (map[string]string, error) {
+// writeColumns replaces the default status options, adds a board layout view, and
+// sets the description in one request, because a new project opens as a table with
+// an In Progress column.
+func (c *Client) writeColumns(ctx context.Context, boardID, fieldID, description string) (map[string]string, error) {
 	columns := make([]string, 0, len(boardColumns))
 	for _, column := range boardColumns {
 		columns = append(columns, fmt.Sprintf(`{name: %q, color: %s, description: ""}`, column.name, column.color))
 	}
-	mutation := fmt.Sprintf(`mutation {
+	mutation := fmt.Sprintf(`mutation($description: String!) {
   columns: updateProjectV2Field(input: {fieldId: %q, singleSelectOptions: [%s]}) {
     projectV2Field { ... on ProjectV2SingleSelectField { options { id name } } }
   }
-  view: createProjectV2View(input: {projectId: %q, name: %q, layout: BOARD_LAYOUT}) { clientMutationId }
+  view: createProjectV2View(input: {projectId: %[3]q, name: %q, layout: BOARD_LAYOUT}) { clientMutationId }
+  describe: updateProjectV2(input: {projectId: %[3]q, shortDescription: $description}) { clientMutationId }
 }`, fieldID, strings.Join(columns, ", "), boardID, boardViewName)
 	var response struct {
 		Columns struct {
@@ -268,7 +275,7 @@ func (c *Client) writeColumns(ctx context.Context, boardID, fieldID string) (map
 			}
 		}
 	}
-	if err := c.do(ctx, mutation, nil, &response); err != nil {
+	if err := c.do(ctx, mutation, map[string]any{"description": description}, &response); err != nil {
 		return nil, fmt.Errorf("configuring board: %w", err)
 	}
 	options := make(map[string]string, len(boardColumns))
