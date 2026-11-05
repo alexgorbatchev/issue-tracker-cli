@@ -197,7 +197,7 @@ func TestAddProjectKeepsALegacyName(t *testing.T) {
 func TestAddProjectRestoresRemovedProject(t *testing.T) {
 	routes := append([]fakegithub.Route{
 		emptyMetadata(),
-		{Match: "label(name: $label)", Body: `{"data":{"repository":{"label":{"id":"OLD"}}}}`},
+		{Match: "label(name: $label)", Body: `{"data":{"repository":{"label":{"id":"OLD","description":"removed: o/new"}}}}`},
 		okRoute("updateLabel"),
 	}, boardRoutes()...)
 	gh := fakegithub.New(routes...)
@@ -208,6 +208,28 @@ func TestAddProjectRestoresRemovedProject(t *testing.T) {
 	if project.LabelID != "OLD" {
 		t.Fatalf("project = %+v", project)
 	}
+}
+
+func TestAddProjectRefusesALabelHoldingOtherTickets(t *testing.T) {
+	label := func(description string) fakegithub.Route {
+		return fakegithub.Route{Match: "label(name: $label)", Body: fmt.Sprintf(`{"data":{"repository":{"label":{"id":"OLD","description":%q}}}}`, description)}
+	}
+	tests := []struct{ name, description, want string }{
+		{"removed for another repository", "removed: someorg/new", "label repo:new holds the closed tickets of removed project someorg/new: rename the label on GitHub before registering o/new"},
+		{"cleared before removals were recorded", "", `label repo:new has no registration and may hold the closed tickets of a project removed before removals were recorded: if they belong to o/new, set the label's description to "removed: o/new" on GitHub and repeat; otherwise rename the label first`},
+		{"registered elsewhere", "someorg/new", "label repo:new is registered for someorg/new"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := fakegithub.New(emptyMetadata(), label(tt.description))
+			_, err := clientWith(t, gh, nil).AddProject(ctx, Repo{"o", "new"})
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+			wantCount(t, gh, 2)
+		})
+	}
+
 }
 
 func TestAddProjectReusesBoardFromFailedRun(t *testing.T) {
@@ -257,7 +279,7 @@ func TestAddProjectFailures(t *testing.T) {
 		want   string
 	}{
 		{"metadata", []fakegithub.Route{{Match: "labels(first: 100, query", Status: 500, Body: "{}"}}, "reading tracker metadata"},
-		{"missing repo", []fakegithub.Route{emptyMetadata(), {Match: "{ repository(owner: $owner, name: $name) { description url } }", Body: `{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"x"}]}`}}, "not found"},
+		{"missing repo", []fakegithub.Route{emptyMetadata(), boardRoutes()[3], {Match: "{ repository(owner: $owner, name: $name) { description url } }", Body: `{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"x"}]}`}}, "not found"},
 		{"board", fail(1), "creating board"},
 		{"columns", fail(2), "configuring board"},
 		{"label read", fail(3), "reading label"},
@@ -281,7 +303,7 @@ func TestRemoveProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := gh.Requests()
-	if requests[3].Variables["description"] != "" {
+	if requests[3].Variables["description"] != "removed: o/go-tui" {
 		t.Fatalf("label = %v", requests[3].Variables)
 	}
 	query := requests[1].Variables["open"].(string)

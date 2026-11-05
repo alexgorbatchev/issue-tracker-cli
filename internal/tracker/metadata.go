@@ -73,6 +73,15 @@ func (p Project) componentName() string {
 	return name
 }
 
+// labelDescription is what a project's label description holds: owner/name for a
+// repository, and owner/name:path for a component.
+func (p Project) labelDescription() string {
+	if p.Component() {
+		return p.registration()
+	}
+	return p.Repo
+}
+
 // registration is the label description that registers a component: owner/name:path.
 func (p Project) registration() string {
 	return p.Repo + ":" + p.Path

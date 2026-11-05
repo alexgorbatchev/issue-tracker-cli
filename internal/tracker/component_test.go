@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -326,6 +327,26 @@ func TestAddComponentKeepsAnotherOwnersRepository(t *testing.T) {
 	wantCount(t, gh, 2)
 }
 
+func TestAddComponentTakesBackOnlyItsOwnRemovedLabel(t *testing.T) {
+	visibility := visibilityRoute(`{"data":{"r0":{"isPrivate":true},"r1":{"isPrivate":true}}}`)
+	removed := func(description string) fakegithub.Route {
+		return fakegithub.Route{Match: "label(name: $label)", Body: fmt.Sprintf(`{"data":{"repository":{"label":{"id":"OLD","description":%q}}}}`, description)}
+	}
+	gh := fakegithub.New(componentAdded(), visibility, removed("removed: o/mono:services/api"), createdField("api"), okRoute("updateLabel"))
+	project, err := clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "mono"}, "services/api", "")
+	if err != nil || project.LabelID != "OLD" {
+		t.Fatalf("a removed component takes its label back: %+v, %v", project, err)
+	}
+	if vars := gh.Requests()[len(gh.Requests())-1].Variables; vars["id"] != "OLD" || vars["description"] != "o/mono:services/api" {
+		t.Fatalf("label = %v", vars)
+	}
+
+	gh = fakegithub.New(componentAdded(), visibility, removed("removed: o/mono:old/api"))
+	_, err = clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "mono"}, "services/api", "")
+	wantError(t, err, "label repo:mono/api holds the closed tickets of removed project o/mono:old/api")
+	wantCount(t, gh, 3)
+}
+
 func TestAddComponentUsesALegacyRootName(t *testing.T) {
 	body := strings.Replace(metadataJSON, `{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},`, `{"id":"LM","name":"repo:mono","description":"x/mono"},`, 1)
 	body = strings.Replace(body, `"title":"go-tui"`, `"title":"mono"`, 1)
@@ -513,7 +534,10 @@ func TestAddComponent(t *testing.T) {
 	}
 	wantCount(t, gh, 5)
 	requests := gh.Requests()
-	field := requests[2]
+	if !strings.Contains(requests[2].Description, "label(name: $label)") {
+		t.Fatalf("the label must be checked before anything is written: %s", requests[2].Description)
+	}
+	field := requests[3]
 	if !strings.Contains(field.Description, "createProjectV2Field") || field.Variables["board"] != "B1" || field.Variables["name"] != "Component" {
 		t.Fatalf("the Component field must be created before the label: %s %v", field.Description, field.Variables)
 	}
@@ -570,7 +594,7 @@ func TestAddingAComponentKeepsTheOtherOptions(t *testing.T) {
 		t.Fatalf("project = %+v, err = %v", project, err)
 	}
 	wantCount(t, gh, 6)
-	options := gh.Requests()[3].Variables["options"].([]any)
+	options := gh.Requests()[4].Variables["options"].([]any)
 	kept := options[0].(map[string]any)
 	if len(options) != 2 || kept["id"] != "O-docs" || kept["color"] != "BLUE" || kept["description"] != "Manual" || options[1].(map[string]any)["name"] != "api" {
 		t.Fatalf("existing options must be sent back whole: %v", options)
@@ -583,6 +607,7 @@ func TestAddComponentFailures(t *testing.T) {
 	noBoard := registered
 	noBoard.Body = strings.Replace(registered.Body, `"title":"mono"`, `"title":"elsewhere"`, 1)
 	long := strings.Repeat("x", 41)
+	noLabel := fakegithub.Route{Match: "label(name: $label)", Body: `{"data":{"repository":{"label":null}}}`}
 	tests := []struct {
 		name           string
 		routes         []fakegithub.Route
@@ -597,6 +622,7 @@ func TestAddComponentFailures(t *testing.T) {
 		{"name with space", nil, Repo{"o", "mono"}, "a", "b c", "invalid component name"},
 		{"long label", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, "a", long, "over GitHub's 50"},
 		{"long description", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, strings.Repeat("d/", 50) + "x", "", "over GitHub's 100"},
+		{"no room to remove", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, strings.Repeat("d/", 46) + "x", "", `characters with "removed: ", over GitHub's 100`},
 		{"unregistered", []fakegithub.Route{registered, visibility}, Repo{"o", "other"}, "a", "", "repository o/other is not registered: run project add o/other first"},
 		{"other owner", []fakegithub.Route{registered, visibility}, Repo{"p", "mono"}, "a", "", "repository p/mono is not registered"},
 		{"no board", []fakegithub.Route{noBoard, visibility}, Repo{"o", "mono"}, "a", "", "has no board"},
@@ -604,10 +630,10 @@ func TestAddComponentFailures(t *testing.T) {
 		{"path taken", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, "docs", "manual", `docs is already registered as project "mono/docs"`},
 		{"refresh fails", []fakegithub.Route{{Match: "labels(first: 100, query", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "reading tracker metadata"},
 		{"label fails", []fakegithub.Route{registered, visibility, createdField("a"), {Match: "label(name: $label)", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "reading label"},
-		{"field fails", []fakegithub.Route{registered, visibility, {Match: "createProjectV2Field", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "creating Component field"},
+		{"field fails", []fakegithub.Route{registered, visibility, noLabel, {Match: "createProjectV2Field", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "creating Component field"},
 		{"backfill fails", []fakegithub.Route{registered, visibility, {Match: "createProjectV2Field", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "docs", "", "creating Component field"},
-		{"options unreadable", []fakegithub.Route{withField(registered), visibility, {Match: "node(id: $id)", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "reading Component options"},
-		{"options rejected", []fakegithub.Route{withField(registered), visibility, {Match: "node(id: $id)", Body: `{"data":{"node":{"options":[]}}}`}, {Match: "updateProjectV2Field", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "updating Component options"},
+		{"options unreadable", []fakegithub.Route{withField(registered), visibility, noLabel, {Match: "node(id: $id)", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "reading Component options"},
+		{"options rejected", []fakegithub.Route{withField(registered), visibility, noLabel, {Match: "node(id: $id)", Body: `{"data":{"node":{"options":[]}}}`}, {Match: "updateProjectV2Field", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "updating Component options"},
 	}
 	for _, tt := range tests {
 		gh := fakegithub.New(tt.routes...)

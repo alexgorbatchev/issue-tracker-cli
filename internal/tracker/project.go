@@ -188,6 +188,10 @@ func (c *Client) AddProject(ctx context.Context, repo Repo) (Project, error) {
 	if n := utf8.RuneCountInString(label); n > maxLabelName {
 		return Project{}, fmt.Errorf("label %s is %d characters, over GitHub's %d", label, n, maxLabelName)
 	}
+	labelID, err := c.claimLabel(ctx, label, repo.String())
+	if err != nil {
+		return Project{}, err
+	}
 	details, err := c.readRepo(ctx, repo)
 	if err != nil {
 		return Project{}, err
@@ -203,8 +207,7 @@ func (c *Client) AddProject(ctx context.Context, repo Repo) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
-	labelID, err := c.writeLabel(ctx, meta, label, repo.String())
-	if err != nil {
+	if labelID, err = c.writeLabel(ctx, meta, labelID, label, repo.String()); err != nil {
 		return Project{}, err
 	}
 	if meta, err = c.refreshMetadata(ctx); err != nil {
@@ -315,8 +318,8 @@ func (c *Client) AddComponent(ctx context.Context, repo Repo, dir, component str
 	if n := utf8.RuneCountInString(project.Label()); n > maxLabelName {
 		return Project{}, fmt.Errorf("label %s is %d characters, over GitHub's %d: pass a shorter --name", project.Label(), n, maxLabelName)
 	}
-	if n := utf8.RuneCountInString(project.registration()); n > maxLabelDescription {
-		return Project{}, fmt.Errorf("registration %s is %d characters, over GitHub's %d for a label description", project.registration(), n, maxLabelDescription)
+	if err := checkDescription(project.registration()); err != nil {
+		return Project{}, err
 	}
 	// Another owner's repository is named owner/name, which a component name can
 	// equal; rewriting its label would take that registration over.
@@ -339,11 +342,14 @@ func (c *Client) AddComponent(ctx context.Context, repo Repo, dir, component str
 			return Project{}, fmt.Errorf("%s is already registered as project %q", dir, other.Name)
 		}
 	}
+	labelID, err := c.claimLabel(ctx, project.Label(), project.registration())
+	if err != nil {
+		return Project{}, err
+	}
 	if err := c.ensureComponentOption(ctx, meta, root, project); err != nil {
 		return Project{}, err
 	}
-	labelID, err := c.writeLabel(ctx, meta, project.Label(), project.registration())
-	if err != nil {
+	if labelID, err = c.writeLabel(ctx, meta, labelID, project.Label(), project.registration()); err != nil {
 		return Project{}, err
 	}
 	// The component shares everything else with its repository, so the cache is
@@ -458,22 +464,47 @@ func (c *Client) writeFieldOptions(ctx context.Context, fieldID string, options 
 	return response.UpdateProjectV2Field, nil
 }
 
-// writeLabel creates a routing label, or restores the registration on a label kept
-// by a removed project. The description maps the project to its repository.
-func (c *Client) writeLabel(ctx context.Context, meta *metadata, name, description string) (string, error) {
+// removedPrefix starts the description of a removed project's label, which stays on
+// its closed tickets. The registration it keeps names the only repository that may
+// take the label back. The description no longer parses as a registration.
+const removedPrefix = "removed: "
+
+// claimLabel reads the label a registration will write and returns its ID, or empty
+// when there is none. It refuses a label that holds another registration's tickets,
+// because writing it would move them to this repository. It runs before anything is
+// written, so a refusal leaves nothing behind.
+func (c *Client) claimLabel(ctx context.Context, name, description string) (string, error) {
 	var existing struct {
 		Repository struct {
-			Label *struct{ ID string }
+			Label *struct{ ID, Description string }
 		}
 	}
 	variables := map[string]any{"owner": c.repo.Owner, "name": c.repo.Name, "label": name}
-	query := `query($owner: String!, $name: String!, $label: String!) { repository(owner: $owner, name: $name) { label(name: $label) { id } } }`
+	query := `query($owner: String!, $name: String!, $label: String!) { repository(owner: $owner, name: $name) { label(name: $label) { id description } } }`
 	if err := c.do(ctx, query, variables, &existing); err != nil {
 		return "", fmt.Errorf("reading label: %w", err)
 	}
-	if existing.Repository.Label != nil {
-		id := existing.Repository.Label.ID
-		return id, c.describeLabel(ctx, id, description)
+	label := existing.Repository.Label
+	switch {
+	case label == nil:
+		return "", nil
+	case label.Description == description || label.Description == removedPrefix+description:
+		return label.ID, nil
+	case label.Description == "":
+		return "", fmt.Errorf("label %s has no registration and may hold the closed tickets of a project removed before removals were recorded: "+
+			"if they belong to %s, set the label's description to %q on GitHub and repeat; otherwise rename the label first", name, description, removedPrefix+description)
+	case strings.HasPrefix(label.Description, removedPrefix):
+		return "", fmt.Errorf("label %s holds the closed tickets of removed project %s: rename the label on GitHub before registering %s",
+			name, strings.TrimPrefix(label.Description, removedPrefix), description)
+	}
+	return "", fmt.Errorf("label %s is registered for %s", name, label.Description)
+}
+
+// writeLabel creates a routing label, or registers the existing label claimLabel
+// returned. The description maps the project to its repository.
+func (c *Client) writeLabel(ctx context.Context, meta *metadata, labelID, name, description string) (string, error) {
+	if labelID != "" {
+		return labelID, c.describeLabel(ctx, labelID, description)
 	}
 	var created struct {
 		CreateLabel struct {
@@ -483,11 +514,21 @@ func (c *Client) writeLabel(ctx context.Context, meta *metadata, name, descripti
 	mutation := `mutation($repository: ID!, $name: String!, $description: String!) {
   createLabel(input: {repositoryId: $repository, name: $name, color: "0969da", description: $description}) { label { id } }
 }`
-	variables = map[string]any{"repository": meta.RepositoryID, "name": name, "description": description}
+	variables := map[string]any{"repository": meta.RepositoryID, "name": name, "description": description}
 	if err := c.do(ctx, mutation, variables, &created); err != nil {
 		return "", fmt.Errorf("creating label: %w", err)
 	}
 	return created.CreateLabel.Label.ID, nil
+}
+
+// checkDescription refuses a component registration whose removed form would not fit
+// a label description, since project rm has to be able to write it. A repository's
+// fits always, because its label name is shorter still.
+func checkDescription(description string) error {
+	if n := utf8.RuneCountInString(removedPrefix + description); n > maxLabelDescription {
+		return fmt.Errorf("registration %s is %d characters with %q, over GitHub's %d for a label description", description, n, removedPrefix, maxLabelDescription)
+	}
+	return nil
 }
 
 func (c *Client) describeLabel(ctx context.Context, labelID, description string) error {
@@ -498,8 +539,9 @@ func (c *Client) describeLabel(ctx context.Context, labelID, description string)
 	return nil
 }
 
-// RemoveProject unregisters a project with no open tickets and clears its label's
-// registration, so closed tickets keep their label. A repository also loses its
+// RemoveProject unregisters a project with no open tickets and marks its label
+// removed, so closed tickets keep their label and only this repository can take it
+// back. A repository also loses its
 // board, so closed tickets that were only on the board get the label first, or they
 // would lose their project with it. A repository with components keeps them until
 // they are removed, because they use its board.
@@ -548,7 +590,7 @@ func (c *Client) RemoveProject(ctx context.Context, name string) error {
 			return err
 		}
 	}
-	if err := c.describeLabel(ctx, project.LabelID, ""); err != nil {
+	if err := c.describeLabel(ctx, project.LabelID, removedPrefix+project.labelDescription()); err != nil {
 		return err
 	}
 	_, err = c.refreshMetadata(ctx)
