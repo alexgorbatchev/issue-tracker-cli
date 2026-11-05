@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"
 	"github.com/spf13/cobra"
@@ -11,7 +12,8 @@ import (
 func newProjectCommand(open opener) *cobra.Command {
 	cmd := &cobra.Command{Use: "project", Short: "Manage the repositories registered with the tracker"}
 	cmd.AddCommand(ownerOnly(newProjectAddCommand(open)), newProjectInspectCommand(open), newProjectListCommand(open),
-		ownerOnly(newProjectRmCommand(open)), ownerOnly(newProjectScanCommand(open)), ownerOnly(newProjectImportCommand(open)))
+		ownerOnly(newProjectRmCommand(open)), ownerOnly(newProjectSyncCommand(open)), ownerOnly(newProjectScanCommand(open)),
+		ownerOnly(newProjectImportCommand(open)))
 	return cmd
 }
 
@@ -132,6 +134,53 @@ func newProjectRmCommand(open opener) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&confirmed, "yes", false, "Confirm the removal")
+	return cmd
+}
+
+func newProjectSyncCommand(open opener) *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:   "sync [project]",
+		Short: "Copy a repository's description and link onto its project board",
+		Long:  "Sets a project board's description to its repository's description, followed by a blank line and the repository's URL, and leaves boards that already match unchanged. A component shares its repository's board.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if all && len(args) == 1 {
+				return errors.New("name a project or pass --all-projects, not both")
+			}
+			s, err := open(cmd)
+			if err != nil {
+				return err
+			}
+			var projects []tracker.Project
+			if all {
+				projects, err = s.client.Projects(cmd.Context())
+			} else {
+				name := ""
+				if len(args) == 1 {
+					name = args[0]
+				}
+				var project tracker.Project
+				project, err = s.requireProject(cmd, name, "name a project, or pass --all-projects for every project")
+				projects = []tracker.Project{project}
+			}
+			if err != nil {
+				return err
+			}
+			result, err := s.client.SyncDescriptions(cmd.Context(), projects)
+			if err != nil {
+				return err
+			}
+			if err := report(cmd.OutOrStdout(), "updated %d of %d board descriptions", len(result.Updated), result.Boards); err != nil {
+				return err
+			}
+			if len(result.Problems) > 0 {
+				return fmt.Errorf("could not sync %d projects: %s", len(result.Problems), strings.Join(result.Problems, "; "))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all-projects", false, "Sync the board of every project")
 	return cmd
 }
 

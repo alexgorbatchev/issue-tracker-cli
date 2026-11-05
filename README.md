@@ -14,7 +14,7 @@
 
 # How It Works
 
-- Register a repository with `issue-tracker project add`, which creates its board and label. A repository of the tracker's owner becomes the project `<name>`, and any other owner's becomes `<owner>/<name>`, so repositories from other organizations can be tracked beside your own.
+- Register a repository with `issue-tracker project add`, which creates its board and label, and describes the board with the repository's description and a link to it. A repository of the tracker's owner becomes the project `<name>`, and any other owner's becomes `<owner>/<name>`, so repositories from other organizations can be tracked beside your own.
 - Create tickets with `issue-tracker issue create`, from that repository or anywhere else with `--project`.
 - An agent runs `issue-tracker issue claim --next` to take the most urgent ready ticket, by its `priority:P0` to `priority:P3` label, then the oldest.
 - The agent reads the ticket and its attachments, then does the work in the ticket's repository.
@@ -26,6 +26,7 @@
 - A ticket you create inside a board on GitHub belongs to that project without a label. If a label and a board disagree, the label wins.
 - A ticket with neither a project label nor a place on a project board has no project. It is never ready and cannot be claimed until you give it a label or put it on a board in GitHub, and `issue list --unrouted` lists these tickets for triage.
 - A component is a project for one directory of a registered repository, registered with `project add --path`. It has its own `repo:<repo>/<component>` label and shares the repository's board, where a `Component` field lists the components. A ticket created on the board belongs to the component picked in its `Component` field, or to the repository when the field is empty; group a board view by `Component` and a ticket created in a group gets that component. Inside that directory the component is the current project; elsewhere in the repository, the repository's lists, claims, and counts include its components' tickets.
+- A board's description repeats its repository's description, then a blank line and the repository's URL, cut to fit GitHub's 300-character limit. `issue-tracker project sync` copies it again after a repository's description changes, and `--all-projects` does so for every board.
 - A claim is a Git ref named `refs/claims/<number>` in the tracker repository. GitHub refuses to create a ref that exists, so a second claimant fails at once. Refs do not appear on the Tags or Branches pages.
 - Claims never expire on their own. A Doing ticket with no ticket or board activity for `stale_days` is reported as stale and is left for you to release.
 - A ticket is ready when it has a project, is open, does not have the `blocked` label, has no open blockers, has no blocked parent or grandparent, has no open sub-issues, and is not in Doing or Done. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers. A ticket with sub-issues works as an epic: `issue sub list` shows its progress, and `issue sub close-eligible` closes it once they are all closed.
@@ -97,7 +98,7 @@ require_private = true
 | `stale_days` | `ISSUE_TRACKER_STALE_DAYS` | `3` | Days without activity before a Doing ticket is stale |
 | `require_private` | `ISSUE_TRACKER_REQUIRE_PRIVATE` | `false` | Refuse to read a tracker that is not private |
 | `account` | `ISSUE_TRACKER_ACCOUNT` | None | GitHub CLI login to act as, instead of the active account or `GH_TOKEN` |
-| `agent_account` | `ISSUE_TRACKER_AGENT_ACCOUNT` | None | Login to act as when `AGENT=1`, instead of `account`; `project add`, `rm`, `scan`, and `import` still act as `account`, or else the default login |
+| `agent_account` | `ISSUE_TRACKER_AGENT_ACCOUNT` | None | Login to act as when `AGENT=1`, instead of `account`; `project add`, `rm`, `sync`, `scan`, and `import` still act as `account`, or else the default login |
 
 Set `agent_account` to have agents write as a separate GitHub account while you keep writing as yourself. Both logins must be in the GitHub CLI's keyring (`gh auth login`). The second account needs write access to the tracker repository and Write access to each board, which each board grants under Settings, Manage access; repository access does not include it. `issue-tracker auth refresh` grants board access to the CLI's active account, so run `gh auth switch --user <login>` first to grant it to another one, and switch back afterwards.
 
@@ -180,6 +181,12 @@ Set `agent_account` to have agents write as a separate GitHub account while you 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--yes` | | `false` | Confirm the removal, which deletes a repository's board |
+
+`issue-tracker project sync [project]`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--all-projects` | | `false` | Sync the board of every project |
 
 `issue-tracker project scan`
 

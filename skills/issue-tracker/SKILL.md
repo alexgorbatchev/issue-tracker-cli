@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-04 14:39
+  last_modified: 2026-11-05 05:31
   status: current
 ---
 
@@ -44,9 +44,9 @@ agent_account = "my-bot"
 | `ISSUE_TRACKER_STALE_DAYS` | `stale_days` | Days without activity before a Doing ticket is stale. Default 3. |
 | `ISSUE_TRACKER_REQUIRE_PRIVATE` | `require_private` | When true, commands that read the tracker fail if it is not private. Default false. |
 | `ISSUE_TRACKER_ACCOUNT` | `account` | Login in the GitHub CLI's keyring to act as, instead of its active account or `GH_TOKEN`. Default: unset. |
-| `ISSUE_TRACKER_AGENT_ACCOUNT` | `agent_account` | Login to act as in agent mode, instead of `account`, except in `project add`, `project rm`, `project scan`, and `project import`. Default: unset. |
+| `ISSUE_TRACKER_AGENT_ACCOUNT` | `agent_account` | Login to act as in agent mode, instead of `account`, except in `project add`, `project rm`, `project sync`, `project scan`, and `project import`. Default: unset. |
 
-Authentication reuses the GitHub CLI login: `GH_TOKEN` when it is set, otherwise the active account. A configured account replaces both, so a person can write tickets as themselves while agents write as another account. Its token comes from `gh auth token --user <login>`, which fails with `reading the token of GitHub account <login>` until that login is added with `gh auth login`. Attachment uploads through `gh` use the same account. `project add`, `project rm`, `project scan`, and `project import` change what only the tracker's owner can, such as boards under the owner and issues moved out of the owner's repositories, so they act as `account`, or else the default login (`GH_TOKEN`, or the GitHub CLI's active account), even when `agent_account` applies, and print `WARN: issue-tracker <command> runs as <login>, not agent account <agent login>, because only the tracker's owner can make its changes` on stderr. That account needs write access to the tracker repository and Write access to each board, granted under the board's Settings, Manage access. Boards need the `project` scope: `issue-tracker auth refresh` grants it to the GitHub CLI's active account, so to grant it to another configured account, run `gh auth switch --user <login>` first and switch back afterwards. Project IDs are cached in `$XDG_CACHE_HOME/issue-tracker/` (default `~/.cache/issue-tracker/`). Ticket data is always read live.
+Authentication reuses the GitHub CLI login: `GH_TOKEN` when it is set, otherwise the active account. A configured account replaces both, so a person can write tickets as themselves while agents write as another account. Its token comes from `gh auth token --user <login>`, which fails with `reading the token of GitHub account <login>` until that login is added with `gh auth login`. Attachment uploads through `gh` use the same account. `project add`, `project rm`, `project sync`, `project scan`, and `project import` change what only the tracker's owner can, such as boards under the owner and issues moved out of the owner's repositories, so they act as `account`, or else the default login (`GH_TOKEN`, or the GitHub CLI's active account), even when `agent_account` applies, and print `WARN: issue-tracker <command> runs as <login>, not agent account <agent login>, because only the tracker's owner can make its changes` on stderr. That account needs write access to the tracker repository and Write access to each board, granted under the board's Settings, Manage access. Boards need the `project` scope: `issue-tracker auth refresh` grants it to the GitHub CLI's active account, so to grant it to another configured account, run `gh auth switch --user <login>` first and switch back afterwards. Project IDs are cached in `$XDG_CACHE_HOME/issue-tracker/` (default `~/.cache/issue-tracker/`). Ticket data is always read live.
 
 ## Project resolution
 
@@ -60,7 +60,7 @@ Runs `gh auth refresh --hostname github.com --scopes project` to add the `projec
 
 ### issue-tracker project add [owner/repo]
 
-Registers a repository, creating its board and label. Defaults to the current repository. Repeating it is safe, and a repository already registered under another name keeps it. The project is named `<name>` for a repository of the tracker's owner and `<owner>/<name>` otherwise. Fails when that name is already registered for another repository or as a component, or when the label name exceeds 50 characters.
+Registers a repository, creating its board and label. Defaults to the current repository. The board's description is set as `project sync` sets it. Repeating it is safe, and a repository already registered under another name keeps it. The project is named `<name>` for a repository of the tracker's owner and `<owner>/<name>` otherwise. Fails when that name is already registered for another repository or as a component, or when the label name exceeds 50 characters.
 
 With `--path`, registers that directory of an already registered repository as a component instead. It adds the component as an option of the board's `Component` field, creating the field on first use, then creates the label `repo:<repo>/<component>`, whose description `owner/repo:<path>` records the directory. It uses the repository's board. Repeating it for a component without an option adds the option. Prints `registered project <repo>/<component> for <path> in <owner/repo>`. Repeating it is safe. Fails when the repository is not registered, when the name or path is already registered to another component, when another owner's repository is registered under that name, or when the label name exceeds 50 characters or its description exceeds 100.
 
@@ -80,6 +80,12 @@ Prints one tab-separated line per project: name, repository, visibility, board U
 Unregisters a project with no open tickets and keeps the label on closed tickets. For a repository, labels closed tickets that were only on the board, then deletes the board. A component's board belongs to its repository and stays; its `Component` option is deleted, and the field with the last option, so tickets that named it belong to the repository. Fails for a repository with registered components until they are removed.
 
 - `--yes` bool: confirm the removal. Required.
+
+### issue-tracker project sync [project]
+
+Sets a project board's description to its repository's description, followed by a blank line and the repository's URL. A description too long for GitHub's 300-character limit is cut and ends with `…`, keeping the URL; a repository without a description gives just the URL. Boards that already match are left unchanged. A component shares its repository's board, so naming one syncs that board. Defaults to the current repository's project. Prints `updated <n> of <total> board descriptions`. When a project has no board or its repository is not found, the other boards are still synced, and the command then fails with `could not sync <n> projects: ` followed by each reason.
+
+- `--all-projects` bool: sync the board of every project. Cannot be combined with a project name.
 
 ### issue-tracker project scan
 

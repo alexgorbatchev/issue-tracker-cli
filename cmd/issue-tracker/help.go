@@ -35,7 +35,7 @@ var techCatalog = cobrahelptree.TechCatalog{
 			{Name: config.StaleDaysEnv, Description: "Days without activity before a Doing ticket is reported as stale; overrides stale_days"},
 			{Name: config.RequirePrivateEnv, Description: "Set to true to refuse a tracker that is not private; overrides require_private"},
 			{Name: config.AccountEnv, Description: "gh login to use instead of the active one or GH_TOKEN; overrides account"},
-			{Name: config.AgentAccountEnv, Description: "gh login to use when AGENT=1, instead of the account setting, except in project add, rm, scan, and import; overrides agent_account"},
+			{Name: config.AgentAccountEnv, Description: "gh login to use when AGENT=1, instead of the account setting, except in project add, rm, sync, scan, and import; overrides agent_account"},
 		},
 	},
 	"issue-tracker project add":              withArgs(true, arg("[owner/repo]", "Repository to register; defaults to the current repository")),
