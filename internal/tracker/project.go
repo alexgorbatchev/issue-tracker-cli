@@ -470,34 +470,47 @@ func (c *Client) writeFieldOptions(ctx context.Context, fieldID string, options 
 const removedPrefix = "removed: "
 
 // claimLabel reads the label a registration will write and returns its ID, or empty
-// when there is none. It refuses a label that holds another registration's tickets,
-// because writing it would move them to this repository. It runs before anything is
-// written, so a refusal leaves nothing behind.
+// when there is none. A label with tickets that names another registration is
+// refused, because writing it would move those tickets to this repository; a label
+// with no tickets moves nothing and is reused. It runs before anything is written,
+// so a refusal leaves nothing behind.
 func (c *Client) claimLabel(ctx context.Context, name, description string) (string, error) {
 	var existing struct {
 		Repository struct {
-			Label *struct{ ID, Description string }
+			Label *struct {
+				ID, Description string
+				Issues          struct{ TotalCount int }
+			}
 		}
 	}
 	variables := map[string]any{"owner": c.repo.Owner, "name": c.repo.Name, "label": name}
-	query := `query($owner: String!, $name: String!, $label: String!) { repository(owner: $owner, name: $name) { label(name: $label) { id description } } }`
+	query := `query($owner: String!, $name: String!, $label: String!) { repository(owner: $owner, name: $name) { label(name: $label) { id description issues { totalCount } } } }`
 	if err := c.do(ctx, query, variables, &existing); err != nil {
 		return "", fmt.Errorf("reading label: %w", err)
 	}
 	label := existing.Repository.Label
-	switch {
-	case label == nil:
+	if label == nil {
 		return "", nil
-	case label.Description == description || label.Description == removedPrefix+description:
-		return label.ID, nil
-	case label.Description == "":
-		return "", fmt.Errorf("label %s has no registration and may hold the closed tickets of a project removed before removals were recorded: "+
-			"if they belong to %s, set the label's description to %q on GitHub and repeat; otherwise rename the label first", name, description, removedPrefix+description)
-	case strings.HasPrefix(label.Description, removedPrefix):
-		return "", fmt.Errorf("label %s holds the closed tickets of removed project %s: rename the label on GitHub before registering %s",
-			name, strings.TrimPrefix(label.Description, removedPrefix), description)
 	}
-	return "", fmt.Errorf("label %s is registered for %s", name, label.Description)
+	// GitHub names repositories without regard to case.
+	held := strings.TrimPrefix(label.Description, removedPrefix)
+	if label.Issues.TotalCount == 0 || strings.EqualFold(held, description) {
+		return label.ID, nil
+	}
+	tickets := label.Issues.TotalCount
+	switch {
+	case label.Description == "":
+		return "", fmt.Errorf("label %s has no registration and holds %d tickets, perhaps of a project removed before removals were recorded: "+
+			"if they belong to %s, set the label's description to %q on GitHub and repeat; otherwise rename the label first", name, tickets, description, removedPrefix+description)
+	case strings.HasPrefix(label.Description, removedPrefix):
+		return "", fmt.Errorf("label %s holds the %d tickets of removed project %s: rename the label on GitHub before registering %s",
+			name, tickets, held, description)
+	}
+	if _, ok := parseRegistration(strings.TrimPrefix(name, labelPrefix), label.Description); ok {
+		return "", fmt.Errorf("label %s is registered for %s", name, label.Description)
+	}
+	return "", fmt.Errorf("label %s holds %d tickets and its description %q is not a registration: rename the label on GitHub before registering %s",
+		name, tickets, label.Description, description)
 }
 
 // writeLabel creates a routing label, or registers the existing label claimLabel
@@ -567,6 +580,11 @@ func (c *Client) RemoveProject(ctx context.Context, name string) error {
 	}
 	if summary.Open > 0 {
 		return fmt.Errorf("project %q has %d open tickets: close or move them first", name, summary.Open)
+	}
+	// A component registered before removals were recorded may leave no room for the
+	// removed prefix, so this is checked before anything is written.
+	if err := checkDescription(project.labelDescription()); err != nil {
+		return fmt.Errorf("cannot remove project %q: %w: shorten the label's description on GitHub first", name, err)
 	}
 	if len(onBoard) > 0 {
 		fields := make([]string, 0, len(onBoard))

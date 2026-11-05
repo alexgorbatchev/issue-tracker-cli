@@ -197,7 +197,7 @@ func TestAddProjectKeepsALegacyName(t *testing.T) {
 func TestAddProjectRestoresRemovedProject(t *testing.T) {
 	routes := append([]fakegithub.Route{
 		emptyMetadata(),
-		{Match: "label(name: $label)", Body: `{"data":{"repository":{"label":{"id":"OLD","description":"removed: o/new"}}}}`},
+		labelRoute("removed: o/new", 2),
 		okRoute("updateLabel"),
 	}, boardRoutes()...)
 	gh := fakegithub.New(routes...)
@@ -210,18 +210,21 @@ func TestAddProjectRestoresRemovedProject(t *testing.T) {
 	}
 }
 
+// labelRoute answers the label read with a label holding tickets.
+func labelRoute(description string, tickets int) fakegithub.Route {
+	return fakegithub.Route{Match: "label(name: $label)", Body: fmt.Sprintf(`{"data":{"repository":{"label":{"id":"OLD","description":%q,"issues":{"totalCount":%d}}}}}`, description, tickets)}
+}
+
 func TestAddProjectRefusesALabelHoldingOtherTickets(t *testing.T) {
-	label := func(description string) fakegithub.Route {
-		return fakegithub.Route{Match: "label(name: $label)", Body: fmt.Sprintf(`{"data":{"repository":{"label":{"id":"OLD","description":%q}}}}`, description)}
-	}
 	tests := []struct{ name, description, want string }{
-		{"removed for another repository", "removed: someorg/new", "label repo:new holds the closed tickets of removed project someorg/new: rename the label on GitHub before registering o/new"},
-		{"cleared before removals were recorded", "", `label repo:new has no registration and may hold the closed tickets of a project removed before removals were recorded: if they belong to o/new, set the label's description to "removed: o/new" on GitHub and repeat; otherwise rename the label first`},
+		{"removed for another repository", "removed: someorg/new", "label repo:new holds the 3 tickets of removed project someorg/new: rename the label on GitHub before registering o/new"},
+		{"cleared before removals were recorded", "", `label repo:new has no registration and holds 3 tickets, perhaps of a project removed before removals were recorded: if they belong to o/new, set the label's description to "removed: o/new" on GitHub and repeat; otherwise rename the label first`},
 		{"registered elsewhere", "someorg/new", "label repo:new is registered for someorg/new"},
+		{"free text", "docs", `label repo:new holds 3 tickets and its description "docs" is not a registration: rename the label on GitHub before registering o/new`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gh := fakegithub.New(emptyMetadata(), label(tt.description))
+			gh := fakegithub.New(emptyMetadata(), labelRoute(tt.description, 3))
 			_, err := clientWith(t, gh, nil).AddProject(ctx, Repo{"o", "new"})
 			if err == nil || err.Error() != tt.want {
 				t.Fatalf("error = %v, want %q", err, tt.want)
@@ -229,7 +232,17 @@ func TestAddProjectRefusesALabelHoldingOtherTickets(t *testing.T) {
 			wantCount(t, gh, 2)
 		})
 	}
+}
 
+func TestAddProjectReusesALabelThatMovesNothing(t *testing.T) {
+	for _, label := range []fakegithub.Route{labelRoute("removed: someorg/new", 0), labelRoute("docs", 0), labelRoute("removed: O/New", 4)} {
+		routes := append([]fakegithub.Route{emptyMetadata(), label, okRoute("updateLabel")}, boardRoutes()...)
+		gh := fakegithub.New(routes...)
+		project, err := clientWith(t, gh, nil).AddProject(ctx, Repo{"o", "new"})
+		if err != nil || project.LabelID != "OLD" {
+			t.Fatalf("%s: project = %+v, err = %v", label.Body, project, err)
+		}
+	}
 }
 
 func TestAddProjectReusesBoardFromFailedRun(t *testing.T) {
