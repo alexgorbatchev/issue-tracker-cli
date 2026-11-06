@@ -63,7 +63,7 @@ func (c *Client) SyncDescriptions(ctx context.Context, projects []Project) (Desc
 	seen := map[string]bool{}
 	for _, project := range projects {
 		if project.BoardID == "" {
-			result.Problems = append(result.Problems, errNoBoard(project).Error())
+			result.Problems = append(result.Problems, c.errNoBoard(project).Error())
 			continue
 		}
 		if seen[project.BoardID] {
@@ -121,7 +121,7 @@ func (c *Client) compareDescriptions(ctx context.Context, boards []Project) ([]b
 		case repo == nil:
 			problems = append(problems, fmt.Sprintf("repository %s of project %s not found", project.Repo, project.Name))
 		case board == nil:
-			problems = append(problems, errNoBoard(project).Error())
+			problems = append(problems, c.errNoBoard(project).Error())
 		default:
 			want := boardDescription(repo.Description, repo.URL)
 			if board.ShortDescription != want {

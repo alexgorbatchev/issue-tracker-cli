@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-05 09:40
+  last_modified: 2026-11-05 17:39
   status: current
 ---
 
@@ -47,6 +47,8 @@ agent_account = "my-bot"
 | `ISSUE_TRACKER_AGENT_ACCOUNT` | `agent_account` | Login to act as in agent mode, instead of `account`, except in `project add`, `project rm`, `project sync`, `project scan`, and `project import`. Default: unset. |
 
 Authentication reuses the GitHub CLI login: `GH_TOKEN` when it is set, otherwise the active account. A configured account replaces both, so a person can write tickets as themselves while agents write as another account. Its token comes from `gh auth token --user <login>`, which fails with `reading the token of GitHub account <login>` until that login is added with `gh auth login`. Attachment uploads through `gh` use the same account. `project add`, `project rm`, `project sync`, `project scan`, and `project import` change what only the tracker's owner can, such as boards under the owner and issues moved out of the owner's repositories, so they act as `account`, or else the default login (`GH_TOKEN`, or the GitHub CLI's active account), even when `agent_account` applies, and print `WARN: issue-tracker <command> runs as <login>, not agent account <agent login>, because only the tracker's owner can make its changes` on stderr. That account needs write access to the tracker repository and Write access to each board, granted under the board's Settings, Manage access. Boards need the `project` scope: `issue-tracker auth refresh` grants it to the GitHub CLI's active account, so to grant it to another configured account, run `gh auth switch --user <login>` first and switch back afterwards. Project IDs are cached in `$XDG_CACHE_HOME/issue-tracker/` (default `~/.cache/issue-tracker/`). Ticket data is always read live.
+
+Metadata caches are isolated by tracker repository and effective authentication credential. Switching accounts or rotating a token starts a fresh cache; returning to the same credential reuses its cache without an identity lookup. Cache filenames use a SHA-256 digest, and cached files contain metadata only. Repository-only caches from older versions remain untouched and are ignored.
 
 ## Project resolution
 
@@ -306,6 +308,7 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `label repo:<name> holds <n> tickets and its description "<text>" is not a registration: ...`: a hand-made label with this name already holds tickets. Ask the user to rename it.
 - `cannot remove project "<name>": registration <registration> is <n> characters with "removed: ", over GitHub's 100 for a label description: shorten the label's description on GitHub first`: a component registered before removals were recorded has no room for the removed prefix. Nothing was changed.
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
+- `project <name> is registered but its board is missing or inaccessible to <account>`: the project registration exists, but the selected account cannot resolve its board. Ask the tracker owner to verify that the board exists and that this account has Write access under the board's Settings, Manage access. A missing or inaccessible board is distinct from an unregistered project; repeating `project add` does not grant access.
 - `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or <remedy>`: a command ran in a repository that is not a project. `<remedy>` is `pass --project <name>, or --all-projects for every project` for `issue list`, `issue claim --next`, and `issue sub close-eligible`, `pass --project <name>` for `issue create`, and `name a project` for `project inspect`. Follow it, or ask the user whether to register the repository.
 - `<owner/repo> is not a registered project, and cannot be: project <name> already belongs to <other/repo>: <remedy>`: the name this repository would be registered under is held by another registration, such as a component or a repository registered before other owners' repositories got `<owner>/<name>`. Follow the remedy.
 - `not inside a registered repository: <reason>: <remedy>`: the command ran where no github.com repository was found. The reason is `no git checkout here`, `this checkout has no git remote`, `no git remote points to a GitHub host the GitHub CLI is logged in to`, `<host>/<owner>/<repo> is on <host>, and projects are github.com repositories`, or, for any other failure, git's or the GitHub CLI's own reason on one line, such as a missing git or a checkout git refuses under its `safe.directory` rule. Follow the remedy, or ask the user to fix git first when the reason is about git itself.

@@ -1139,7 +1139,7 @@ func (c *Client) CreateTicket(ctx context.Context, opts CreateOptions) (Ticket, 
 			return fmt.Errorf("unknown project %q: register it with project add", opts.Project)
 		}
 		if fresh.BoardID == "" {
-			return errNoBoard(fresh)
+			return c.errNoBoard(fresh)
 		}
 		project = fresh
 		created, err = c.insertTicket(ctx, meta, fresh, opts, ids)
@@ -1214,7 +1214,7 @@ func (c *Client) linkCreated(ctx context.Context, project Project, created creat
 			return fmt.Errorf("unknown project %q: register it with project add", project.Name)
 		}
 		if fresh.BoardID == "" {
-			return errNoBoard(fresh)
+			return c.errNoBoard(fresh)
 		}
 		var err error
 		project = fresh
@@ -1385,8 +1385,11 @@ func (c *Client) writeStatus(ctx context.Context, ticket Ticket, status string) 
 	}
 	return c.withFreshIDs(ctx, func(meta *metadata) error {
 		project, ok := meta.project(ticket.Project)
-		if !ok || project.BoardID == "" {
-			return fmt.Errorf("project %q has no board: run project add", ticket.Project)
+		if !ok {
+			return fmt.Errorf("unknown project %q: register it with project add", ticket.Project)
+		}
+		if project.BoardID == "" {
+			return c.errNoBoard(project)
 		}
 		itemID := ticket.itemID
 		fields := []string{}
@@ -1529,7 +1532,7 @@ func (c *Client) MoveTicket(ctx context.Context, number int, target string) erro
 		return err
 	}
 	if project.BoardID == "" {
-		return errNoBoard(project)
+		return c.errNoBoard(project)
 	}
 	// A component uses its repository's board, so moving between them keeps the item
 	// and sets its Component value. A ticket routed by the board needs no label for it.

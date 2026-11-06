@@ -1016,7 +1016,7 @@ func TestCreateTicketFailures(t *testing.T) {
 	wantCount(t, gh, 0)
 
 	_, err = c.CreateTicket(ctx, CreateOptions{Project: "bare", Title: "t"})
-	wantError(t, err, "has no board")
+	wantError(t, err, "board is missing or inaccessible")
 
 	c, _ = newClient(t, fakegithub.Route{Match: "createIssue(input", Status: 500, Body: "{}"})
 	_, err = c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t"})
@@ -1118,7 +1118,7 @@ func TestSetStatus(t *testing.T) {
 	wantCount(t, gh, 2)
 
 	c, _ = newClient(t, ticketRoute(ticketSpec{number: 1, project: "bare", status: "Todo"}))
-	wantError(t, c.SetStatus(ctx, 1, StatusDone), "has no board")
+	wantError(t, c.SetStatus(ctx, 1, StatusDone), "board is missing or inaccessible")
 
 	c, gh = newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui"}),
 		fakegithub.Route{Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"NEWITEM"}}}}`}, okRoute("updateProjectV2ItemFieldValue"))
@@ -1163,7 +1163,7 @@ func TestMoveTicket(t *testing.T) {
 	wantCount(t, gh, 1)
 
 	c, _ = newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui"}))
-	wantError(t, c.MoveTicket(ctx, 1, "bare"), "has no board")
+	wantError(t, c.MoveTicket(ctx, 1, "bare"), "board is missing or inaccessible")
 
 	c, _ = newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui"}), fakegithub.Route{Match: "addLabelsToLabelable", Status: 500, Body: "{}"})
 	wantError(t, c.MoveTicket(ctx, 1, "lib"), "moving ticket")

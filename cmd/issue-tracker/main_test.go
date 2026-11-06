@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -41,19 +40,21 @@ func execute(t *testing.T, open opener, args ...string) (string, string, error) 
 func fakeOpener(t *testing.T, gh *fakegithub.GitHub) opener {
 	t.Helper()
 	cache := t.TempDir()
-	options := map[string]string{"Todo": "t", "Doing": "g", "Done": "d"}
-	meta := map[string]any{
-		"repository_id": "REPO", "owner_id": "OWNER", "head_oid": "sha", "is_private": true,
-		"projects": []map[string]any{
-			{"name": "go-tui", "repo": "o/go-tui", "label_id": "L1", "board_id": "B1", "board_url": "https://b/1", "status_field_id": "F", "status_options": options},
-			{"name": "lib", "repo": "o/lib", "public": true, "label_id": "L2", "board_id": "B2", "board_url": "https://b/2", "status_field_id": "F", "status_options": options},
-		},
-	}
-	data, err := json.Marshal(meta)
+	seed := fakegithub.New(
+		fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{
+			"id":"REPO","isPrivate":true,"owner":{"id":"OWNER"},"defaultBranchRef":{"target":{"oid":"sha"}},
+			"labels":{"nodes":[{"id":"L1","name":"repo:go-tui","description":"o/go-tui"},{"id":"L2","name":"repo:lib","description":"o/lib"}]},
+			"projectsV2":{"nodes":[
+				{"id":"B1","title":"go-tui","url":"https://b/1","field":{"id":"F","options":[{"id":"t","name":"Todo"},{"id":"g","name":"Doing"},{"id":"d","name":"Done"}]}},
+				{"id":"B2","title":"lib","url":"https://b/2","field":{"id":"F","options":[{"id":"t","name":"Todo"},{"id":"g","name":"Doing"},{"id":"d","name":"Done"}]}}
+			]}}}}`},
+		fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":true},"r1":{"isPrivate":false}}}`},
+	)
+	client, err := tracker.New(tracker.Options{Repo: tracker.Repo{Owner: "o", Name: "tracker"}, CacheDir: cache, Transport: seed, Token: "tok"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cache, "o-tracker.json"), data, 0o600); err != nil {
+	if _, err := client.Projects(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return func(*cobra.Command) (*session, error) {
@@ -700,7 +701,7 @@ func TestProjectSync(t *testing.T) {
 	}{
 		{"named project", "1", []fakegithub.Route{stale, write}, []string{"project", "sync", "go-tui"}, "OK: updated 1 of 1 board descriptions\n", "", 2},
 		{"current board", "0", []fakegithub.Route{current}, []string{"project", "sync", "lib"}, "[OK] updated 0 of 1 board descriptions\n", "", 1},
-		{"every project", "1", []fakegithub.Route{metadata, visibility, stale, write}, []string{"project", "sync", "--all-projects"}, "OK: updated 1 of 1 board descriptions\n", "could not sync 1 projects: project bare has no board: run project add o/bare", 4},
+		{"every project", "1", []fakegithub.Route{metadata, visibility, stale, write}, []string{"project", "sync", "--all-projects"}, "OK: updated 1 of 1 board descriptions\n", "could not sync 1 projects: project bare is registered but its board is missing or inaccessible to the current GitHub account: ask the tracker owner to verify the board and this account's Write access in Settings > Manage access", 4},
 		{"name and every project", "1", nil, []string{"project", "sync", "go-tui", "--all-projects"}, "", "name a project or pass --all-projects, not both", 0},
 		{"no project outside a repository", "1", nil, []string{"project", "sync"}, "", "not inside a registered repository: no git checkout here: name a project, or pass --all-projects for every project", 0},
 	}

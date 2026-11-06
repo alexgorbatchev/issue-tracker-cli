@@ -310,7 +310,7 @@ func (c *Client) AddComponent(ctx context.Context, repo Repo, dir, component str
 		return Project{}, fmt.Errorf("repository %s is not registered: run project add %s first", repo, repo)
 	}
 	if root.BoardID == "" {
-		return Project{}, errNoBoard(root)
+		return Project{}, c.errNoBoard(root)
 	}
 	// The repository's registered name, not the one it would get today, so that a
 	// repository registered under an older rule keeps its components beside it.
@@ -674,6 +674,10 @@ func (c *Client) ResolveProject(ctx context.Context, name string) (Project, erro
 }
 
 // errNoBoard explains a project registered without a usable board.
-func errNoBoard(project Project) error {
-	return errors.New("project " + project.Name + " has no board: run project add " + project.Repo)
+func (c *Client) errNoBoard(project Project) error {
+	account := "the current GitHub account"
+	if c.account != "" {
+		account = "GitHub account " + c.account
+	}
+	return fmt.Errorf("project %s is registered but its board is missing or inaccessible to %s: ask the tracker owner to verify the board and this account's Write access in Settings > Manage access", project.Name, account)
 }

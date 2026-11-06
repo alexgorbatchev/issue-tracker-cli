@@ -632,7 +632,7 @@ func TestAddComponentFailures(t *testing.T) {
 		{"no room to remove", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, strings.Repeat("d/", 46) + "x", "", `characters with "removed: ", over GitHub's 100`},
 		{"unregistered", []fakegithub.Route{registered, visibility}, Repo{"o", "other"}, "a", "", "repository o/other is not registered: run project add o/other first"},
 		{"other owner", []fakegithub.Route{registered, visibility}, Repo{"p", "mono"}, "a", "", "repository p/mono is not registered"},
-		{"no board", []fakegithub.Route{noBoard, visibility}, Repo{"o", "mono"}, "a", "", "has no board"},
+		{"no board", []fakegithub.Route{noBoard, visibility}, Repo{"o", "mono"}, "a", "", "board is missing or inaccessible"},
 		{"name taken", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, "site/docs", "docs", `project "mono/docs" is already registered for o/mono:docs`},
 		{"path taken", []fakegithub.Route{registered, visibility}, Repo{"o", "mono"}, "docs", "manual", `docs is already registered as project "mono/docs"`},
 		{"refresh fails", []fakegithub.Route{{Match: "labels(first: 100, query", Status: 500, Body: "{}"}}, Repo{"o", "mono"}, "a", "", "reading tracker metadata"},

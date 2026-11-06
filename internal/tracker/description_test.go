@@ -56,7 +56,7 @@ func TestSyncDescriptionsWritesOnlyChangedBoards(t *testing.T) {
 	if result.Boards != 2 || strings.Join(result.Updated, ",") != "go-tui" {
 		t.Fatalf("result = %+v, want the component's shared board read once and only go-tui updated", result)
 	}
-	if len(result.Problems) != 1 || result.Problems[0] != "project bare has no board: run project add o/bare" {
+	if len(result.Problems) != 1 || result.Problems[0] != "project bare is registered but its board is missing or inaccessible to the current GitHub account: ask the tracker owner to verify the board and this account's Write access in Settings > Manage access" {
 		t.Fatalf("problems = %q", result.Problems)
 	}
 	wantCount(t, gh, 2)
@@ -87,7 +87,7 @@ func TestSyncDescriptionsReportsMissingRepositoriesAndBoards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"repository o/go-tui of project go-tui not found", "project lib has no board: run project add o/lib"}
+	want := []string{"repository o/go-tui of project go-tui not found", "project lib is registered but its board is missing or inaccessible to the current GitHub account: ask the tracker owner to verify the board and this account's Write access in Settings > Manage access"}
 	if strings.Join(result.Problems, "|") != strings.Join(want, "|") || len(result.Updated) != 0 {
 		t.Fatalf("result = %+v", result)
 	}

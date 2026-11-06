@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -284,7 +285,11 @@ func (m *metadata) board(title string) (board, bool) {
 }
 
 func (c *Client) cachePath() string {
-	return filepath.Join(c.cacheDir, c.repo.Owner+"-"+c.repo.Name+".json")
+	// Use the credential selected by New, not the optional account setting: an
+	// environment token or active gh login can change without an account name.
+	// Token rotation also gets fresh metadata without an identity API request.
+	key := sha256.Sum256([]byte(defaultHost + "\x00" + strings.ToLower(c.repo.String()) + "\x00" + c.token))
+	return filepath.Join(c.cacheDir, fmt.Sprintf("metadata-%x.json", key))
 }
 
 // metadata returns cached IDs, fetching them on the first use.
