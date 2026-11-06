@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-05 17:39
+  last_modified: 2026-11-05 19:37
   status: current
 ---
 
@@ -25,6 +25,8 @@ Set `AGENT=1` on every invocation, or export it for the session. Read exit statu
 7. To stop without finishing, run `issue-tracker issue release <number>`.
 
 Read and follow the `WARN:` line printed for public projects: keep ticket text, attachments, ticket numbers, and the tracker repository name out of that project's commits, pull requests, and branch names.
+
+Visibility checks treat a missing or access-denied repository, including one blocked by organization SAML enforcement, as public for warnings. Other repositories' visibility results remain usable, so an unrelated denial leaves accessible project operations available. Errors reading tracker metadata, accessing the requested repository or board, authenticating, or handling rate limits still fail the operation.
 
 ## Configuration
 

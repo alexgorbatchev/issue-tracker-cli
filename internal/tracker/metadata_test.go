@@ -93,7 +93,7 @@ func TestRefreshFollowsBothConnections(t *testing.T) {
 }
 
 func TestUnresolvableRepositoryCountsAsPublic(t *testing.T) {
-	gh := fakegithub.New(metadataRoute(), visibilityRoute(`{"data":{"r0":null},"errors":[{"type":"NOT_FOUND","message":"gone"}]}`))
+	gh := fakegithub.New(metadataRoute(), visibilityRoute(`{"data":{"r0":null},"errors":[{"type":"NOT_FOUND","path":["r0"],"message":"gone"}]}`))
 	projects, err := clientWith(t, gh, nil).Projects(context.Background())
 	if err != nil {
 		t.Fatal(err)

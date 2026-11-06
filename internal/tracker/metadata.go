@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/cli/go-gh/v2/pkg/api"
 )
 
 const (
@@ -445,7 +447,7 @@ func (c *Client) refreshMetadata(ctx context.Context) (*metadata, error) {
 }
 
 // readVisibility records which projects are public. A repository GitHub cannot
-// resolve counts as public so that the copying warning errs on the safe side.
+// resolve or access counts as public so that the copying warning errs on the safe side.
 func (c *Client) readVisibility(ctx context.Context, meta *metadata) error {
 	if len(meta.Projects) == 0 {
 		return nil
@@ -461,14 +463,40 @@ func (c *Client) readVisibility(ctx context.Context, meta *metadata) error {
 	}
 	query.WriteString(" }")
 	response := map[string]*struct{ IsPrivate bool }{}
-	if err := c.do(ctx, query.String(), nil, &response); err != nil && !hasGraphQLType(err, graphQLNotFoundType) {
-		return fmt.Errorf("reading project visibility: %w", err)
+	if err := c.do(ctx, query.String(), nil, &response); err != nil {
+		var gqlErr *api.GraphQLError
+		if !errors.As(err, &gqlErr) || len(gqlErr.Errors) == 0 {
+			return fmt.Errorf("reading project visibility: %w", err)
+		}
+		for _, item := range gqlErr.Errors {
+			alias, ok := unavailableVisibilityAlias(item, len(meta.Projects))
+			if !ok {
+				return fmt.Errorf("reading project visibility: %w", err)
+			}
+			// go-gh retains partial data; failed fields cannot establish privacy.
+			delete(response, alias)
+		}
 	}
 	for i := range meta.Projects {
 		node := response["r"+strconv.Itoa(i)]
 		meta.Projects[i].Public = node == nil || !node.IsPrivate
 	}
 	return nil
+}
+
+func unavailableVisibilityAlias(item api.GraphQLErrorItem, count int) (string, bool) {
+	if item.Type != graphQLNotFoundType && item.Type != "FORBIDDEN" {
+		return "", false
+	}
+	if len(item.Path) < 1 || len(item.Path) > 2 || (len(item.Path) == 2 && item.Path[1] != "isPrivate") {
+		return "", false
+	}
+	alias, ok := item.Path[0].(string)
+	if !ok {
+		return "", false
+	}
+	i, err := strconv.Atoi(strings.TrimPrefix(alias, "r"))
+	return alias, err == nil && i >= 0 && i < count && alias == "r"+strconv.Itoa(i)
 }
 
 func (m *metadata) collect(page metadataPage) {
