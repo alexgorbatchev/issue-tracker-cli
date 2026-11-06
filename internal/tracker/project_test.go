@@ -358,6 +358,10 @@ func TestRemoveProjectRefusals(t *testing.T) {
 func TestProjectIn(t *testing.T) {
 	// Exercise discovery inside a real enclosing checkout, even with system scratch.
 	t.Setenv("GOTMPDIR", gitRepo(t))
+	t.Run("scratch inside a checkout", checkProjectIn)
+}
+
+func checkProjectIn(t *testing.T) {
 	t.Setenv("GH_TOKEN", "tok")
 	t.Setenv("GH_REPO", "")
 	t.Setenv("GH_CONFIG_DIR", t.TempDir())

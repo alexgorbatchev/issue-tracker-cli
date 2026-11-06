@@ -518,6 +518,10 @@ func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	t.Setenv("GOTMPDIR", outer)
+	t.Run("scratch inside a checkout", checkListOutsideARegisteredRepositoryNeedsAScope)
+}
+
+func checkListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
 	t.Setenv("AGENT", "1")
 	t.Setenv("GH_TOKEN", "tok")
 	refresh := func(label string) fakegithub.Route {
