@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -172,6 +173,17 @@ func lastDescription(gh *fakegithub.GitHub) string {
 
 func graphQLError(errorType string) error {
 	return &api.GraphQLError{Errors: []api.GraphQLErrorItem{{Type: errorType, Message: "failed"}}}
+}
+
+func outsideRepository(t *testing.T) {
+	t.Helper()
+	dir, err := filepath.Abs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Scratch may live inside the source checkout; do not discover its parents.
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
+	t.Chdir(dir)
 }
 
 // here is the working directory's repository.

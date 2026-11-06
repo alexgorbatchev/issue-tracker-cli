@@ -356,6 +356,8 @@ func TestRemoveProjectRefusals(t *testing.T) {
 }
 
 func TestProjectIn(t *testing.T) {
+	// Exercise discovery inside a real enclosing checkout, even with system scratch.
+	t.Setenv("GOTMPDIR", gitRepo(t))
 	t.Setenv("GH_TOKEN", "tok")
 	t.Setenv("GH_REPO", "")
 	t.Setenv("GH_CONFIG_DIR", t.TempDir())
@@ -387,7 +389,7 @@ func TestProjectIn(t *testing.T) {
 	}
 	wantCount(t, gh, 2)
 
-	t.Chdir(t.TempDir())
+	outsideRepository(t)
 	git := func(args ...string) {
 		t.Helper()
 		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {

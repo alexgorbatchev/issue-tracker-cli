@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -70,7 +71,13 @@ func outsideRepository(t *testing.T) {
 	t.Helper()
 	t.Setenv("GH_TOKEN", "tok")
 	t.Setenv("GH_REPO", "")
-	t.Chdir(t.TempDir())
+	dir, err := filepath.Abs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Scratch may live inside the source checkout; do not discover its parents.
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
+	t.Chdir(dir)
 }
 
 // boards maps each cached project to its board, which holds its tickets' items.
@@ -506,6 +513,11 @@ func boardOnly() fakegithub.Route {
 }
 
 func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
+	outer := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", outer).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Setenv("GOTMPDIR", outer)
 	t.Setenv("AGENT", "1")
 	t.Setenv("GH_TOKEN", "tok")
 	refresh := func(label string) fakegithub.Route {
@@ -557,9 +569,13 @@ func TestListOutsideARegisteredRepositoryNeedsAScope(t *testing.T) {
 	}
 
 	outsideRepository(t)
-	_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "list")
+	gh = fakegithub.New()
+	_, _, err = execute(t, fakeOpener(t, gh), "issue", "list")
 	if want := "not inside a registered repository: no git checkout here: pass --project <name>, or --all-projects for every project"; err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want exactly %q", err, want)
+	}
+	if gh.Count() != 0 {
+		t.Fatalf("requests outside a repository = %d, want 0", gh.Count())
 	}
 }
 

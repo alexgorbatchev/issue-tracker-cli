@@ -175,7 +175,7 @@ func TestProjectInFollowsTheDirectory(t *testing.T) {
 	}
 	wantCount(t, gh, 0)
 
-	t.Chdir(t.TempDir())
+	outsideRepository(t)
 	t.Setenv("GH_REPO", "")
 	if dir := currentDir(ctx); dir != "" {
 		t.Fatalf("outside a checkout: dir = %q", dir)
