@@ -66,6 +66,8 @@ type ticketSpec struct {
 	board string
 	// priorities adds a priority:<value> label for each value.
 	priorities []string
+	// handoff adds the handoff label.
+	handoff bool
 }
 
 func (s ticketSpec) json() string {
@@ -89,6 +91,9 @@ func (s ticketSpec) json() string {
 	}
 	for _, priority := range s.priorities {
 		labels = strings.TrimPrefix(labels+fmt.Sprintf(`,{"name":"priority:%s"}`, priority), ",")
+	}
+	if s.handoff {
+		labels = strings.TrimPrefix(labels+`,{"name":"handoff"}`, ",")
 	}
 	board := s.board
 	if board == "" {

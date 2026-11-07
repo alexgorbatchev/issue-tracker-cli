@@ -137,6 +137,9 @@ func claimNext(cmd *cobra.Command, s *session, name string, all bool) error {
 	if err != nil {
 		return err
 	}
+	if err := warnHandoffs(cmd, seen.Handoffs, time.Now()); err != nil {
+		return err
+	}
 	if !ok {
 		return reportNone(cmd, s, "no ready tickets", name, seen)
 	}
@@ -392,6 +395,7 @@ func newIssueListCommand(open opener) *cobra.Command {
 	cmd.Flags().StringVar(&opts.Priority, "priority", "", "Only tickets whose most urgent priority label is this: P0, P1, P2, or P3")
 	cmd.Flags().StringVar(&opts.Search, "search", "", "Only tickets matching this GitHub search text")
 	cmd.Flags().BoolVar(&opts.Ready, "ready", false, "Only tickets that can be picked up now")
+	cmd.Flags().BoolVar(&opts.Handoff, "handoff", false, "Only handoffs, which handoff take picks up")
 	cmd.Flags().BoolVar(&opts.Stale, "stale", false, "Only Doing tickets with no recent activity")
 	cmd.Flags().IntVar(&opts.StaleDays, "stale-days", 0, "Days without activity before a Doing ticket is stale; overrides the configured value")
 	cmd.Flags().IntVar(&opts.Limit, "limit", 100, "Maximum tickets to show; 0 shows all")
@@ -399,6 +403,7 @@ func newIssueListCommand(open opener) *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("unrouted", "project")
 	cmd.MarkFlagsMutuallyExclusive("unrouted", "all-projects")
 	cmd.MarkFlagsMutuallyExclusive("unrouted", "ready")
+	cmd.MarkFlagsMutuallyExclusive("ready", "handoff")
 	return cmd
 }
 
@@ -412,7 +417,7 @@ func printNoTickets(cmd *cobra.Command, s *session, opts tracker.ListOptions, se
 	if err != nil {
 		return err
 	}
-	if opts.Search != "" || opts.Status != "" || opts.Label != "" || opts.Priority != "" || opts.Ready || opts.Stale {
+	if opts.Search != "" || opts.Status != "" || opts.Label != "" || opts.Priority != "" || opts.Ready || opts.Handoff || opts.Stale {
 		counts = "No tickets match. " + counts
 	}
 	_, err = fmt.Fprintln(cmd.OutOrStdout(), counts)

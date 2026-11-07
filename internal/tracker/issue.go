@@ -156,13 +156,25 @@ func (t *Ticket) useBoard(boardID string) bool {
 }
 
 // Ready reports whether a ticket can be picked up: routed to a project, open,
-// unblocked, with no blocked ancestor and no open sub-issues, and not in progress.
+// unblocked, with no blocked ancestor and no open sub-issues, not in progress, and
+// not a handoff.
 // An unrouted ticket waits for someone to give it a project. A parent waits for its
 // children, so the work gets claimed rather than its container. The blocked label
 // covers waits with no ticket to name, such as a person's input.
 func (t Ticket) Ready() bool {
 	return t.Project != "" && t.State == stateOpen && len(t.Blockers) == 0 && !t.ParentBlocked && t.OpenSubIssues == 0 &&
-		t.Status != StatusDoing && t.Status != StatusDone && !t.labelled(labelBlocked)
+		t.Status != StatusDoing && t.Status != StatusDone && !t.labelled(labelBlocked) && !t.Handoff()
+}
+
+// Handoff reports a ticket that hands work to the next agent. It is picked up with
+// handoff take, not claimed as ready work.
+func (t Ticket) Handoff() bool {
+	return t.labelled(labelHandoff)
+}
+
+// Created is when the ticket was created.
+func (t Ticket) Created() time.Time {
+	return t.created
 }
 
 // Closable reports an open parent whose sub-issues are all closed. A claimed parent
@@ -328,6 +340,7 @@ type ListOptions struct {
 	Search    string
 	Ready     bool
 	Closable  bool
+	Handoff   bool
 	Stale     bool
 	StaleDays int
 	Limit     int
@@ -339,11 +352,13 @@ type ListOptions struct {
 // Tally counts the tickets a listing read before filtering them: open tickets by
 // board status, and closed tickets. OpenRead and ClosedRead report that the listing
 // read every ticket in that state, which needs no search text and a read to the end.
+// Handoffs holds the open handoffs it read.
 type Tally struct {
 	Open       map[string]int
 	Closed     int
 	OpenRead   bool
 	ClosedRead bool
+	Handoffs   []Ticket
 }
 
 func (t *Tally) reset() {
@@ -356,6 +371,9 @@ func (t *Tally) add(ticket Ticket) {
 		return
 	}
 	t.Open[ticket.Status]++
+	if ticket.Handoff() {
+		t.Handoffs = append(t.Handoffs, ticket)
+	}
 }
 
 // read records that a listing read every ticket of its states.
@@ -366,7 +384,7 @@ func (t *Tally) read(states []string) {
 
 // clientFiltered reports a filter GitHub does not apply, so its count excludes it.
 func (o ListOptions) clientFiltered() bool {
-	return o.Status != "" || o.Label != "" || o.Priority != "" || o.Ready || o.Closable || o.Stale || o.Unrouted
+	return o.Status != "" || o.Label != "" || o.Priority != "" || o.Ready || o.Closable || o.Handoff || o.Stale || o.Unrouted
 }
 
 func (o ListOptions) matches(t Ticket) bool {
@@ -382,6 +400,8 @@ func (o ListOptions) matches(t Ticket) bool {
 	case o.Ready && !t.Ready():
 		return false
 	case o.Closable && !t.Closable():
+		return false
+	case o.Handoff && !t.Handoff():
 		return false
 	case o.Stale && !t.Stale(o.StaleDays, o.Now):
 		return false
@@ -1104,6 +1124,8 @@ type CreateOptions struct {
 	Blocking       []int
 	Labels         []string
 	Attachments    []string
+	// labelIDs are labels the ticket carries from creation, such as a handoff's.
+	labelIDs []string
 }
 
 // CreateTicket creates a ticket on its project board with status Todo. A failure
@@ -1167,7 +1189,7 @@ type createdTicket struct {
 func (c *Client) insertTicket(ctx context.Context, meta *metadata, project Project, opts CreateOptions, ids map[int]string) (createdTicket, error) {
 	input := map[string]any{
 		"repositoryId": meta.RepositoryID, "title": opts.Title, "body": createBody(opts),
-		"labelIds": []string{project.LabelID},
+		"labelIds": append([]string{project.LabelID}, opts.labelIDs...),
 	}
 	if opts.Parent != 0 {
 		input["parentIssueId"] = ids[opts.Parent]
@@ -1590,11 +1612,13 @@ const (
 )
 
 // CloseOptions gives the evidence for closing a ticket: merged pull requests, a pull
-// request whose head landed without GitHub marking it merged, or a reason.
+// request whose head landed without GitHub marking it merged, or a reason. Comment,
+// when set, is posted with the close.
 type CloseOptions struct {
 	PRs      []string
 	LandedPR string
 	Reason   string
+	Comment  string
 }
 
 // CloseTicket closes a ticket after confirming every pull request merged.
@@ -1638,6 +1662,9 @@ func (c *Client) closeTicket(ctx context.Context, ticket Ticket, opts CloseOptio
 			return err
 		}
 		fields = append(fields, commentMutation(ticket, body))
+	}
+	if opts.Comment != "" {
+		fields = append(fields, commentMutation(ticket, opts.Comment))
 	}
 	fields = append(fields, fmt.Sprintf(`close: closeIssue(input: {issueId: %q, stateReason: %s}) { clientMutationId }`, ticket.ID, reason))
 	if ticket.Project != "" && ticket.itemID != "" {

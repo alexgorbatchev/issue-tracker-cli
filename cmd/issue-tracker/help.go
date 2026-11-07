@@ -62,6 +62,9 @@ var techCatalog = cobrahelptree.TechCatalog{
 	"issue-tracker issue sub list":           withArgs(false, arg("<parent>", "Parent ticket")),
 	"issue-tracker issue sub close-eligible": writeInfo,
 	"issue-tracker issue sub rm":             withArgs(true, arg("<parent>", "Parent ticket"), arg("<child...>", "Tickets to detach")),
+	"issue-tracker handoff create":           writeInfo,
+	"issue-tracker handoff take":             writeInfo,
+	"issue-tracker handoff drop":             writeInfo,
 }
 
 // helpWriteError keeps a failed help write for run, because cobra's help

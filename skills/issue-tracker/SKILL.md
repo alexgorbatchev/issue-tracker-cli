@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-06 23:19
+  last_modified: 2026-11-06 23:46
   status: current
 ---
 
@@ -23,6 +23,8 @@ Set `AGENT=1` on every invocation, or export it for the session. Read exit statu
 5. Open the pull request in the code repository.
 6. After the merge, run `issue-tracker issue close <number> --pr <pull-request>`.
 7. To stop without finishing, run `issue-tracker issue release <number>`.
+
+To hand unfinished work to the next agent, push the branch, then run `issue-tracker handoff create --title "..." --body-file notes.md` in its checkout; it records the current branch and `HEAD`. A project holds one open handoff. The receiving agent runs `issue-tracker handoff take`, which claims and closes the handoff in one step and prints the branch and commit to resume from. Run `issue-tracker handoff show` to read a handoff without taking it, and `issue-tracker handoff drop --reason "..."` to close one nobody should take.
 
 Read and follow the `WARN:` line printed for public projects: keep ticket text, attachments, ticket numbers, and the tracker repository name out of that project's commits, pull requests, and branch names.
 
@@ -121,10 +123,11 @@ Prints one tab-separated line per ticket, oldest first: number, status, priority
 - `--label` string: only tickets with this label, ignoring case as GitHub does.
 - `--priority` string: only tickets whose priority is this: `P0`, `P1`, `P2`, or `P3`, ignoring case.
 - `--search` string: only tickets matching this GitHub search text in their title, body, or comments. GitHub serves 1,000 results per search query, so a longer result continues with another query from the last creation time, and `--limit 0` delivers every match once. The one exception is more than 1,000 matches created in the same second, which fails with the error listed under Errors and prints no tickets. Leave `sort:` out of the search text, because continuing depends on creation order.
-- `--ready` bool: only tickets that can be picked up now: with a project, open, without the `blocked` label, with no open blockers, no blocked parent or grandparent, no open sub-issues, and not in Doing or Done. A parent with open sub-issues is left out so that its children get claimed instead; `issue claim <number>` can still claim it. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers.
+- `--ready` bool: only tickets that can be picked up now: with a project, open, without the `blocked` label, with no open blockers, no blocked parent or grandparent, no open sub-issues, not in Doing or Done, and not a handoff. A parent with open sub-issues is left out so that its children get claimed instead; `issue claim <number>` can still claim it. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers.
+- `--handoff` bool: only handoffs, the tickets with the `handoff` label. Cannot be combined with `--ready`.
 - `--stale` bool: only Doing tickets with no ticket or board activity within the stale window.
 - `--stale-days` int: stale window in days, overriding the configured value.
-- `--limit` int: maximum tickets. 0 shows all, and a negative value is an error. Default: 100. `--status`, `--label`, `--priority`, `--ready`, and `--stale` read every ticket whatever the limit, at one request per 100 tickets. When more tickets match, stdout holds the first `<limit>` and stderr gets `WARN: showing the first <limit> of <total> tickets: pass --limit 0 to list them all`.
+- `--limit` int: maximum tickets. 0 shows all, and a negative value is an error. Default: 100. `--status`, `--label`, `--priority`, `--ready`, `--handoff`, and `--stale` read every ticket whatever the limit, at one request per 100 tickets. When more tickets match, stdout holds the first `<limit>` and stderr gets `WARN: showing the first <limit> of <total> tickets: pass --limit 0 to list them all`.
 
 ### issue-tracker issue inspect <number...>
 
@@ -158,7 +161,7 @@ Changes the title or body, and attaches files to the body. Attaching without `--
 
 Atomically takes a ticket and sets it to Doing. Pass a number or `--next`. Claims never expire: they end with `issue close` or `issue release`.
 
-- `--next` bool: claim the most urgent ready ticket, oldest first within a priority, moving past tickets other agents win. Prints `OK: no ready tickets` when none remain.
+- `--next` bool: claim the most urgent ready ticket, oldest first within a priority, moving past tickets other agents win. Prints `OK: no ready tickets` when none remain. Handoffs are never claimed this way; for each open handoff it read, it prints `WARN: open handoff #<number> in <project>, <age> old: review it with issue-tracker handoff show --project <project>` on stderr, and still claims.
 - `--project` string: limit `--next` to a project. Defaults to the current repository's project.
 - `--all-projects` bool: let `--next` claim from every project. Required outside a registered repository unless `--project` is given.
 
@@ -250,6 +253,36 @@ Closes open parents whose sub-issues are all closed, as completed, with no pull 
 - `--dry-run` bool: print `would close #<number> in <project>: <title>` for each parent and close nothing.
 - `--project` string: limit to a project.
 
+### issue-tracker handoff
+
+Hands work to the next agent. A handoff is a ticket with the `handoff` label, routed to its project and in Todo on the board, whose body starts with `Branch: <branch>` and `Commit: <sha>` lines, then `Ticket: #<number>` when given, then a blank line and its text. A repository and its components share one slot: a project holds at most one open handoff, enforced by the ref `refs/handoffs/<owner>/<repo>` in the tracker repository, which exists while the handoff is open. Handoffs are not ready work: `issue list --ready` and `issue claim --next` leave them out. Each subcommand acts on the current repository's project, or on `--project`.
+
+### issue-tracker handoff create
+
+Opens the project's handoff. Before writing anything it checks, in one request, that the branch exists in the project's repository on GitHub and contains the commit, and resolves the commit to its full SHA. It then takes the slot, and creates the ticket with its routing label and the `handoff` label, which it creates on first use, on the board in Todo. Prints `created handoff #<number> in <project> at <branch> <sha>: <url>`. Fails without writing anything when the project already has an open handoff, naming it. When creating the ticket fails, it frees the slot again; when the ticket was created but adding it to the board failed, the error names the ticket.
+
+- `--title` string: handoff title. Required.
+- `--body` string: handoff text.
+- `--body-file` string: file holding the text; `-` reads standard input. Bodies hold at most 65,536 characters, including the header lines.
+- `--project` string: project. Defaults to the current repository's project.
+- `--branch` string: branch the work is on. Defaults to the current checkout's branch, when the current checkout is the project's repository.
+- `--sha` string: commit the work stopped at, full or abbreviated. Defaults to the current checkout's `HEAD`, when the current checkout is the project's repository.
+- `--ticket` int: ticket the work belongs to, recorded in the handoff. Taking the handoff does not claim it.
+
+### issue-tracker handoff show
+
+Prints the project's open handoff without taking it. For people: lines `handoff: #<number> <title>`, `project:`, `branch:`, `commit:`, `ticket:` when one is recorded, `age:`, and `url:`, then a blank line and the text. For agents: `OK: <number>\t<project>\t<branch>\t<sha>`, then a blank line and the text when there is any. Prints `OK: no open handoff in <project>` when there is none.
+
+### issue-tracker handoff take
+
+Picks up the project's open handoff: claims it with the same atomic claim as `issue claim`, closes it as completed, and frees the slot. Prints the handoff as `handoff show` does. When two agents take the same handoff, one wins and the other fails with `ticket is already claimed`. When the branch no longer contains the commit, or no longer exists, it still takes the handoff and prints `WARN: branch <branch> no longer contains commit <sha>: check where the work went before resuming` on stderr. It does not claim the ticket named by `Ticket:`.
+
+### issue-tracker handoff drop
+
+Closes the project's open handoff as not planned without claiming it, and frees the slot so that a new handoff can be created. Prints `dropped handoff #<number> in <project>: <title>`. With no open handoff but a slot left by a failed create, it frees the slot and prints `freed the handoff slot of <project>, which held no open handoff`.
+
+- `--reason` string: why the handoff is dropped, posted as a comment.
+
 ### issue-tracker skill
 
 Prints how to install this skill. It takes no arguments.
@@ -308,7 +341,13 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `label repo:<name> holds the <n> tickets of removed project <registration>: rename the label on GitHub before registering <owner/repo>`: another repository's project was removed under this name, and registering this one would move its tickets here. Ask the user to rename the label.
 - `label repo:<name> has no registration and holds <n> tickets, perhaps of a project removed before removals were recorded: ...`: which repository the label's tickets belong to is unknown. Ask the user whether they belong to this repository: if so, they set the description the message names; otherwise they rename the label.
 - `label repo:<name> holds <n> tickets and its description "<text>" is not a registration: ...`: a hand-made label with this name already holds tickets. Ask the user to rename it.
-- `ticket is already claimed`: another agent holds the ticket. Pick another.
+- `ticket is already claimed`: another agent holds the ticket. Pick another. From `handoff take`, another agent took the handoff first.
+- `no open handoff in <project>`: `handoff take` or `handoff drop` found no open handoff and no slot to free. Nothing was changed.
+- `<project> already has open handoff #<number>: take or drop it first`: a project holds one open handoff. Nothing was written. Read it with `handoff show`, then take it, or ask the user before dropping it.
+- `the handoff slot of <project> is taken, but it has no open handoff, perhaps after a failed create: run issue-tracker handoff drop to free it`: a previous create took the slot but did not finish. Run `handoff drop`, then create again.
+- `branch <branch> of <owner/repo> does not contain commit <sha>: push the commit first` or `branch <branch> or commit <sha> not found in <owner/repo>: push them first`: the handoff would point at work that exists only on this machine. Nothing was written. Push the branch and rerun.
+- `no branch or commit to hand off: ...`: `handoff create` ran outside a checkout of the project's repository, or in one with no current branch or commits, without `--branch` and `--sha`. Pass them, or run it in the checkout.
+- `handoff #<number> has no "Branch:" and "Commit:" lines at the top of its body: drop it and create it again`: the handoff's body was edited by hand. Ask the user before dropping it.
 - `project <name> is registered but its board is missing or inaccessible to <account>`: the project registration exists, but the selected account cannot resolve its board, even after re-reading the tracker's projects from GitHub once. Ask the tracker owner to verify that the board exists and that this account has Write access under the board's Settings, Manage access. A missing or inaccessible board is distinct from an unregistered project; repeating `project add` does not grant access.
 - `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or <remedy>`: a command ran in a repository that is not a project. `<remedy>` is `pass --project <name>, or --all-projects for every project` for `issue list`, `issue claim --next`, and `issue sub close-eligible`, `pass --project <name>` for `issue create`, and `name a project` for `project inspect`. Follow it, or ask the user whether to register the repository.
 - `<owner/repo> is not a registered project, and cannot be: project <name> already belongs to <other/repo>: <remedy>`: the name this repository would be registered under is held by another registration, such as a component or a repository registered before other owners' repositories got `<owner>/<name>`. Follow the remedy.
