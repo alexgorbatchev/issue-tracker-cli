@@ -24,20 +24,5 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Check module hygiene
-        run: go mod tidy -diff
-
-      - name: Check formatting
-        run: scripts/check-format.sh
-
-      - name: Build
-        run: go build ./...
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test -v -race -coverprofile=coverage.out ./...
-
-      - name: Check coverage
-        run: scripts/check-coverage.sh coverage.out
+      - name: Verify
+        run: scripts/verify.sh

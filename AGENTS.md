@@ -15,7 +15,7 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 - **Run CLI in Agent Mode:** `just run-ai [args...]` (`AGENT=1`)
 - **Run Tests:** `just test` (`go test -race -cover ./...`)
 - **Check Coverage:** `just coverage` (fails under 90% statement or function coverage in any package, as CI does)
-- **Run Static Analysis & Tests:** `just check`
+- **Run Static Analysis & Tests:** `just check` (`scripts/verify.sh`, the same checks CI and the release workflow run, including the coverage gate)
 - **Run Linter / Static Analysis:** `just vet` or `just lint` (module hygiene, `gofmt`, `go vet`)
 - **Format Source Code:** `just fmt` (`go fmt ./...`)
 

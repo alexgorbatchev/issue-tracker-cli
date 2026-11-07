@@ -20,17 +20,8 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Check module hygiene
-        run: go mod tidy -diff
-
-      - name: Build
-        run: go build ./...
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test -race ./...
+      - name: Verify
+        run: scripts/verify.sh
 
   release:
     needs: verify

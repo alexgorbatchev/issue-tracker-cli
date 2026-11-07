@@ -52,8 +52,10 @@ vet: lint
 fmt:
     go fmt ./...
 
-# Run static analysis and test suite in sequence
-check: lint test
+# Run every check CI and the release workflow run: module hygiene, formatting,
+# build, vet, race tests, and per-package coverage
+check:
+    scripts/verify.sh
 
 # Remove build outputs; .tmp/ holds other sessions' scratch and stays
 clean:
