@@ -253,6 +253,33 @@ func TestHandoffTake(t *testing.T) {
 	wantErr(t, err, "ticket is already claimed: #40")
 }
 
+func TestHandoffUntake(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	taken := strings.Replace(strings.TrimSuffix(handoffJSON(time.Now()), "}"), `"state":"OPEN"`, `"state":"CLOSED"`, 1) + `,"stateReason":"COMPLETED"}`
+	gh := fakegithub.New(
+		fakegithub.Route{Match: "body stateReason }", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + taken + `}}}`},
+		fakegithub.Route{Match: refsPost, Status: 201, Body: "{}"},
+		fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/git/refs/claims/40", Status: 204},
+		ok("reopenIssue"),
+	)
+	stdout, _, err := execute(t, fakeOpener(t, gh), "handoff", "untake", "40", "--reason", "wrong project")
+	if want := "OK: returned handoff #40 to go-tui at feat/x " + handoffSHA + ": Parser\n"; err != nil || stdout != want {
+		t.Fatalf("stdout = %q, want %q, err = %v", stdout, want, err)
+	}
+	if gh.Count() != 4 {
+		t.Fatalf("made %d requests, want 4", gh.Count())
+	}
+	if reopen := gh.Requests()[3].Description; !strings.Contains(reopen, `body: "wrong project"`) {
+		t.Fatalf("reopen = %s", reopen)
+	}
+
+	_, _, err = execute(t, fakeOpener(t, fakegithub.New()), "handoff", "untake", "x")
+	wantErr(t, err, `invalid ticket number "x"`)
+	gh = fakegithub.New(fakegithub.Route{Match: "body stateReason }", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + handoffJSON(time.Now()) + `}}}`})
+	_, _, err = execute(t, fakeOpener(t, gh), "handoff", "untake", "40")
+	wantErr(t, err, "handoff #40 is open, so nobody has taken it")
+}
+
 func TestHandoffDrop(t *testing.T) {
 	t.Setenv("AGENT", "1")
 	gh := fakegithub.New(handoffSearchRoute(handoffJSON(time.Now())), ok("closeIssue"), fakegithub.Route{Match: slotDelete, Status: 204})
