@@ -513,3 +513,70 @@ func TestRemoveProjectLabelsClosedBoardOnlyTickets(t *testing.T) {
 		fakegithub.Route{Match: "addLabelsToLabelable", Status: 500, Body: "{}"})
 	wantError(t, failing.RemoveProject(ctx, "go-tui"), "labelling closed tickets")
 }
+
+// GitHub can omit a board it just created from the tracker's projects, so a
+// registration keeps the board it created, and the commands after it find it
+// without asking GitHub again.
+func TestARegistrationIsUsableAtOnce(t *testing.T) {
+	lagging := strings.Replace(metadataJSON, `"labels":{"nodes":[`, `"labels":{"nodes":[{"id":"LN","name":"repo:new","description":"o/new"},`, 1)
+	first := emptyMetadata()
+	first.Times = 1
+	routes := append([]fakegithub.Route{first, {Match: "labels(first: 100, query", Body: lagging},
+		visibilityRoute(`{"data":{"r0":{"isPrivate":true},"r1":{"isPrivate":true}}}`)}, boardRoutes()...)
+	cache := t.TempDir()
+	open := func(gh *fakegithub.GitHub) *Client {
+		c, err := New(Options{Repo: Repo{"o", "tracker"}, CacheDir: cache, Transport: gh, Token: "tok"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	gh := fakegithub.New(routes...)
+	if project, err := open(gh).AddProject(ctx, Repo{"o", "new"}); err != nil || project.BoardID != "BN" {
+		t.Fatalf("project = %+v, err = %v", project, err)
+	}
+	wantCount(t, gh, 8)
+
+	gh = fakegithub.New(createRoute(), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))
+	ticket, err := open(gh).CreateTicket(ctx, CreateOptions{Project: "new", Title: "t"})
+	if err != nil || ticket.Number != 50 {
+		t.Fatalf("issue create after project add: %+v, %v", ticket, err)
+	}
+	wantCount(t, gh, 3)
+
+	gh = fakegithub.New(ticketRoute(ticketSpec{number: 1, project: "go-tui", status: StatusTodo}), okRoute("addLabelsToLabelable"),
+		addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))
+	if err := open(gh).MoveTicket(ctx, 1, "new"); err != nil {
+		t.Fatalf("issue move after project add: %v", err)
+	}
+	wantCount(t, gh, 4)
+
+	gh = fakegithub.New(ticketRoute(ticketSpec{number: 1, project: "new"}), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))
+	if err := open(gh).SetStatus(ctx, 1, StatusTodo); err != nil {
+		t.Fatalf("issue status set after project add: %v", err)
+	}
+	wantCount(t, gh, 3)
+}
+
+// A cache written before a project's board appeared, by another run or another
+// account, refreshes once in every command that needs the board.
+func TestABoardCreatedSinceTheCacheIsFound(t *testing.T) {
+	c, gh := newClient(t, append(bareRefresh(true), createRoute(), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))...)
+	if _, err := c.CreateTicket(ctx, CreateOptions{Project: "bare", Title: "t"}); err != nil {
+		t.Fatalf("issue create: %v", err)
+	}
+	wantCount(t, gh, 5)
+
+	c, gh = newClient(t, append(bareRefresh(true), ticketRoute(ticketSpec{number: 1, project: "go-tui", status: StatusTodo}),
+		okRoute("addLabelsToLabelable"), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))...)
+	if err := c.MoveTicket(ctx, 1, "bare"); err != nil {
+		t.Fatalf("issue move: %v", err)
+	}
+	wantCount(t, gh, 6)
+
+	c, gh = newClient(t, append(bareRefresh(true), ticketRoute(ticketSpec{number: 1, project: "bare"}), addToBoardRoute(), okRoute("updateProjectV2ItemFieldValue"))...)
+	if err := c.SetStatus(ctx, 1, StatusTodo); err != nil {
+		t.Fatalf("issue status set: %v", err)
+	}
+	wantCount(t, gh, 5)
+}

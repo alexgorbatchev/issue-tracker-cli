@@ -443,6 +443,7 @@ func (c *Client) refreshMetadata(ctx context.Context) (*metadata, error) {
 	if err := c.saveMetadata(meta); err != nil {
 		return nil, err
 	}
+	c.metaFresh = true
 	return meta, nil
 }
 
@@ -569,14 +570,36 @@ func (c *Client) lookupProject(ctx context.Context, name string) (Project, error
 	return Project{}, fmt.Errorf("unknown project %q: register it with project add", name)
 }
 
-// withFreshIDs retries once with refreshed metadata when GitHub rejects a stale ID.
+// lookupBoard finds a project whose board a command needs. A board created since
+// the cache was written, by another run or another account, is an ordinary cache
+// miss too, so a project without one refreshes once before it is reported.
+func (c *Client) lookupBoard(ctx context.Context, name string) (Project, error) {
+	project, err := c.lookupProject(ctx, name)
+	if err != nil {
+		return Project{}, err
+	}
+	if project.BoardID == "" && !c.metaFresh {
+		meta, err := c.refreshMetadata(ctx)
+		if err != nil {
+			return Project{}, err
+		}
+		project, _ = meta.project(name)
+	}
+	if project.BoardID == "" {
+		return Project{}, c.errNoBoard(project)
+	}
+	return project, nil
+}
+
+// withFreshIDs retries once with refreshed metadata when GitHub rejects a stale ID,
+// or when the cached project has no board, which may have been created since.
 func (c *Client) withFreshIDs(ctx context.Context, write func(*metadata) error) error {
 	meta, err := c.metadata(ctx)
 	if err != nil {
 		return err
 	}
 	err = write(meta)
-	if !hasGraphQLType(err, graphQLNotFoundType) {
+	if !hasGraphQLType(err, graphQLNotFoundType) && (!errors.Is(err, errBoardMissing) || c.metaFresh) {
 		return err
 	}
 	if meta, err = c.refreshMetadata(ctx); err != nil {

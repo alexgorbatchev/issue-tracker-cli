@@ -1527,12 +1527,9 @@ func (c *Client) MoveTicket(ctx context.Context, number int, target string) erro
 		// A failed import can leave the label without a board status.
 		return c.writeStatus(ctx, ticket, StatusTodo)
 	}
-	project, err := c.lookupProject(ctx, target)
+	project, err := c.lookupBoard(ctx, target)
 	if err != nil {
 		return err
-	}
-	if project.BoardID == "" {
-		return c.errNoBoard(project)
 	}
 	// A component uses its repository's board, so moving between them keeps the item
 	// and sets its Component value. A ticket routed by the board needs no label for it.

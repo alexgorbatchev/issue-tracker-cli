@@ -60,6 +60,9 @@ type Client struct {
 	cacheDir       string
 	requirePrivate bool
 	meta           *metadata
+	// metaFresh records that meta came from GitHub during this run, so a project
+	// without a board is not refreshed again.
+	metaFresh bool
 	// boardsChecked keeps tickets on unregistered boards or projects to one metadata refresh.
 	boardsChecked bool
 	pause         func(context.Context, time.Duration) error

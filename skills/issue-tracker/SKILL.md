@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-06 23:08
+  last_modified: 2026-11-06 23:19
   status: current
 ---
 
@@ -309,7 +309,7 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `label repo:<name> has no registration and holds <n> tickets, perhaps of a project removed before removals were recorded: ...`: which repository the label's tickets belong to is unknown. Ask the user whether they belong to this repository: if so, they set the description the message names; otherwise they rename the label.
 - `label repo:<name> holds <n> tickets and its description "<text>" is not a registration: ...`: a hand-made label with this name already holds tickets. Ask the user to rename it.
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
-- `project <name> is registered but its board is missing or inaccessible to <account>`: the project registration exists, but the selected account cannot resolve its board. Ask the tracker owner to verify that the board exists and that this account has Write access under the board's Settings, Manage access. A missing or inaccessible board is distinct from an unregistered project; repeating `project add` does not grant access.
+- `project <name> is registered but its board is missing or inaccessible to <account>`: the project registration exists, but the selected account cannot resolve its board, even after re-reading the tracker's projects from GitHub once. Ask the tracker owner to verify that the board exists and that this account has Write access under the board's Settings, Manage access. A missing or inaccessible board is distinct from an unregistered project; repeating `project add` does not grant access.
 - `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or <remedy>`: a command ran in a repository that is not a project. `<remedy>` is `pass --project <name>, or --all-projects for every project` for `issue list`, `issue claim --next`, and `issue sub close-eligible`, `pass --project <name>` for `issue create`, and `name a project` for `project inspect`. Follow it, or ask the user whether to register the repository.
 - `<owner/repo> is not a registered project, and cannot be: project <name> already belongs to <other/repo>: <remedy>`: the name this repository would be registered under is held by another registration, such as a component or a repository registered before other owners' repositories got `<owner>/<name>`. Follow the remedy.
 - `not inside a registered repository: <reason>: <remedy>`: the command ran where no github.com repository was found. The reason is `no git checkout here`, `this checkout has no git remote`, `no git remote points to a GitHub host the GitHub CLI is logged in to`, `<host>/<owner>/<repo> is on <host>, and projects are github.com repositories`, or, for any other failure, git's or the GitHub CLI's own reason on one line, such as a missing git or a checkout git refuses under its `safe.directory` rule. Follow the remedy, or ask the user to fix git first when the reason is about git itself.

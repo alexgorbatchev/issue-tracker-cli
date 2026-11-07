@@ -213,10 +213,25 @@ func (c *Client) AddProject(ctx context.Context, repo Repo) (Project, error) {
 	if meta, err = c.refreshMetadata(ctx); err != nil {
 		return Project{}, err
 	}
+	// GitHub can list a new board among the tracker's projects a moment after
+	// creating it, so the cache gets the board this run created or found.
+	if err := c.keepBoard(meta, item); err != nil {
+		return Project{}, err
+	}
 	project, _ = meta.project(name)
 	project.LabelID, project.Name, project.Repo = labelID, name, repo.String()
 	project.attach(item)
 	return project, nil
+}
+
+// keepBoard adds a board the metadata does not list yet and saves it.
+func (c *Client) keepBoard(meta *metadata, item board) error {
+	if _, ok := meta.board(item.Title); ok {
+		return nil
+	}
+	meta.Boards = append(meta.Boards, item)
+	meta.linkBoards()
+	return c.saveMetadata(meta)
 }
 
 // readRepo confirms a code repository exists and reads what its board describes.
@@ -691,11 +706,15 @@ func (c *Client) ResolveProject(ctx context.Context, name string) (Project, erro
 	return c.lookupProject(ctx, name)
 }
 
+// errBoardMissing marks a project whose board the metadata does not hold, which
+// withFreshIDs treats like a stale ID.
+var errBoardMissing = errors.New("board is missing")
+
 // errNoBoard explains a project registered without a usable board.
 func (c *Client) errNoBoard(project Project) error {
 	account := "the current GitHub account"
 	if c.account != "" {
 		account = "GitHub account " + c.account
 	}
-	return fmt.Errorf("project %s is registered but its board is missing or inaccessible to %s: ask the tracker owner to verify the board and this account's Write access in Settings > Manage access", project.Name, account)
+	return fmt.Errorf("project %s is registered but its %w or inaccessible to %s: ask the tracker owner to verify the board and this account's Write access in Settings > Manage access", project.Name, errBoardMissing, account)
 }

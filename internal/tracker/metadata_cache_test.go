@@ -142,9 +142,9 @@ func TestMetadataIgnoresUnscopedCache(t *testing.T) {
 }
 
 func TestClaimReportsRegisteredButInvisibleBoard(t *testing.T) {
-	c, gh := newClient(t, ticketRoute(ticketSpec{number: 12, project: "bare"}),
+	c, gh := newClient(t, append(bareRefresh(false), ticketRoute(ticketSpec{number: 12, project: "bare"}),
 		fakegithub.Route{Match: refsPost, Status: 201, Body: "{}"},
-		fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/git/refs/claims/12", Status: 204})
+		fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/git/refs/claims/12", Status: 204})...)
 	c.account = "agent"
 	_, err := c.ClaimTicket(ctx, 12)
 	wantError(t, err, "registered but its board is missing or inaccessible")
@@ -153,7 +153,7 @@ func TestClaimReportsRegisteredButInvisibleBoard(t *testing.T) {
 	if strings.Contains(err.Error(), "project add") {
 		t.Fatalf("invisible boards must not suggest registering again: %v", err)
 	}
-	wantCount(t, gh, 3)
+	wantCount(t, gh, 5)
 }
 
 func TestStatusDistinguishesAnUnregisteredProject(t *testing.T) {

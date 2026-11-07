@@ -195,3 +195,16 @@ func here(t *testing.T) Repo {
 	}
 	return repo
 }
+
+// bareRefresh answers a metadata refresh that lists project bare, with its board
+// when board is true, and the visibility read that follows it.
+func bareRefresh(board bool) []fakegithub.Route {
+	body := strings.Replace(metadataJSON, `"labels":{"nodes":[`, `"labels":{"nodes":[{"id":"L3","name":"repo:bare","description":"o/bare"},`, 1)
+	if board {
+		body = strings.Replace(body, `"projectsV2":{"nodes":[`, `"projectsV2":{"nodes":[{"id":"B3","title":"bare","url":"https://b/3","field":{"id":"F3","options":[{"id":"T3","name":"Todo"},{"id":"G3","name":"Doing"},{"id":"D3","name":"Done"}]}},`, 1)
+	}
+	return []fakegithub.Route{
+		{Match: "labels(first: 100, query", Body: body},
+		visibilityRoute(`{"data":{"r0":{"isPrivate":true},"r1":{"isPrivate":true}}}`),
+	}
+}
