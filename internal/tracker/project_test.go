@@ -580,3 +580,12 @@ func TestABoardCreatedSinceTheCacheIsFound(t *testing.T) {
 	}
 	wantCount(t, gh, 5)
 }
+
+// A project removed since the cache was written is reported as unregistered, not
+// as a board this account cannot see.
+func TestABoardlessProjectRemovedSinceTheCacheIsUnknown(t *testing.T) {
+	c, gh := newClient(t, metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`), ticketRoute(ticketSpec{number: 1, project: "go-tui"}))
+	err := c.MoveTicket(ctx, 1, "bare")
+	wantError(t, err, `unknown project "bare": register it with project add`)
+	wantCount(t, gh, 3)
+}

@@ -583,7 +583,10 @@ func (c *Client) lookupBoard(ctx context.Context, name string) (Project, error) 
 		if err != nil {
 			return Project{}, err
 		}
-		project, _ = meta.project(name)
+		var ok bool
+		if project, ok = meta.project(name); !ok {
+			return Project{}, fmt.Errorf("unknown project %q: register it with project add", name)
+		}
 	}
 	if project.BoardID == "" {
 		return Project{}, c.errNoBoard(project)
