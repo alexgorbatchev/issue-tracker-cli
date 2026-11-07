@@ -520,3 +520,145 @@ func TestHandoffsAreNotReadyWork(t *testing.T) {
 		t.Fatalf("claim --next must pass over a handoff: ok = %v, err = %v", ok, err)
 	}
 }
+
+const (
+	takenQuery  = "body stateReason }"
+	claimDelete = "DELETE api.github.com/repos/o/tracker/git/refs/claims/40"
+)
+
+// takenRoute answers the read of one closed handoff.
+func takenRoute(spec ticketSpec, body, reason string) fakegithub.Route {
+	return fakegithub.Route{Match: takenQuery, Body: `{"data":{"repository":{"isPrivate":true,"issue":` + spec.json() +
+		`,"body":` + quote(body) + `,"stateReason":` + quote(reason) + `}}}}`}
+}
+
+func takenHandoff() ticketSpec {
+	spec := openHandoff()
+	spec.state, spec.status = "CLOSED", StatusDone
+	return spec
+}
+
+func untakeRoutes(spec ticketSpec) []fakegithub.Route {
+	return []fakegithub.Route{
+		takenRoute(spec, handoffBody, "COMPLETED"),
+		{Match: refsPost, Status: 201, Body: "{}"},
+		{Match: claimDelete, Status: 204},
+		okRoute("reopenIssue"),
+		{Match: "DELETE " + slotPath, Status: 204},
+	}
+}
+
+func TestUntakeHandoff(t *testing.T) {
+	c, gh := newClient(t, untakeRoutes(takenHandoff())...)
+	handoff, err := c.UntakeHandoff(ctx, 40, "wrong project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff.Ticket.Number != 40 || handoff.Ticket.State != stateOpen || handoff.Ticket.Status != StatusTodo ||
+		handoff.Branch != "feat/x" || handoff.SHA != fullSHA || handoff.Text != "Resume at the parser." {
+		t.Fatalf("handoff = %+v", handoff)
+	}
+	wantCount(t, gh, 4)
+	// The slot comes first, so a project with another open handoff refuses before
+	// anything is written, and the claim goes before the reopen.
+	requests := gh.Requests()
+	for i, want := range []string{takenQuery, refsPost, claimDelete, "reopenIssue"} {
+		if !strings.Contains(requests[i].Description, want) {
+			t.Fatalf("request %d = %s, want %s", i, requests[i].Description, want)
+		}
+	}
+	if slot := requests[1].Body; !strings.Contains(slot, `"refs/handoffs/o/go-tui"`) {
+		t.Fatalf("slot = %s", slot)
+	}
+	reopen := requests[3].Description
+	for _, want := range []string{`reopenIssue(input: {issueId: "I40"})`, `"opt-todo"`, `body: "wrong project"`} {
+		if !strings.Contains(reopen, want) {
+			t.Fatalf("reopen = %s, missing %s", reopen, want)
+		}
+	}
+	if len(requestsMatching(gh, "DELETE "+slotPath)) != 0 {
+		t.Fatal("a returned handoff keeps its slot")
+	}
+
+	// Without a reason no comment is posted, and a ticket off the board gets no status.
+	offBoard := takenHandoff()
+	offBoard.status = ""
+	c, gh = newClient(t, untakeRoutes(offBoard)...)
+	if _, err := c.UntakeHandoff(ctx, 40, ""); err != nil {
+		t.Fatal(err)
+	}
+	if reopen := requestsMatching(gh, "reopenIssue")[0].Description; strings.Contains(reopen, "addComment") || strings.Contains(reopen, "updateProjectV2ItemFieldValue") {
+		t.Fatalf("reopen = %s", reopen)
+	}
+}
+
+func TestUntakeHandoffRefusals(t *testing.T) {
+	open, plain, unrouted := openHandoff(), takenHandoff(), takenHandoff()
+	plain.handoff = false
+	unrouted.project, unrouted.status = "", ""
+	unrouted.label = "handoff"
+	unrouted.handoff = false
+	tests := []struct {
+		name   string
+		routes []fakegithub.Route
+		reason string
+		want   string
+		count  int
+	}{
+		{"long reason", nil, strings.Repeat("x", maxBodyLength+1), "over GitHub's 65536", 0},
+		{"missing", []fakegithub.Route{{Match: takenQuery, Body: notFoundJSON}}, "", "ticket #40 not found in o/tracker", 1},
+		{"read fails", []fakegithub.Route{{Match: takenQuery, Status: 500, Body: "{}"}}, "", "reading ticket #40", 1},
+		{"not a handoff", []fakegithub.Route{takenRoute(plain, handoffBody, "COMPLETED")}, "", "ticket #40 is not a handoff", 1},
+		{"open", []fakegithub.Route{takenRoute(open, handoffBody, "")}, "", "handoff #40 is open, so nobody has taken it", 1},
+		{"dropped", []fakegithub.Route{takenRoute(takenHandoff(), handoffBody, "NOT_PLANNED")}, "", "handoff #40 was dropped, not taken: create a new handoff instead", 1},
+		{"unrouted", []fakegithub.Route{takenRoute(unrouted, handoffBody, "COMPLETED")}, "", "handoff #40 has no project", 1},
+		{"edited body", []fakegithub.Route{takenRoute(takenHandoff(), "notes", "COMPLETED")}, "", `handoff #40 has no "Branch:" and "Commit:" lines at the top of its body: create a new handoff instead`, 1},
+		{"another open handoff", []fakegithub.Route{takenRoute(takenHandoff(), handoffBody, "COMPLETED"), {Match: refsPost, Status: 422, Body: claimExist},
+			handoffRoute(handoffBody, ticketSpec{number: 41, project: "go-tui", status: StatusTodo, handoff: true})}, "", "go-tui already has open handoff #41: take or drop it first", 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, gh := newClient(t, tt.routes...)
+			_, err := c.UntakeHandoff(ctx, 40, tt.reason)
+			wantError(t, err, tt.want)
+			wantCount(t, gh, tt.count)
+			if len(requestsMatching(gh, "DELETE")) != 0 || len(requestsMatching(gh, "reopenIssue")) != 0 {
+				t.Fatal("a refused untake must write nothing")
+			}
+		})
+	}
+
+	c, _ := newClient(t, metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`), takenRoute(ticketSpec{number: 40, label: "repo:gone", state: "CLOSED", handoff: true}, handoffBody, "COMPLETED"))
+	_, err := c.UntakeHandoff(ctx, 40, "")
+	wantError(t, err, `unknown project "gone"`)
+}
+
+// A failure after the slot is taken frees it again, so the project is not left with
+// a slot and no open handoff.
+func TestUntakeHandoffFreesTheSlotOnFailure(t *testing.T) {
+	routes := untakeRoutes(takenHandoff())
+	routes[2] = fakegithub.Route{Match: claimDelete, Status: 500, Body: `{"message":"boom"}`}
+	c, gh := newClient(t, routes...)
+	_, err := c.UntakeHandoff(ctx, 40, "")
+	wantError(t, err, "releasing ticket #40")
+	wantCount(t, gh, 4)
+	if len(requestsMatching(gh, "reopenIssue")) != 0 || len(requestsMatching(gh, "DELETE "+slotPath)) != 1 {
+		t.Fatal("a claim that cannot be deleted must stop the reopen and free the slot")
+	}
+
+	routes = untakeRoutes(takenHandoff())
+	routes[3] = fakegithub.Route{Match: "reopenIssue", Status: 500, Body: "{}"}
+	c, gh = newClient(t, routes...)
+	_, err = c.UntakeHandoff(ctx, 40, "")
+	wantError(t, err, "reopening handoff #40")
+	wantCount(t, gh, 5)
+	if len(requestsMatching(gh, "DELETE "+slotPath)) != 1 {
+		t.Fatal("a failed reopen must free the slot")
+	}
+
+	routes[4] = fakegithub.Route{Match: "DELETE " + slotPath, Status: 500, Body: `{"message":"boom"}`}
+	c, _ = newClient(t, routes...)
+	_, err = c.UntakeHandoff(ctx, 40, "")
+	wantError(t, err, "reopening handoff #40")
+	wantError(t, err, "freeing the handoff slot of go-tui")
+}

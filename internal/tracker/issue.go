@@ -253,30 +253,39 @@ func (c *Client) variables(extra map[string]any) map[string]any {
 }
 
 func (c *Client) readTicket(ctx context.Context, number int) (Ticket, error) {
-	var response struct {
-		Repository struct {
-			IsPrivate bool
-			Issue     *ticketNode
-		}
-	}
-	query := `query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) { isPrivate issue(number: $number) { ` + ticketFields + ` } }
-}`
-	err := c.do(ctx, query, c.variables(map[string]any{"number": number}), &response)
-	if hasGraphQLType(err, graphQLNotFoundType) || (err == nil && response.Repository.Issue == nil) {
-		return Ticket{}, fmt.Errorf("ticket #%d not found in %s", number, c.repo)
-	}
+	node, err := readIssue[ticketNode](ctx, c, number, ticketFields)
 	if err != nil {
-		return Ticket{}, fmt.Errorf("reading ticket #%d: %w", number, err)
-	}
-	if err := c.checkPrivate(response.Repository.IsPrivate); err != nil {
 		return Ticket{}, err
 	}
-	ticket, err := c.routed(ctx, response.Repository.Issue.ticket())
+	ticket, err := c.routed(ctx, node.ticket())
 	if err != nil {
 		return Ticket{}, fmt.Errorf("reading ticket #%d: %w", number, err)
 	}
 	return ticket, nil
+}
+
+// readIssue reads one issue of the tracker with the given fields into a node.
+func readIssue[N any](ctx context.Context, c *Client, number int, fields string) (*N, error) {
+	var response struct {
+		Repository struct {
+			IsPrivate bool
+			Issue     *N
+		}
+	}
+	query := `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { isPrivate issue(number: $number) { ` + fields + ` } }
+}`
+	err := c.do(ctx, query, c.variables(map[string]any{"number": number}), &response)
+	if hasGraphQLType(err, graphQLNotFoundType) || (err == nil && response.Repository.Issue == nil) {
+		return nil, fmt.Errorf("ticket #%d not found in %s", number, c.repo)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading ticket #%d: %w", number, err)
+	}
+	if err := c.checkPrivate(response.Repository.IsPrivate); err != nil {
+		return nil, err
+	}
+	return response.Repository.Issue, nil
 }
 
 // routed gives a ticket with no routing label the project whose board holds it, so a

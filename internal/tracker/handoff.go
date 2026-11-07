@@ -215,10 +215,94 @@ func (c *Client) DropHandoff(ctx context.Context, name, reason string, freeSlot 
 	return handoff, true, nil
 }
 
+// UntakeHandoff gives back a handoff that take closed, so the next agent can take it
+// again. It takes the project's slot first, so it fails before writing anything
+// when the project already holds another open handoff. It then deletes any claim
+// that take left behind, and reopens the ticket in Todo, posting reason as a
+// comment. When either step fails, it frees the slot again.
+func (c *Client) UntakeHandoff(ctx context.Context, number int, reason string) (Handoff, error) {
+	if err := checkBodyLength(reason); err != nil {
+		return Handoff{}, err
+	}
+	handoff, err := c.readTakenHandoff(ctx, number)
+	if err != nil {
+		return Handoff{}, err
+	}
+	ticket := handoff.Ticket
+	project, err := c.lookupProject(ctx, ticket.Project)
+	if err != nil {
+		return Handoff{}, err
+	}
+	fields := []string{fmt.Sprintf(`reopen: reopenIssue(input: {issueId: %q}) { clientMutationId }`, ticket.ID)}
+	if ticket.itemID != "" && project.BoardID != "" {
+		field, err := statusMutation("status", project, ticket.itemID, StatusTodo)
+		if err != nil {
+			return Handoff{}, err
+		}
+		fields = append(fields, field)
+	}
+	if reason != "" {
+		fields = append(fields, commentMutation(ticket, reason))
+	}
+	if err := c.createSlot(ctx, project); err != nil {
+		return Handoff{}, err
+	}
+	// A closed ticket cannot be claimed, so the claim is deleted before the reopen,
+	// where it cannot be another agent's.
+	err = c.deleteClaim(ctx, number)
+	if err == nil {
+		if err = c.write(ctx, fields); err != nil {
+			err = fmt.Errorf("reopening handoff #%d: %w", number, err)
+		}
+	}
+	if err != nil {
+		if freeErr := c.deleteSlot(ctx, project); freeErr != nil {
+			return Handoff{}, errors.Join(err, freeErr)
+		}
+		return Handoff{}, err
+	}
+	handoff.Ticket.State, handoff.Ticket.Status = stateOpen, StatusTodo
+	return handoff, nil
+}
+
+// readTakenHandoff reads a handoff that take closed, refusing any other ticket.
+func (c *Client) readTakenHandoff(ctx context.Context, number int) (Handoff, error) {
+	node, err := readIssue[closedHandoffNode](ctx, c, number, ticketFields+" body stateReason")
+	if err != nil {
+		return Handoff{}, err
+	}
+	ticket, err := c.routed(ctx, node.ticket())
+	if err != nil {
+		return Handoff{}, fmt.Errorf("reading ticket #%d: %w", number, err)
+	}
+	switch {
+	case !ticket.Handoff():
+		return Handoff{}, fmt.Errorf("ticket #%d is not a handoff", number)
+	case ticket.State == stateOpen:
+		return Handoff{}, fmt.Errorf("handoff #%d is open, so nobody has taken it", number)
+	case node.StateReason != "COMPLETED":
+		return Handoff{}, fmt.Errorf("handoff #%d was dropped, not taken: create a new handoff instead", number)
+	case ticket.Project == "":
+		return Handoff{}, fmt.Errorf("handoff #%d has no project: give it a repo: label on GitHub", number)
+	}
+	handoff, err := parseHandoff(ticket, node.Body)
+	if err != nil {
+		return Handoff{}, fmt.Errorf("handoff #%d has no %q and %q lines at the top of its body: create a new handoff instead", number, strings.TrimSpace(handoffBranch), strings.TrimSpace(handoffCommit))
+	}
+	return handoff, nil
+}
+
 // handoffNode is a ticket with the body that holds its handoff.
 type handoffNode struct {
 	ticketNode
 	Body string
+}
+
+// closedHandoffNode is a handoff with the reason it was closed for: take closes one
+// as completed, drop as not planned.
+type closedHandoffNode struct {
+	handoffNode
+	StateReason string
 }
 
 // findHandoff reads a repository's open handoff. It lists the tracker's open

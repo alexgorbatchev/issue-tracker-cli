@@ -64,6 +64,7 @@ var techCatalog = cobrahelptree.TechCatalog{
 	"issue-tracker issue sub rm":             withArgs(true, arg("<parent>", "Parent ticket"), arg("<child...>", "Tickets to detach")),
 	"issue-tracker handoff create":           writeInfo,
 	"issue-tracker handoff take":             writeInfo,
+	"issue-tracker handoff untake":           withArgs(true, arg("<number>", "Handoff that handoff take closed")),
 	"issue-tracker handoff drop":             writeInfo,
 }
 

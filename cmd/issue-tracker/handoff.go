@@ -23,7 +23,7 @@ func newHandoffCommand(open opener) *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newHandoffCreateCommand(open), newHandoffShowCommand(open), newHandoffTakeCommand(open), newHandoffDropCommand(open))
+	cmd.AddCommand(newHandoffCreateCommand(open), newHandoffShowCommand(open), newHandoffTakeCommand(open), newHandoffUntakeCommand(open), newHandoffDropCommand(open))
 	return cmd
 }
 
@@ -170,6 +170,24 @@ func warnTaken(cmd *cobra.Command, taken tracker.TakenHandoff) error {
 		return warn(cmd.ErrOrStderr(), "could not check that branch %s still contains commit %s: %v", taken.Branch, taken.SHA, taken.Unchecked)
 	}
 	return nil
+}
+
+func newHandoffUntakeCommand(open opener) *cobra.Command {
+	var reason string
+	cmd := &cobra.Command{
+		Use:   "untake <number>",
+		Short: "Give back a handoff you took: reopen it and retake the project's slot",
+		Args:  cobra.ExactArgs(1),
+		RunE: withTicket(open, func(cmd *cobra.Command, s *session, number int) (string, error) {
+			handoff, err := s.client.UntakeHandoff(cmd.Context(), number, reason)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("returned handoff #%d to %s at %s %s: %s", handoff.Ticket.Number, handoff.Ticket.Project, handoff.Branch, handoff.SHA, handoff.Ticket.Title), nil
+		}),
+	}
+	cmd.Flags().StringVar(&reason, "reason", "", "Why the handoff is given back, posted as a comment")
+	return cmd
 }
 
 func newHandoffDropCommand(open opener) *cobra.Command {
