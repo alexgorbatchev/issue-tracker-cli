@@ -144,23 +144,37 @@ func newHandoffTakeCommand(open opener) *cobra.Command {
 				return err
 			}
 			taken, err := s.client.TakeHandoff(cmd.Context(), name)
-			if err != nil {
+			if taken.Ticket.Number == 0 {
 				return err
 			}
-			if taken.Moved {
-				if err := warn(cmd.ErrOrStderr(), "branch %s no longer contains commit %s: check where the work went before resuming", taken.Branch, taken.SHA); err != nil {
-					return err
-				}
+			// A handoff taken with a later failure is closed, so it is printed first.
+			if printErr := warnTaken(cmd, taken); printErr != nil {
+				return errors.Join(err, printErr)
 			}
-			return printHandoff(cmd, s, taken.Handoff, time.Now())
+			if printErr := printHandoff(cmd, s, taken.Handoff, time.Now()); printErr != nil {
+				return errors.Join(err, printErr)
+			}
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "Project whose handoff to take; defaults to the current repository's project")
 	return cmd
 }
 
+// warnTaken says when the branch a handoff names may not hold its work anymore.
+func warnTaken(cmd *cobra.Command, taken tracker.TakenHandoff) error {
+	switch {
+	case taken.Moved:
+		return warn(cmd.ErrOrStderr(), "branch %s no longer contains commit %s: check where the work went before resuming", taken.Branch, taken.SHA)
+	case taken.Unchecked != nil:
+		return warn(cmd.ErrOrStderr(), "could not check that branch %s still contains commit %s: %v", taken.Branch, taken.SHA, taken.Unchecked)
+	}
+	return nil
+}
+
 func newHandoffDropCommand(open opener) *cobra.Command {
 	var project, reason string
+	var freeSlot bool
 	cmd := &cobra.Command{
 		Use:   "drop",
 		Short: "Close the project's open handoff without taking it, freeing the slot",
@@ -170,7 +184,7 @@ func newHandoffDropCommand(open opener) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			handoff, ok, err := s.client.DropHandoff(cmd.Context(), name, reason)
+			handoff, ok, err := s.client.DropHandoff(cmd.Context(), name, reason, freeSlot)
 			if err != nil {
 				return err
 			}
@@ -182,6 +196,7 @@ func newHandoffDropCommand(open opener) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&project, "project", "", "Project whose handoff to drop; defaults to the current repository's project")
 	cmd.Flags().StringVar(&reason, "reason", "", "Why the handoff is dropped, posted as a comment")
+	cmd.Flags().BoolVar(&freeSlot, "free-slot", false, "With no open handoff, free a slot that a failed create left behind; never while a create may be running")
 	return cmd
 }
 

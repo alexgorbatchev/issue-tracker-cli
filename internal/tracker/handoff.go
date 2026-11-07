@@ -49,10 +49,11 @@ type HandoffOptions struct {
 }
 
 // TakenHandoff is a handoff that was picked up. Moved reports that its branch no
-// longer contains its commit.
+// longer contains its commit; Unchecked holds why that could not be checked.
 type TakenHandoff struct {
 	Handoff
-	Moved bool
+	Moved     bool
+	Unchecked error
 }
 
 // CreateHandoff opens a project's one handoff. The slot ref is created first, so a
@@ -114,9 +115,15 @@ func (c *Client) ShowHandoff(ctx context.Context, name string) (Handoff, error) 
 
 // TakeHandoff picks up a project's open handoff: it claims the ticket through the
 // atomic claim ref, so one of two agents wins, then closes it as completed and frees
-// the slot. It reports whether the branch still contains the commit.
+// the slot. It reports whether the branch still contains the commit. Once the
+// handoff is closed, an error comes back with the handoff, so its contents are
+// never lost.
 func (c *Client) TakeHandoff(ctx context.Context, name string) (TakenHandoff, error) {
 	project, err := c.lookupProject(ctx, name)
+	if err != nil {
+		return TakenHandoff{}, err
+	}
+	repo, err := ParseRepo(project.Repo)
 	if err != nil {
 		return TakenHandoff{}, err
 	}
@@ -128,50 +135,65 @@ func (c *Client) TakeHandoff(ctx context.Context, name string) (TakenHandoff, er
 	if err := c.createClaim(ctx, number); err != nil {
 		return TakenHandoff{}, err
 	}
-	// The search can predate another agent's pickup, which deletes its claim once the
+	// The listing can predate another agent's pickup, which deletes its claim once the
 	// ticket is closed, so the claim is confirmed against a fresh read.
 	ticket, err := c.readTicket(ctx, number)
 	if err == nil && ticket.State != stateOpen {
 		err = fmt.Errorf("%w: #%d", ErrAlreadyClaimed, number)
 	}
 	if err != nil {
-		if releaseErr := c.deleteClaim(ctx, number); releaseErr != nil {
-			return TakenHandoff{}, errors.Join(err, releaseErr)
-		}
-		return TakenHandoff{}, err
+		return TakenHandoff{}, c.releaseAfter(ctx, number, err)
 	}
-	ticket.Status = StatusDoing // closing deletes the claim it holds
-	if err := c.closeTicket(ctx, ticket, CloseOptions{Reason: ReasonCompleted}); err != nil {
-		return TakenHandoff{}, err
-	}
-	handoff.Ticket = ticket
-	if err := c.deleteSlot(ctx, project); err != nil {
-		return TakenHandoff{}, fmt.Errorf("took handoff #%d, but %w", number, err)
-	}
-	repo, err := ParseRepo(project.Repo)
-	if err != nil {
-		return TakenHandoff{}, err
-	}
+	// The check only feeds a warning, so it runs before closing and never blocks it.
+	taken := TakenHandoff{Handoff: handoff}
+	taken.Ticket = ticket
 	_, contained, err := c.compareCommit(ctx, repo, handoff.SHA, handoff.Branch)
-	if errors.Is(err, errNotOnRemote) {
-		return TakenHandoff{Handoff: handoff, Moved: true}, nil
+	switch {
+	case errors.Is(err, errNotOnRemote):
+		taken.Moved = true
+	case err != nil:
+		taken.Unchecked = err
+	default:
+		taken.Moved = !contained
 	}
-	if err != nil {
-		return TakenHandoff{}, fmt.Errorf("took handoff #%d, but %w", number, err)
+	closing := ticket
+	closing.Status = StatusDoing // closing deletes the claim it holds
+	if err := c.closeTicket(ctx, closing, CloseOptions{Reason: ReasonCompleted}); err != nil {
+		return TakenHandoff{}, c.releaseAfter(ctx, number, err)
 	}
-	return TakenHandoff{Handoff: handoff, Moved: !contained}, nil
+	if err := c.deleteSlot(ctx, project); err != nil {
+		return taken, fmt.Errorf("took handoff #%d, but %w: run issue-tracker handoff drop --free-slot", number, err)
+	}
+	return taken, nil
+}
+
+// releaseAfter gives up a claim that a failed pickup took, so the handoff can be
+// taken again.
+func (c *Client) releaseAfter(ctx context.Context, number int, err error) error {
+	if releaseErr := c.deleteClaim(ctx, number); releaseErr != nil {
+		return errors.Join(err, releaseErr)
+	}
+	return err
 }
 
 // DropHandoff closes a project's open handoff as not planned without claiming it,
-// and frees the slot. With no open handoff it frees a slot that a failed create
-// left behind, and reports false; it reports ErrNoHandoff when there was neither.
-func (c *Client) DropHandoff(ctx context.Context, name, reason string) (Handoff, bool, error) {
+// and frees the slot. With no open handoff, freeSlot frees a slot that a failed
+// create left behind and reports false. A slot without a handoff can also belong to
+// a create still running, so it is freed only when asked. It reports ErrNoHandoff
+// when there was nothing to drop or free.
+func (c *Client) DropHandoff(ctx context.Context, name, reason string, freeSlot bool) (Handoff, bool, error) {
 	project, err := c.lookupProject(ctx, name)
 	if err != nil {
 		return Handoff{}, false, err
 	}
+	if err := checkBodyLength(reason); err != nil {
+		return Handoff{}, false, err
+	}
 	handoff, err := c.findHandoff(ctx, project)
 	if errors.Is(err, ErrNoHandoff) {
+		if !freeSlot {
+			return Handoff{}, false, err
+		}
 		freed, err := c.freeSlot(ctx, project)
 		if err == nil && !freed {
 			err = fmt.Errorf("%w in %s", ErrNoHandoff, project.Root())
@@ -179,9 +201,6 @@ func (c *Client) DropHandoff(ctx context.Context, name, reason string) (Handoff,
 		return Handoff{}, false, err
 	}
 	if err != nil {
-		return Handoff{}, false, err
-	}
-	if err := checkBodyLength(reason); err != nil {
 		return Handoff{}, false, err
 	}
 	if err := c.closeTicket(ctx, handoff.Ticket, CloseOptions{Reason: ReasonNotPlanned, Comment: reason}); err != nil {
@@ -199,39 +218,57 @@ type handoffNode struct {
 	Body string
 }
 
-// findHandoff reads a repository's open handoff in one search. Handoffs carry their
-// routing label from creation, so the labels of the repository and its components
-// find them.
+// findHandoff reads a repository's open handoff. It lists the tracker's open
+// handoffs through the issues connection, which reflects writes at once, unlike
+// search, so a handoff created a moment ago is found. A tracker holds at most one
+// per repository, so this is one request until more than 100 repositories hold one.
+// A component's handoff belongs to its repository's slot.
 func (c *Client) findHandoff(ctx context.Context, project Project) (Handoff, error) {
-	meta, err := c.metadata(ctx)
-	if err != nil {
-		return Handoff{}, err
-	}
-	search := strings.Join([]string{"repo:" + c.repo.String(), "is:issue", "is:open", "sort:created-asc",
-		fmt.Sprintf("label:%q", labelHandoff), labelScope(meta.familyLabels(project))}, " ")
-	query := `query($owner: String!, $name: String!, $search: String!) {
-  repository(owner: $owner, name: $name) { isPrivate }
-  search(query: $search, type: ISSUE, first: 2) { nodes { ... on Issue { ` + ticketFields + ` body } } }
+	query := `query($owner: String!, $name: String!, $labels: [String!], $after: String) {
+  repository(owner: $owner, name: $name) {
+    isPrivate
+    issues(labels: $labels, states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC}) {
+      nodes { ` + ticketFields + ` body }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
 }`
-	var response struct {
-		Repository struct{ IsPrivate bool }
-		Search     struct{ Nodes []handoffNode }
+	variables := c.variables(map[string]any{"labels": []string{labelHandoff}, "after": nil})
+	for {
+		var response struct {
+			Repository struct {
+				IsPrivate bool
+				Issues    struct {
+					Nodes    []handoffNode
+					PageInfo pageInfo
+				}
+			}
+		}
+		if err := c.do(ctx, query, variables, &response); err != nil {
+			return Handoff{}, fmt.Errorf("reading handoff: %w", err)
+		}
+		if err := c.checkPrivate(response.Repository.IsPrivate); err != nil {
+			return Handoff{}, err
+		}
+		meta, err := c.metadata(ctx)
+		if err != nil {
+			return Handoff{}, err
+		}
+		for _, node := range response.Repository.Issues.Nodes {
+			ticket, err := c.routed(ctx, node.ticket())
+			if err != nil {
+				return Handoff{}, fmt.Errorf("reading handoff: %w", err)
+			}
+			if owner, ok := meta.project(ticket.Project); ok && strings.EqualFold(owner.Repo, project.Repo) {
+				return parseHandoff(ticket, node.Body)
+			}
+		}
+		page := response.Repository.Issues.PageInfo
+		if !page.HasNextPage {
+			return Handoff{}, fmt.Errorf("%w in %s", ErrNoHandoff, project.Root())
+		}
+		variables["after"] = page.EndCursor
 	}
-	if err := c.do(ctx, query, c.variables(map[string]any{"search": search}), &response); err != nil {
-		return Handoff{}, fmt.Errorf("reading handoff: %w", err)
-	}
-	if err := c.checkPrivate(response.Repository.IsPrivate); err != nil {
-		return Handoff{}, err
-	}
-	nodes := response.Search.Nodes
-	if len(nodes) == 0 {
-		return Handoff{}, fmt.Errorf("%w in %s", ErrNoHandoff, project.Root())
-	}
-	ticket, err := c.routed(ctx, nodes[0].ticket())
-	if err != nil {
-		return Handoff{}, fmt.Errorf("reading handoff: %w", err)
-	}
-	return parseHandoff(ticket, nodes[0].Body)
 }
 
 func (h Handoff) body() string {
@@ -325,7 +362,7 @@ func (c *Client) createSlot(ctx context.Context, project Project) error {
 	}
 	open, findErr := c.findHandoff(ctx, project)
 	if errors.Is(findErr, ErrNoHandoff) {
-		return fmt.Errorf("the handoff slot of %s is taken, but it has no open handoff, perhaps after a failed create: run issue-tracker handoff drop to free it", project.Root())
+		return fmt.Errorf("the handoff slot of %s is taken, but it has no open handoff: another handoff create may still be running, so retry in a moment; if none is, a create failed partway, and issue-tracker handoff drop --free-slot frees the slot", project.Root())
 	}
 	if open.Ticket.Number == 0 {
 		return fmt.Errorf("%s already has an open handoff: %w", project.Root(), findErr)

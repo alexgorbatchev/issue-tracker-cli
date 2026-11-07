@@ -13,7 +13,7 @@ const (
 	compareMatch = "GET api.github.com/repos/o/go-tui/compare/"
 	slotPath     = "api.github.com/repos/o/tracker/git/refs/handoffs/o/go-tui"
 	labelMatch   = "{ id label(name: $label) { id } }"
-	handoffQuery = "search(query: $search, type: ISSUE, first: 2)"
+	handoffQuery = "issues(labels: $labels, states: OPEN"
 	handoffBody  = "Branch: feat/x\nCommit: " + fullSHA + "\nTicket: #7\n\nResume at the parser."
 )
 
@@ -25,13 +25,22 @@ func handoffLabelRoute() fakegithub.Route {
 	return fakegithub.Route{Match: labelMatch, Body: `{"data":{"repository":{"id":"REPO","label":{"id":"LH"}}}}`}
 }
 
-// handoffRoute answers the search for a project's open handoff with these tickets.
+// handoffRoute answers the listing of open handoffs with these tickets.
 func handoffRoute(body string, specs ...ticketSpec) fakegithub.Route {
+	return handoffPage(false, body, specs...)
+}
+
+func handoffPage(next bool, body string, specs ...ticketSpec) fakegithub.Route {
 	nodes := make([]string, 0, len(specs))
 	for _, spec := range specs {
 		nodes = append(nodes, spec.json()+`,"body":`+quote(body)+`}`)
 	}
-	return fakegithub.Route{Match: handoffQuery, Body: `{"data":{"repository":{"isPrivate":true},"search":{"nodes":[` + strings.Join(nodes, ",") + `]}}}`}
+	route := fakegithub.Route{Match: handoffQuery, Body: `{"data":{"repository":{"isPrivate":true,"issues":{"nodes":[` + strings.Join(nodes, ",") +
+		`],"pageInfo":{"hasNextPage":` + map[bool]string{true: "true", false: "false"}[next] + `,"endCursor":"c"}}}}}`}
+	if next {
+		route.Times = 1
+	}
+	return route
 }
 
 func quote(text string) string {
@@ -121,7 +130,7 @@ func TestCreateHandoffRefusals(t *testing.T) {
 		{"label read fails", []fakegithub.Route{commitCompareRoute("ahead"), {Match: labelMatch, Status: 500, Body: "{}"}}, HandoffOptions{Project: "go-tui", Branch: "main", SHA: fullSHA}, "reading handoff label", 2},
 		{"label create fails", []fakegithub.Route{commitCompareRoute("ahead"), {Match: labelMatch, Body: `{"data":{"repository":{"id":"REPO","label":null}}}`}, {Match: "createLabel(input", Status: 500, Body: "{}"}}, HandoffOptions{Project: "go-tui", Branch: "main", SHA: fullSHA}, "creating handoff label", 3},
 		{"open handoff", []fakegithub.Route{commitCompareRoute("ahead"), handoffLabelRoute(), conflict, handoffRoute(handoffBody, openHandoff())}, HandoffOptions{Project: "go-tui", Branch: "main", SHA: fullSHA}, "go-tui already has open handoff #40: take or drop it first", 4},
-		{"slot left behind", []fakegithub.Route{commitCompareRoute("ahead"), handoffLabelRoute(), conflict, handoffRoute("")}, HandoffOptions{Project: "go-tui", Branch: "main", SHA: fullSHA}, "the handoff slot of go-tui is taken, but it has no open handoff, perhaps after a failed create: run issue-tracker handoff drop to free it", 4},
+		{"slot without a handoff", []fakegithub.Route{commitCompareRoute("ahead"), handoffLabelRoute(), conflict, handoffRoute("")}, HandoffOptions{Project: "go-tui", Branch: "main", SHA: fullSHA}, "the handoff slot of go-tui is taken, but it has no open handoff: another handoff create may still be running, so retry in a moment; if none is, a create failed partway, and issue-tracker handoff drop --free-slot frees the slot", 4},
 		{"conflict unreadable", []fakegithub.Route{commitCompareRoute("ahead"), handoffLabelRoute(), conflict, {Match: handoffQuery, Status: 500, Body: "{}"}}, HandoffOptions{Project: "go-tui", Branch: "main", SHA: fullSHA}, "go-tui already has an open handoff: reading handoff", 4},
 		{"slot fails", []fakegithub.Route{commitCompareRoute("ahead"), handoffLabelRoute(), {Match: refsPost, Status: 500, Body: `{"message":"boom"}`}}, HandoffOptions{Project: "go-tui", Branch: "main", SHA: fullSHA}, "opening the handoff slot of go-tui", 3},
 	}
@@ -191,11 +200,19 @@ func TestShowHandoff(t *testing.T) {
 		t.Fatalf("handoff = %+v", handoff)
 	}
 	wantCount(t, gh, 1)
-	search := gh.Requests()[0].Variables["search"]
-	for _, want := range []string{"repo:o/tracker", "is:open", `label:"handoff"`, `label:"repo:go-tui"`} {
-		if !strings.Contains(search.(string), want) {
-			t.Fatalf("search = %v, missing %s", search, want)
-		}
+	if labels := gh.Requests()[0].Variables["labels"].([]any); len(labels) != 1 || labels[0] != "handoff" {
+		t.Fatalf("labels = %v", labels)
+	}
+
+	// Another repository's handoff is not this one's, and a later page is read.
+	other := ticketSpec{number: 39, project: "lib", status: StatusTodo, board: "B2", handoff: true}
+	c, gh = newClient(t, handoffPage(true, handoffBody, other), handoffRoute(handoffBody, openHandoff()))
+	if handoff, err = c.ShowHandoff(ctx, "go-tui"); err != nil || handoff.Ticket.Number != 40 {
+		t.Fatalf("handoff = %+v, err = %v", handoff, err)
+	}
+	wantCount(t, gh, 2)
+	if after := gh.Requests()[1].Variables["after"]; after != "c" {
+		t.Fatalf("after = %v", after)
 	}
 
 	c, gh = newClient(t, handoffRoute(""))
@@ -209,7 +226,7 @@ func TestShowHandoff(t *testing.T) {
 	_, err = c.ShowHandoff(ctx, "go-tui")
 	wantError(t, err, `handoff #40 has no "Branch:" and "Commit:" lines at the top of its body: drop it and create it again`)
 
-	c, _ = newClient(t, fakegithub.Route{Match: handoffQuery, Body: `{"data":{"repository":{"isPrivate":false},"search":{"nodes":[]}}}`})
+	c, _ = newClient(t, fakegithub.Route{Match: handoffQuery, Body: `{"data":{"repository":{"isPrivate":false,"issues":{"nodes":[]}}}}`})
 	c.requirePrivate = true
 	_, err = c.ShowHandoff(ctx, "go-tui")
 	wantError(t, err, "not private")
@@ -226,9 +243,9 @@ func TestAComponentSharesItsRepositorysHandoff(t *testing.T) {
 	if err != nil || handoff.Ticket.Project != "mono/api" {
 		t.Fatalf("handoff = %+v, err = %v", handoff, err)
 	}
-	search := gh.Requests()[0].Variables["search"].(string)
-	if !strings.Contains(search, `"repo:mono"`) || !strings.Contains(search, `"repo:mono/api"`) {
-		t.Fatalf("search = %s", search)
+	wantCount(t, gh, 1)
+	if handoff, err = c.ShowHandoff(ctx, "mono"); err != nil || handoff.Ticket.Number != 41 {
+		t.Fatalf("a repository finds its component's handoff: %+v, %v", handoff, err)
 	}
 	if path := c.slotPath(monoMetadata().Projects[3]); !strings.HasSuffix(path, "/git/refs/handoffs/o/mono") {
 		t.Fatalf("slot = %s", path)
@@ -278,9 +295,18 @@ func TestTakeHandoff(t *testing.T) {
 	if taken, err = c.TakeHandoff(ctx, "go-tui"); err != nil || !taken.Moved {
 		t.Fatalf("a deleted branch still hands off: %+v, %v", taken, err)
 	}
-	c, _ = newClient(t, takeRoutes(openHandoff(), fakegithub.Route{Match: compareMatch, Status: 500, Body: "{}"})...)
-	_, err = c.TakeHandoff(ctx, "go-tui")
-	wantError(t, err, "took handoff #40, but comparing commit")
+	// The check only feeds a warning, so its failure does not stop the pickup.
+	c, gh = newClient(t, takeRoutes(openHandoff(), fakegithub.Route{Match: compareMatch, Status: 500, Body: "{}"})...)
+	taken, err = c.TakeHandoff(ctx, "go-tui")
+	if err != nil || taken.Moved || taken.Unchecked == nil || !strings.Contains(taken.Unchecked.Error(), "comparing commit") {
+		t.Fatalf("taken = %+v, err = %v", taken, err)
+	}
+	wantCount(t, gh, 7)
+	// It runs before the close, so the handoff is still open when it fails.
+	requests := gh.Requests()
+	if !strings.Contains(requests[3].Description, compareMatch) || !strings.Contains(requests[4].Description, "closeIssue") {
+		t.Fatalf("order = %s, then %s", requests[3].Description, requests[4].Description)
+	}
 }
 
 func TestTakeHandoffHasOneWinner(t *testing.T) {
@@ -328,22 +354,33 @@ func TestTakeHandoffFailures(t *testing.T) {
 	_, err = c.TakeHandoff(ctx, "go-tui")
 	wantError(t, err, "reading ticket #40")
 
+	// A failed close gives the claim back, so the handoff can be taken again.
 	routes := takeRoutes(openHandoff(), commitCompareRoute("ahead"))
 	routes[3] = fakegithub.Route{Match: "closeIssue", Status: 500, Body: "{}"}
-	c, _ = newClient(t, routes...)
-	_, err = c.TakeHandoff(ctx, "go-tui")
+	c, gh = newClient(t, routes...)
+	taken, err := c.TakeHandoff(ctx, "go-tui")
 	wantError(t, err, "closing ticket #40")
+	if taken.Ticket.Number != 0 || len(requestsMatching(gh, "DELETE api.github.com/repos/o/tracker/git/refs/claims/40")) != 1 {
+		t.Fatalf("a failed close must release the claim: %+v", taken)
+	}
+	wantCount(t, gh, 6)
 
+	// Once closed, the handoff comes back with the error, so its contents are not lost.
 	routes = takeRoutes(openHandoff(), commitCompareRoute("ahead"))
 	routes[5] = fakegithub.Route{Match: "DELETE " + slotPath, Status: 500, Body: `{"message":"boom"}`}
-	c, _ = newClient(t, routes...)
-	_, err = c.TakeHandoff(ctx, "go-tui")
+	c, gh = newClient(t, routes...)
+	taken, err = c.TakeHandoff(ctx, "go-tui")
 	wantError(t, err, "took handoff #40, but freeing the handoff slot of go-tui")
+	wantError(t, err, "run issue-tracker handoff drop --free-slot")
+	if taken.Ticket.Number != 40 || taken.Branch != "feat/x" || taken.SHA != fullSHA || taken.Text != "Resume at the parser." {
+		t.Fatalf("taken = %+v", taken)
+	}
+	wantCount(t, gh, 7)
 }
 
 func TestDropHandoff(t *testing.T) {
 	c, gh := newClient(t, handoffRoute(handoffBody, openHandoff()), okRoute("closeIssue"), fakegithub.Route{Match: "DELETE " + slotPath, Status: 204})
-	handoff, ok, err := c.DropHandoff(ctx, "go-tui", "stale")
+	handoff, ok, err := c.DropHandoff(ctx, "go-tui", "stale", false)
 	if err != nil || !ok || handoff.Ticket.Number != 40 {
 		t.Fatalf("handoff = %+v, ok = %v, err = %v", handoff, ok, err)
 	}
@@ -359,7 +396,7 @@ func TestDropHandoff(t *testing.T) {
 	}
 
 	c, gh = newClient(t, handoffRoute(handoffBody, openHandoff()), okRoute("closeIssue"), fakegithub.Route{Match: "DELETE " + slotPath, Status: 204})
-	if _, _, err := c.DropHandoff(ctx, "go-tui", ""); err != nil {
+	if _, _, err := c.DropHandoff(ctx, "go-tui", "", false); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(requestsMatching(gh, "closeIssue")[0].Description, "addComment") {
@@ -367,45 +404,80 @@ func TestDropHandoff(t *testing.T) {
 	}
 }
 
-func TestDropHandoffFreesALeftoverSlot(t *testing.T) {
+// A slot without a visible handoff can belong to a create that is still running, so
+// drop leaves it alone unless asked to free it.
+func TestDropHandoffFreesASlotOnlyWhenAsked(t *testing.T) {
 	c, gh := newClient(t, handoffRoute(""), fakegithub.Route{Match: "DELETE " + slotPath, Status: 204})
-	if _, ok, err := c.DropHandoff(ctx, "go-tui", ""); err != nil || ok {
+	_, ok, err := c.DropHandoff(ctx, "go-tui", "", false)
+	if !errors.Is(err, ErrNoHandoff) || err.Error() != "no open handoff in go-tui" || ok {
+		t.Fatalf("ok = %v, err = %v", ok, err)
+	}
+	wantCount(t, gh, 1)
+	if len(requestsMatching(gh, "DELETE")) != 0 {
+		t.Fatal("drop must not free a slot that a running create may hold")
+	}
+
+	c, gh = newClient(t, handoffRoute(""), fakegithub.Route{Match: "DELETE " + slotPath, Status: 204})
+	if _, ok, err := c.DropHandoff(ctx, "go-tui", "", true); err != nil || ok {
 		t.Fatalf("ok = %v, err = %v", ok, err)
 	}
 	wantCount(t, gh, 2)
 
 	c, gh = newClient(t, handoffRoute(""), fakegithub.Route{Match: "DELETE " + slotPath, Status: 422, Body: `{"message":"Reference does not exist"}`})
-	_, _, err := c.DropHandoff(ctx, "go-tui", "")
+	_, _, err = c.DropHandoff(ctx, "go-tui", "", true)
 	if !errors.Is(err, ErrNoHandoff) || err.Error() != "no open handoff in go-tui" {
 		t.Fatalf("err = %v", err)
 	}
 	wantCount(t, gh, 2)
+
+	// An open handoff is dropped normally, whatever the flag says.
+	c, gh = newClient(t, handoffRoute(handoffBody, openHandoff()), okRoute("closeIssue"), fakegithub.Route{Match: "DELETE " + slotPath, Status: 204})
+	if _, ok, err := c.DropHandoff(ctx, "go-tui", "", true); err != nil || !ok {
+		t.Fatalf("ok = %v, err = %v", ok, err)
+	}
+	wantCount(t, gh, 3)
+}
+
+// A create that has taken the slot but not yet created its ticket refuses a second
+// create, and the remedy it prints does not free the first create's slot.
+func TestASecondCreateCannotFreeARunningCreatesSlot(t *testing.T) {
+	conflict := fakegithub.Route{Match: refsPost, Status: 422, Body: claimExist}
+	c, gh := newClient(t, commitCompareRoute("ahead"), handoffLabelRoute(), conflict, handoffRoute(""))
+	_, err := c.CreateHandoff(ctx, HandoffOptions{Project: "go-tui", Title: "t", Branch: "main", SHA: fullSHA})
+	wantError(t, err, "another handoff create may still be running, so retry in a moment")
+	wantCount(t, gh, 4)
+
+	c, gh = newClient(t, handoffRoute(""), fakegithub.Route{Match: "DELETE " + slotPath, Status: 204})
+	_, _, err = c.DropHandoff(ctx, "go-tui", "", false)
+	if !errors.Is(err, ErrNoHandoff) || len(requestsMatching(gh, "DELETE")) != 0 {
+		t.Fatalf("err = %v; drop without --free-slot must leave the slot", err)
+	}
 }
 
 func TestDropHandoffFailures(t *testing.T) {
 	c, _ := newClient(t, handoffRoute(""), fakegithub.Route{Match: "DELETE " + slotPath, Status: 500, Body: `{"message":"boom"}`})
-	_, _, err := c.DropHandoff(ctx, "go-tui", "")
+	_, _, err := c.DropHandoff(ctx, "go-tui", "", true)
 	wantError(t, err, "freeing the handoff slot of go-tui")
 
 	c, _ = newClient(t, fakegithub.Route{Match: handoffQuery, Status: 500, Body: "{}"})
-	_, _, err = c.DropHandoff(ctx, "go-tui", "")
+	_, _, err = c.DropHandoff(ctx, "go-tui", "", false)
 	wantError(t, err, "reading handoff")
 
 	c, _ = newClient(t, metadataRoute(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
-	_, _, err = c.DropHandoff(ctx, "nope", "")
+	_, _, err = c.DropHandoff(ctx, "nope", "", false)
 	wantError(t, err, `unknown project "nope"`)
 
 	c, gh := newClient(t, handoffRoute(handoffBody, openHandoff()))
-	_, _, err = c.DropHandoff(ctx, "go-tui", strings.Repeat("x", maxBodyLength+1))
+	_, _, err = c.DropHandoff(ctx, "go-tui", strings.Repeat("x", maxBodyLength+1), false)
 	wantError(t, err, "over GitHub's 65536")
-	wantCount(t, gh, 1)
+	wantCount(t, gh, 0)
 
 	c, _ = newClient(t, handoffRoute(handoffBody, openHandoff()), fakegithub.Route{Match: "closeIssue", Status: 500, Body: "{}"})
-	_, _, err = c.DropHandoff(ctx, "go-tui", "")
+	_, _, err = c.DropHandoff(ctx, "go-tui", "", false)
 	wantError(t, err, "closing ticket #40")
 
 	c, _ = newClient(t, handoffRoute(handoffBody, openHandoff()), okRoute("closeIssue"), fakegithub.Route{Match: "DELETE " + slotPath, Status: 500, Body: `{"message":"boom"}`})
-	_, _, err = c.DropHandoff(ctx, "go-tui", "")
+	_, _, err = c.DropHandoff(ctx, "go-tui", "", false)
 	wantError(t, err, "dropped handoff #40, but freeing the handoff slot of go-tui")
 }
 

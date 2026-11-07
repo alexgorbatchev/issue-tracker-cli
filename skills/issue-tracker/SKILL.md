@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-06 23:46
+  last_modified: 2026-11-06 23:54
   status: current
 ---
 
@@ -275,13 +275,14 @@ Prints the project's open handoff without taking it. For people: lines `handoff:
 
 ### issue-tracker handoff take
 
-Picks up the project's open handoff: claims it with the same atomic claim as `issue claim`, closes it as completed, and frees the slot. Prints the handoff as `handoff show` does. When two agents take the same handoff, one wins and the other fails with `ticket is already claimed`. When the branch no longer contains the commit, or no longer exists, it still takes the handoff and prints `WARN: branch <branch> no longer contains commit <sha>: check where the work went before resuming` on stderr. It does not claim the ticket named by `Ticket:`.
+Picks up the project's open handoff: claims it with the same atomic claim as `issue claim`, checks that the branch still contains the commit, closes it as completed, and frees the slot. Prints the handoff as `handoff show` does. When two agents take the same handoff, one wins and the other fails with `ticket is already claimed`. When the branch no longer contains the commit, or no longer exists, it still takes the handoff and prints `WARN: branch <branch> no longer contains commit <sha>: check where the work went before resuming` on stderr; when the check itself fails, it prints `WARN: could not check that branch <branch> still contains commit <sha>: <reason>` and still takes it. When closing fails, it gives the claim back, so the handoff can be taken again. When freeing the slot fails after the close, it prints the handoff, then fails with an error that ends `run issue-tracker handoff drop --free-slot`. It does not claim the ticket named by `Ticket:`.
 
 ### issue-tracker handoff drop
 
-Closes the project's open handoff as not planned without claiming it, and frees the slot so that a new handoff can be created. Prints `dropped handoff #<number> in <project>: <title>`. With no open handoff but a slot left by a failed create, it frees the slot and prints `freed the handoff slot of <project>, which held no open handoff`.
+Closes the project's open handoff as not planned without claiming it, and frees the slot so that a new handoff can be created. Prints `dropped handoff #<number> in <project>: <title>`. Fails with `no open handoff in <project>` when there is none, leaving the slot alone, because a create that has taken the slot but not yet created its ticket also has no open handoff.
 
 - `--reason` string: why the handoff is dropped, posted as a comment.
+- `--free-slot` bool: with no open handoff, free the slot that a create which failed partway left behind, and print `freed the handoff slot of <project>, which held no open handoff`. Use it only when no `handoff create` for the project is running.
 
 ### issue-tracker skill
 
@@ -342,9 +343,10 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `label repo:<name> has no registration and holds <n> tickets, perhaps of a project removed before removals were recorded: ...`: which repository the label's tickets belong to is unknown. Ask the user whether they belong to this repository: if so, they set the description the message names; otherwise they rename the label.
 - `label repo:<name> holds <n> tickets and its description "<text>" is not a registration: ...`: a hand-made label with this name already holds tickets. Ask the user to rename it.
 - `ticket is already claimed`: another agent holds the ticket. Pick another. From `handoff take`, another agent took the handoff first.
-- `no open handoff in <project>`: `handoff take` or `handoff drop` found no open handoff and no slot to free. Nothing was changed.
+- `no open handoff in <project>`: `handoff take` or `handoff drop` found no open handoff, or `handoff drop --free-slot` found no slot to free either. Nothing was changed.
 - `<project> already has open handoff #<number>: take or drop it first`: a project holds one open handoff. Nothing was written. Read it with `handoff show`, then take it, or ask the user before dropping it.
-- `the handoff slot of <project> is taken, but it has no open handoff, perhaps after a failed create: run issue-tracker handoff drop to free it`: a previous create took the slot but did not finish. Run `handoff drop`, then create again.
+- `the handoff slot of <project> is taken, but it has no open handoff: another handoff create may still be running, so retry in a moment; if none is, a create failed partway, and issue-tracker handoff drop --free-slot frees the slot`: retry the create after a few seconds. When it fails the same way again and no other agent is creating a handoff for the project, run `handoff drop --free-slot`, then create again.
+- `took handoff #<number>, but ...: run issue-tracker handoff drop --free-slot`: the handoff was taken and printed, but its slot was not freed. Resume the work from the printed branch and commit, and run `handoff drop --free-slot` so that the project can take a new handoff.
 - `branch <branch> of <owner/repo> does not contain commit <sha>: push the commit first` or `branch <branch> or commit <sha> not found in <owner/repo>: push them first`: the handoff would point at work that exists only on this machine. Nothing was written. Push the branch and rerun.
 - `no branch or commit to hand off: ...`: `handoff create` ran outside a checkout of the project's repository, or in one with no current branch or commits, without `--branch` and `--sha`. Pass them, or run it in the checkout.
 - `handoff #<number> has no "Branch:" and "Commit:" lines at the top of its body: drop it and create it again`: the handoff's body was edited by hand. Ask the user before dropping it.

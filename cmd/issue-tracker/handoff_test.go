@@ -11,7 +11,7 @@ import (
 
 const (
 	handoffSHA    = "0123456789abcdef0123456789abcdef01234567"
-	handoffSearch = "search(query: $search, type: ISSUE, first: 2)"
+	handoffSearch = "issues(labels: $labels, states: OPEN"
 	compareMatch  = "GET api.github.com/repos/o/go-tui/compare/"
 	refsPost      = "POST api.github.com/repos/o/tracker/git/refs"
 	slotDelete    = "DELETE api.github.com/repos/o/tracker/git/refs/handoffs/o/go-tui"
@@ -26,7 +26,7 @@ func handoffJSON(created time.Time) string {
 }
 
 func handoffSearchRoute(nodes ...string) fakegithub.Route {
-	return fakegithub.Route{Match: handoffSearch, Body: `{"data":{"repository":{"isPrivate":true},"search":{"nodes":[` + strings.Join(nodes, ",") + `]}}}`}
+	return fakegithub.Route{Match: handoffSearch, Body: `{"data":{"repository":{"isPrivate":true,"issues":{"nodes":[` + strings.Join(nodes, ",") + `],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`}
 }
 
 func compareRoute(status string) fakegithub.Route {
@@ -217,6 +217,20 @@ func TestHandoffTake(t *testing.T) {
 		t.Fatalf("stderr = %q, err = %v", stderr, err)
 	}
 
+	_, stderr, err = execute(t, fakeOpener(t, fakegithub.New(takeRoutes(fakegithub.Route{Match: compareMatch, Status: 500, Body: `{"message":"boom"}`})...)), "handoff", "take", "--project", "go-tui")
+	if err != nil || !strings.HasPrefix(stderr, "WARN: could not check that branch feat/x still contains commit "+handoffSHA+": comparing commit") {
+		t.Fatalf("stderr = %q, err = %v", stderr, err)
+	}
+
+	// A handoff closed before a later failure is still printed, then the error.
+	routes := takeRoutes(compareRoute("ahead"))
+	routes[5] = fakegithub.Route{Match: slotDelete, Status: 500, Body: `{"message":"boom"}`}
+	stdout, _, err = execute(t, fakeOpener(t, fakegithub.New(routes...)), "handoff", "take", "--project", "go-tui")
+	wantErr(t, err, "took handoff #40, but freeing the handoff slot of go-tui")
+	if want := "OK: 40\tgo-tui\tfeat/x\t" + handoffSHA + "\n\nResume at the parser.\n"; stdout != want {
+		t.Fatalf("stdout = %q, want %q", stdout, want)
+	}
+
 	_, _, err = execute(t, fakeOpener(t, fakegithub.New(handoffSearchRoute())), "handoff", "take", "--project", "go-tui")
 	wantErr(t, err, "no open handoff in go-tui")
 	_, _, err = execute(t, noSession, "handoff", "take")
@@ -239,13 +253,20 @@ func TestHandoffDrop(t *testing.T) {
 	}
 
 	gh = fakegithub.New(handoffSearchRoute(), fakegithub.Route{Match: slotDelete, Status: 204})
-	stdout, _, err = execute(t, fakeOpener(t, gh), "handoff", "drop", "--project", "go-tui")
+	_, _, err = execute(t, fakeOpener(t, gh), "handoff", "drop", "--project", "go-tui")
+	wantErr(t, err, "no open handoff in go-tui")
+	if gh.Count() != 1 {
+		t.Fatalf("drop without --free-slot must leave the slot: %d requests", gh.Count())
+	}
+
+	gh = fakegithub.New(handoffSearchRoute(), fakegithub.Route{Match: slotDelete, Status: 204})
+	stdout, _, err = execute(t, fakeOpener(t, gh), "handoff", "drop", "--project", "go-tui", "--free-slot")
 	if err != nil || stdout != "OK: freed the handoff slot of go-tui, which held no open handoff\n" {
 		t.Fatalf("stdout = %q, err = %v", stdout, err)
 	}
 
 	gh = fakegithub.New(handoffSearchRoute(), fakegithub.Route{Match: slotDelete, Status: 422, Body: `{"message":"Reference does not exist"}`})
-	_, _, err = execute(t, fakeOpener(t, gh), "handoff", "drop", "--project", "go-tui")
+	_, _, err = execute(t, fakeOpener(t, gh), "handoff", "drop", "--project", "go-tui", "--free-slot")
 	wantErr(t, err, "no open handoff in go-tui")
 	_, _, err = execute(t, noSession, "handoff", "drop")
 	wantErr(t, err, "this command must not need a session")
