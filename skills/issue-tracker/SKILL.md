@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-06 23:54
+  last_modified: 2026-11-06 23:56
   status: current
 ---
 
@@ -275,7 +275,7 @@ Prints the project's open handoff without taking it. For people: lines `handoff:
 
 ### issue-tracker handoff take
 
-Picks up the project's open handoff: claims it with the same atomic claim as `issue claim`, checks that the branch still contains the commit, closes it as completed, and frees the slot. Prints the handoff as `handoff show` does. When two agents take the same handoff, one wins and the other fails with `ticket is already claimed`. When the branch no longer contains the commit, or no longer exists, it still takes the handoff and prints `WARN: branch <branch> no longer contains commit <sha>: check where the work went before resuming` on stderr; when the check itself fails, it prints `WARN: could not check that branch <branch> still contains commit <sha>: <reason>` and still takes it. When closing fails, it gives the claim back, so the handoff can be taken again. When freeing the slot fails after the close, it prints the handoff, then fails with an error that ends `run issue-tracker handoff drop --free-slot`. It does not claim the ticket named by `Ticket:`.
+Picks up the project's open handoff: claims it with the same atomic claim as `issue claim`, checks that the branch still contains the commit, closes it as completed, and frees the slot. Prints the handoff as `handoff show` does. When two agents take the same handoff, one wins and the other fails with `ticket is already claimed`. When the branch no longer contains the commit, or no longer exists, it still takes the handoff and prints `WARN: branch <branch> no longer contains commit <sha>: check where the work went before resuming` on stderr; when the check itself fails, it prints `WARN: could not check that branch <branch> still contains commit <sha>: <reason>` and still takes it. When closing fails, it gives the claim back, so the handoff can be taken again. When deleting the claim or freeing the slot fails after the close, it still prints the handoff, then fails with an error that starts `took handoff #<number>, but`; a slot left behind ends the error with `run issue-tracker handoff drop --free-slot`, and a claim left on the closed handoff needs nothing. It does not claim the ticket named by `Ticket:`.
 
 ### issue-tracker handoff drop
 
@@ -346,7 +346,7 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `no open handoff in <project>`: `handoff take` or `handoff drop` found no open handoff, or `handoff drop --free-slot` found no slot to free either. Nothing was changed.
 - `<project> already has open handoff #<number>: take or drop it first`: a project holds one open handoff. Nothing was written. Read it with `handoff show`, then take it, or ask the user before dropping it.
 - `the handoff slot of <project> is taken, but it has no open handoff: another handoff create may still be running, so retry in a moment; if none is, a create failed partway, and issue-tracker handoff drop --free-slot frees the slot`: retry the create after a few seconds. When it fails the same way again and no other agent is creating a handoff for the project, run `handoff drop --free-slot`, then create again.
-- `took handoff #<number>, but ...: run issue-tracker handoff drop --free-slot`: the handoff was taken and printed, but its slot was not freed. Resume the work from the printed branch and commit, and run `handoff drop --free-slot` so that the project can take a new handoff.
+- `took handoff #<number>, but ...`: the handoff was taken and printed, but a cleanup step failed. Resume the work from the printed branch and commit. When the error ends `run issue-tracker handoff drop --free-slot`, run it so that the project can take a new handoff.
 - `branch <branch> of <owner/repo> does not contain commit <sha>: push the commit first` or `branch <branch> or commit <sha> not found in <owner/repo>: push them first`: the handoff would point at work that exists only on this machine. Nothing was written. Push the branch and rerun.
 - `no branch or commit to hand off: ...`: `handoff create` ran outside a checkout of the project's repository, or in one with no current branch or commits, without `--branch` and `--sha`. Pass them, or run it in the checkout.
 - `handoff #<number> has no "Branch:" and "Commit:" lines at the top of its body: drop it and create it again`: the handoff's body was edited by hand. Ask the user before dropping it.

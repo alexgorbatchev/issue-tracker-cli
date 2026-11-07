@@ -231,6 +231,18 @@ func TestHandoffTake(t *testing.T) {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
 	}
 
+	routes = takeRoutes(compareRoute("ahead"))
+	routes[4] = fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/git/refs/claims/40", Status: 500, Body: `{"message":"boom"}`}
+	gh = fakegithub.New(routes...)
+	stdout, _, err = execute(t, fakeOpener(t, gh), "handoff", "take", "--project", "go-tui")
+	wantErr(t, err, "took handoff #40, but releasing ticket #40")
+	if want := "OK: 40\tgo-tui\tfeat/x\t" + handoffSHA + "\n\nResume at the parser.\n"; stdout != want {
+		t.Fatalf("stdout = %q, want %q", stdout, want)
+	}
+	if gh.Count() != 6 {
+		t.Fatalf("made %d requests, want 6", gh.Count())
+	}
+
 	_, _, err = execute(t, fakeOpener(t, fakegithub.New(handoffSearchRoute())), "handoff", "take", "--project", "go-tui")
 	wantErr(t, err, "no open handoff in go-tui")
 	_, _, err = execute(t, noSession, "handoff", "take")

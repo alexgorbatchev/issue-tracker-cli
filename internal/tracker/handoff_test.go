@@ -365,6 +365,21 @@ func TestTakeHandoffFailures(t *testing.T) {
 	}
 	wantCount(t, gh, 6)
 
+	// A claim that cannot be deleted after the close leaves a harmless ref, and the
+	// handoff still comes back.
+	routes = takeRoutes(openHandoff(), commitCompareRoute("ahead"))
+	routes[4] = fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/git/refs/claims/40", Status: 500, Body: `{"message":"boom"}`}
+	c, gh = newClient(t, routes...)
+	taken, err = c.TakeHandoff(ctx, "go-tui")
+	wantError(t, err, "took handoff #40, but releasing ticket #40")
+	if taken.Ticket.Number != 40 || taken.Branch != "feat/x" || taken.SHA != fullSHA {
+		t.Fatalf("taken = %+v", taken)
+	}
+	if len(requestsMatching(gh, "DELETE api.github.com/repos/o/tracker/git/refs/claims/40")) != 1 {
+		t.Fatal("a closed handoff's claim is deleted once, not again as a release")
+	}
+	wantCount(t, gh, 6)
+
 	// Once closed, the handoff comes back with the error, so its contents are not lost.
 	routes = takeRoutes(openHandoff(), commitCompareRoute("ahead"))
 	routes[5] = fakegithub.Route{Match: "DELETE " + slotPath, Status: 500, Body: `{"message":"boom"}`}

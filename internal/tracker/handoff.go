@@ -156,10 +156,13 @@ func (c *Client) TakeHandoff(ctx context.Context, name string) (TakenHandoff, er
 	default:
 		taken.Moved = !contained
 	}
-	closing := ticket
-	closing.Status = StatusDoing // closing deletes the claim it holds
-	if err := c.closeTicket(ctx, closing, CloseOptions{Reason: ReasonCompleted}); err != nil {
+	// The ticket is not in Doing, so closing writes only the close, and the claim is
+	// deleted here, where its failure cannot lose the closed handoff.
+	if err := c.closeTicket(ctx, ticket, CloseOptions{Reason: ReasonCompleted}); err != nil {
 		return TakenHandoff{}, c.releaseAfter(ctx, number, err)
+	}
+	if err := c.deleteClaim(ctx, number); err != nil {
+		return taken, fmt.Errorf("took handoff #%d, but %w", number, err)
 	}
 	if err := c.deleteSlot(ctx, project); err != nil {
 		return taken, fmt.Errorf("took handoff #%d, but %w: run issue-tracker handoff drop --free-slot", number, err)
