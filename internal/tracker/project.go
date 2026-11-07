@@ -469,6 +469,28 @@ func (c *Client) writeFieldOptions(ctx context.Context, fieldID string, options 
 // take the label back. The description no longer parses as a registration.
 const removedPrefix = "removed: "
 
+// removedDescription is the description project rm writes. A component registered
+// before removals were recorded may leave no room for the prefix, so its label keeps
+// only the repository, which always fits because the label name bounds its length.
+func removedDescription(project Project) string {
+	if description := removedPrefix + project.labelDescription(); utf8.RuneCountInString(description) <= maxLabelDescription {
+		return description
+	}
+	return removedPrefix + project.Repo
+}
+
+// takesBack reports whether a registration may take back a label whose description
+// held, without the removed prefix, keeps. A component label that kept only its
+// repository goes back to a component of that repository; the label name already
+// names the component.
+func takesBack(held, description string) bool {
+	if strings.EqualFold(held, description) {
+		return true
+	}
+	repo, _, component := strings.Cut(description, ":")
+	return component && !strings.Contains(held, ":") && strings.EqualFold(held, repo)
+}
+
 // claimLabel reads the label a registration will write and returns its ID, or empty
 // when there is none. A label with tickets that names another registration is
 // refused, because writing it would move those tickets to this repository; a label
@@ -494,7 +516,7 @@ func (c *Client) claimLabel(ctx context.Context, name, description string) (stri
 	}
 	// GitHub names repositories without regard to case.
 	held := strings.TrimPrefix(label.Description, removedPrefix)
-	if label.Issues.TotalCount == 0 || strings.EqualFold(held, description) {
+	if label.Issues.TotalCount == 0 || takesBack(held, description) {
 		return label.ID, nil
 	}
 	tickets := label.Issues.TotalCount
@@ -535,8 +557,9 @@ func (c *Client) writeLabel(ctx context.Context, meta *metadata, labelID, name, 
 }
 
 // checkDescription refuses a component registration whose removed form would not fit
-// a label description, since project rm has to be able to write it. A repository's
-// fits always, because its label name is shorter still.
+// a label description, so that project rm keeps its whole registration and only that
+// registration takes the label back. A repository's fits always, because its label
+// name is shorter still.
 func checkDescription(description string) error {
 	if n := utf8.RuneCountInString(removedPrefix + description); n > maxLabelDescription {
 		return fmt.Errorf("registration %s is %d characters with %q, over GitHub's %d for a label description", description, n, removedPrefix, maxLabelDescription)
@@ -581,11 +604,6 @@ func (c *Client) RemoveProject(ctx context.Context, name string) error {
 	if summary.Open > 0 {
 		return fmt.Errorf("project %q has %d open tickets: close or move them first", name, summary.Open)
 	}
-	// A component registered before removals were recorded may leave no room for the
-	// removed prefix, so this is checked before anything is written.
-	if err := checkDescription(project.labelDescription()); err != nil {
-		return fmt.Errorf("cannot remove project %q: %w: shorten the label's description on GitHub first", name, err)
-	}
 	if len(onBoard) > 0 {
 		fields := make([]string, 0, len(onBoard))
 		for i, ticket := range onBoard {
@@ -608,7 +626,7 @@ func (c *Client) RemoveProject(ctx context.Context, name string) error {
 			return err
 		}
 	}
-	if err := c.describeLabel(ctx, project.LabelID, removedPrefix+project.labelDescription()); err != nil {
+	if err := c.describeLabel(ctx, project.LabelID, removedDescription(project)); err != nil {
 		return err
 	}
 	_, err = c.refreshMetadata(ctx)

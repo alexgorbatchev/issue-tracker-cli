@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-05 19:37
+  last_modified: 2026-11-06 23:08
   status: current
 ---
 
@@ -81,7 +81,7 @@ Prints one tab-separated line per project: name, repository, visibility, board U
 
 ### issue-tracker project rm <project>
 
-Unregisters a project with no open tickets and keeps the label on closed tickets, with the description `removed: <owner/repo>`, or `removed: <owner/repo>:<path>` for a component, so that only that registration can take the label back. For a repository, labels closed tickets that were only on the board, then deletes the board. A component's board belongs to its repository and stays; its `Component` option is deleted, and the field with the last option, so tickets that named it belong to the repository. Fails for a repository with registered components until they are removed.
+Unregisters a project with no open tickets and keeps the label on closed tickets, with the description `removed: <owner/repo>`, or `removed: <owner/repo>:<path>` for a component, so that only that registration can take the label back. A component registered before removals were recorded whose `removed: <owner/repo>:<path>` would exceed GitHub's 100 characters keeps `removed: <owner/repo>` instead, and any component of that repository under the same name can take it back. For a repository, labels closed tickets that were only on the board, then deletes the board. A component's board belongs to its repository and stays; its `Component` option is deleted, and the field with the last option, so tickets that named it belong to the repository. Fails for a repository with registered components until they are removed.
 
 - `--yes` bool: confirm the removal. Required.
 
@@ -308,7 +308,6 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `label repo:<name> holds the <n> tickets of removed project <registration>: rename the label on GitHub before registering <owner/repo>`: another repository's project was removed under this name, and registering this one would move its tickets here. Ask the user to rename the label.
 - `label repo:<name> has no registration and holds <n> tickets, perhaps of a project removed before removals were recorded: ...`: which repository the label's tickets belong to is unknown. Ask the user whether they belong to this repository: if so, they set the description the message names; otherwise they rename the label.
 - `label repo:<name> holds <n> tickets and its description "<text>" is not a registration: ...`: a hand-made label with this name already holds tickets. Ask the user to rename it.
-- `cannot remove project "<name>": registration <registration> is <n> characters with "removed: ", over GitHub's 100 for a label description: shorten the label's description on GitHub first`: a component registered before removals were recorded has no room for the removed prefix. Nothing was changed.
 - `ticket is already claimed`: another agent holds the ticket. Pick another.
 - `project <name> is registered but its board is missing or inaccessible to <account>`: the project registration exists, but the selected account cannot resolve its board. Ask the tracker owner to verify that the board exists and that this account has Write access under the board's Settings, Manage access. A missing or inaccessible board is distinct from an unregistered project; repeating `project add` does not grant access.
 - `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or <remedy>`: a command ran in a repository that is not a project. `<remedy>` is `pass --project <name>, or --all-projects for every project` for `issue list`, `issue claim --next`, and `issue sub close-eligible`, `pass --project <name>` for `issue create`, and `name a project` for `project inspect`. Follow it, or ask the user whether to register the repository.

@@ -341,6 +341,23 @@ func TestAddComponentTakesBackOnlyItsOwnRemovedLabel(t *testing.T) {
 	_, err = clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "mono"}, "services/api", "")
 	wantError(t, err, "label repo:mono/api holds the 2 tickets of removed project o/mono:old/api")
 	wantCount(t, gh, 3)
+
+	// A component whose registration was too long to keep goes back to a component of
+	// the same repository under the same name, whatever its directory.
+	gh = fakegithub.New(componentAdded(), visibility, labelRoute("removed: O/Mono", 2), createdField("api"), okRoute("updateLabel"))
+	project, err = clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "mono"}, "services/api", "")
+	if err != nil || project.LabelID != "OLD" {
+		t.Fatalf("a component takes back the label that kept its repository: %+v, %v", project, err)
+	}
+	if vars := gh.Requests()[len(gh.Requests())-1].Variables; vars["id"] != "OLD" || vars["description"] != "o/mono:services/api" {
+		t.Fatalf("label = %v", vars)
+	}
+	wantCount(t, gh, 5)
+
+	gh = fakegithub.New(componentAdded(), visibility, labelRoute("removed: o/other", 2))
+	_, err = clientWith(t, gh, nil).AddComponent(ctx, Repo{"o", "mono"}, "services/api", "")
+	wantError(t, err, "label repo:mono/api holds the 2 tickets of removed project o/other")
+	wantCount(t, gh, 3)
 }
 
 func TestAddComponentUsesALegacyRootName(t *testing.T) {
@@ -501,13 +518,29 @@ func TestRemovingAComponentKeepsTheBoard(t *testing.T) {
 	}
 	wantCount(t, gh, 5)
 
-	meta := monoMetadata()
-	meta.Projects[3].Path = strings.Repeat("d/", 45) + "x"
-	gh = fakegithub.New(boardOnlyRoute(), summaryRoute(0))
-	err := clientWith(t, gh, meta).RemoveProject(ctx, "mono/api")
-	wantError(t, err, `cannot remove project "mono/api": registration o/mono:`)
-	wantError(t, err, "shorten the label's description on GitHub first")
-	wantCount(t, gh, 2)
+	// A component registered before removals were recorded may leave no room for the
+	// prefix; its label keeps the repository instead, and the removal still completes.
+	for _, length := range []int{92, 100} {
+		meta := monoMetadata()
+		meta.Projects[3].Path = strings.Repeat("d", length-len("o/mono:"))
+		if n := len(meta.Projects[3].labelDescription()); n != length {
+			t.Fatalf("registration is %d characters, want %d", n, length)
+		}
+		gh = fakegithub.New(boardOnlyRoute(), summaryRoute(0), okRoute("updateLabel"), componentAdded(), visibilityRoute(`{"data":{"r0":{"isPrivate":true}}}`))
+		if err := clientWith(t, gh, meta).RemoveProject(ctx, "mono/api"); err != nil {
+			t.Fatalf("%d characters: %v", length, err)
+		}
+		var described []any
+		for _, req := range gh.Requests() {
+			if strings.Contains(req.Description, "updateLabel") {
+				described = append(described, req.Variables["description"])
+			}
+		}
+		if len(described) != 1 || described[0] != "removed: o/mono" {
+			t.Fatalf("%d characters: a long registration's label keeps its repository: %v", length, described)
+		}
+		wantCount(t, gh, 5)
+	}
 
 	c, _ = monoClient(t, boardOnlyRoute(), fakegithub.Route{Match: "open: search", Body: `{"data":{"repository":{` + strings.TrimSuffix(monoRegistrations, ",") + `},"open":{"issueCount":0},"closed":{"issueCount":0}}}`})
 	wantError(t, c.RemoveProject(ctx, "mono"), `project "mono" has components: remove mono/web first`)
