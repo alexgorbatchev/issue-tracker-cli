@@ -11,8 +11,8 @@ import (
 	"charm.land/lipgloss/v2"
 	lgtable "charm.land/lipgloss/v2/table"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/displaypath"
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/displaypath"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/tracker"
 )
 
 // report prints a one-line result: OK: for agents, [OK] for people.

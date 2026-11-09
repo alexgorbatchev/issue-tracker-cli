@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/fakegithub"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/fakegithub"
 )
 
 // epicParent is a ticket's parent epic as ticketFields read it.

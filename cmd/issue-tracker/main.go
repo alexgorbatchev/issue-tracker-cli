@@ -10,8 +10,8 @@ import (
 	"syscall"
 
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/config"
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/config"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/tracker"
 	"github.com/spf13/cobra"
 )
 

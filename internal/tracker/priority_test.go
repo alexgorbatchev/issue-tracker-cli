@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/fakegithub"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/fakegithub"
 )
 
 func TestPriorityLabels(t *testing.T) {
