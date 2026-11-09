@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/tracker"
 	"github.com/spf13/cobra"
 )
 

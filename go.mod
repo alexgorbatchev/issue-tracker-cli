@@ -1,4 +1,4 @@
-module github.com/alexgorbatchev/issue-tracker-cli
+module github.com/alexgorbatchev/issue-tracker-cli/v2
 
 go 1.26.7
 

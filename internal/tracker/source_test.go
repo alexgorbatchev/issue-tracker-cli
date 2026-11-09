@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/fakegithub"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/fakegithub"
 )
 
 type sourceSpec struct {

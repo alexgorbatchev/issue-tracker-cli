@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/tracker"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/tracker"
 	"github.com/spf13/cobra"
 )
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/fakegithub"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/fakegithub"
 )
 
 const deniedVisibility = `{"data":{"r0":null},"errors":[{"type":"FORBIDDEN","path":["r0"],"message":"Resource protected by organization SAML enforcement"}]}`

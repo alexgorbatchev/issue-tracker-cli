@@ -6,7 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/alexgorbatchev/issue-tracker-cli/internal/fakegithub"
+	"github.com/alexgorbatchev/issue-tracker-cli/v2/internal/fakegithub"
 )
 
 func TestBoardDescription(t *testing.T) {
