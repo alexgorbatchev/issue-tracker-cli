@@ -66,10 +66,10 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | Command | Requests | Reads and writes |
 | --- | --- | --- |
 | `issue list`, up to 100 tickets | 1 | One query, about 6 points with parent and sub-issue checks. GitHub reports the total on that page |
-| `issue list`, `claim --next`, `close-eligible`, `project inspect`, or `project rm` in one repository project | Add 1 per 100 board tickets with no routing label | The issues connection filters by label only, so a search finds board tickets without any of the repository's or its components' labels. Its minimum is 1. A component makes the same search and keeps the tickets whose `Component` value names it |
+| `issue list`, `claim --next`, `epic list`, `epic close-eligible`, `project inspect`, or `project rm` in one repository project | Add 1 per 100 board tickets with no routing label | The issues connection filters by label only, so a search finds board tickets without any of the repository's or its components' labels. Its minimum is 1. A component makes the same search and keeps the tickets whose `Component` value names it |
 | The same commands in a repository project whose components changed on another machine | Add one metadata refresh, 2 requests, and repeat the read once | The first read also returns the repository's component labels, at no extra request, and differs from the cache |
-| An empty `issue list`, `claim --next`, or `close-eligible` for people | Add 1 for the closed count unless the empty read covered closed tickets, plus an open read like `issue list` unless it covered open ones | Agent mode prints no counts and adds nothing. The empty read counts every ticket it reads before filtering, so it covers its states unless GitHub filtered it with `--search` or `--unrouted` |
-| `issue list`, `issue claim --next`, `issue sub close-eligible`, `issue create`, or `project inspect` in an unregistered repository | 2, then fails | One metadata refresh with its visibility read, because the repository may have been registered on another machine |
+| An empty `issue list`, `claim --next`, or `epic close-eligible` for people | Add 1 for the closed count unless the empty read covered closed tickets, plus an open read like `issue list` unless it covered open ones | Agent mode prints no counts and adds nothing. The empty read counts every ticket it reads before filtering, so it covers its states unless GitHub filtered it with `--search` or `--unrouted` |
+| `issue list`, `issue claim --next`, `epic list`, `epic close-eligible`, `issue create`, `epic create`, or `project inspect` in an unregistered repository | 2, then fails | One metadata refresh with its visibility read, because the repository may have been registered on another machine |
 | Any read that meets a ticket on an unregistered board, or labelled for an unregistered project | Add one metadata refresh per command | The board or project may have been registered on another machine, so the cached IDs are refreshed once |
 | `issue create`, `issue move`, `issue status set`, `issue claim`, `issue release`, or `issue close` for a project whose cached registration has no board | Add one metadata refresh per command, 2 requests, then fail if the board is still missing | The board may have been created, or made accessible, since the cache was written |
 | `issue list` with `--status`, `--label`, `--priority`, `--ready`, or `--stale` | 1 per 100 tickets | Reads every page, whatever `--limit` says, because GitHub cannot count these filters and the total has to be counted here. `--ready` sorts every match by priority before applying the limit, at no extra request |
@@ -84,7 +84,7 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | `handoff drop` | 3 | List handoffs, close as not planned and set Done in one write with the reason's comment, then delete the slot ref. 1 with no open handoff, and 2 with `--free-slot` |
 | `issue claim --next` with open handoffs | No extra request | The ready listing already reads the handoffs it leaves out, so naming them in a warning costs nothing |
 | `issue release <number>` | 3 | Read the ticket, delete the claim ref, set Todo |
-| `issue close <number> --pr <n>` | 3 | Read the ticket, read the PRs, then one write combining comment, close, and Done. Add 1 when a claim exists |
+| `issue close <number> --pr <n>` | 3 | Read the ticket with its parent epic in full, read the PRs, then one write combining comment, close, and Done. Add 1 when a claim exists, and 1 when the ticket was its epic's last open ticket, to close the epic |
 | `project add` | 9 | Refresh metadata with its visibility read, read the label with its ticket count so that one holding another registration's tickets refuses before anything is written, read the repository's description, create the board, then one write setting columns, view, and description, then create the label, then refresh again. GitHub can omit a board it has just created from that refresh, so the board this run created or found is written to the cache without another request. 2 when the label is refused. 8 when a board left by a failed run takes one description write instead of the creation and column writes, and 2 when it is already registered. A tracker with no projects skips each visibility read |
 | `project sync [project]` | 1 to 2 | Read the board's description and the repository's in one request, then write it only when it differs |
 | `project sync --all-projects` | 2, plus 1 to 2 per 50 boards | Refresh metadata with its visibility read, then one read per 50 boards, and one write per 50 boards whose description differs |
@@ -95,9 +95,16 @@ Tests assert these budgets with a recording fake, so a change that adds a reques
 | `issue status set <number> <status>` | 2 | Read the ticket, then write |
 | `issue label add <number> <label...>` | 1 | One REST write |
 | `issue label rm <number> <label...>` | 1 per label | One REST delete each |
-| `issue comment add`, `edit`, `blocker`, `sub add`, `sub rm` | 2 | Resolve IDs, then write |
-| `issue sub list <parent>` | 1 | One query |
-| `issue sub close-eligible` | 1 per 100 tickets | Reads every page, then 2 for each parent closed. `--dry-run` writes nothing |
+| `issue comment add`, `edit`, `blocker` | 2 | Resolve IDs, then write |
+| `epic create` | 4 | Read the `epic` label (creating it adds 1), then as `issue create`. The labels, parents, and IDs of `--add` and `--blocked-by` tickets come from one read, and their links join the Todo write |
+| `epic add`, `epic rm` | 2 | Read the epic and the tickets with their labels and parents, then one write. `epic add` writes nothing when every ticket is already in the epic |
+| `epic list` | 1 per 100 tickets | Reads every page, because GitHub's label filter cannot require the epic label and a project's label together |
+| `epic inspect <epic>` | 1 | One query with the epic's tickets, their labels, and their board items. Add 1 per further 100 comments on the epic |
+| `epic close <epic>` | 2 | Read the epic, then one write. Add 1 when a claim exists |
+| `epic close-eligible` | 1 per 100 tickets | Reads every page, then 2 for each epic closed. `--dry-run` writes nothing |
+| `epic promote <ticket>` | 2 | Read the ticket with its sub-issues' labels, then one REST label write |
+| `epic demote <epic>` | 2 | Read the epic, then one REST label delete |
+| `issue claim --next` preferring started epics | No extra request | The ready listing reads every ticket in scope, including those in Doing, before filtering |
 | `--attach` with images or video, and `issue attachment add` | Unmeasured | Runs `gh issue edit` or `gh issue comment` with `--attach`, passing any body on standard input |
 | `--attach` with other files | 2 per file, plus 1 | Read the `attachments` release (creating it adds 1), then one upload per file. The body is then written by `gh`, or by one GraphQL request, 2 for an edit. `issue attachment add` without media reads the current body first |
 | `issue attachment rm <number> <file...>` | 3 + 1 per 100 assets, then 1 per file and 1 write | Read the ticket, the release, and its assets, delete each file, then rewrite every changed body and comment in one request. Each delete is a REST write, 5 secondary points |

@@ -170,6 +170,7 @@ func TestWriteCommandsReportResults(t *testing.T) {
 	drop := fakegithub.Route{Match: "DELETE", Status: 204}
 	status := ok("updateProjectV2ItemFieldValue")
 	created := fakegithub.Route{Match: "createIssue(input", Body: `{"data":{"createIssue":{"issue":{"id":"N","number":50,"url":"https://t/50"}}}}`}
+	epicLabel := fakegithub.Route{Match: "label(name: $label)", Body: `{"data":{"repository":{"id":"REPO","label":{"id":"LE"}}}}`}
 	tests := []struct {
 		name   string
 		routes []fakegithub.Route
@@ -193,8 +194,15 @@ func TestWriteCommandsReportResults(t *testing.T) {
 		{"label rm", []fakegithub.Route{{Match: "DELETE api.github.com/repos/o/tracker/issues/1/labels/bug", Body: "[]"}}, []string{"issue", "label", "rm", "1", "bug"}, "OK: updated labels on #1"},
 		{"blocker add", []fakegithub.Route{idsRoute(), ok("addBlockedBy")}, []string{"issue", "blocker", "add", "1", "2"}, "OK: updated #1"},
 		{"blocker rm", []fakegithub.Route{idsRoute(), ok("removeBlockedBy")}, []string{"issue", "blocker", "rm", "1", "2"}, "OK: updated #1"},
-		{"sub add", []fakegithub.Route{idsRoute(), ok("addSubIssue")}, []string{"issue", "sub", "add", "1", "2"}, "OK: updated #1"},
-		{"sub rm", []fakegithub.Route{idsRoute(), ok("removeSubIssue")}, []string{"issue", "sub", "rm", "1", "2"}, "OK: updated #1"},
+		{"epic create", []fakegithub.Route{epicLabel, created, {Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"IT"}}}}`}, status}, []string{"epic", "create", "--project", "go-tui", "--title", "Big"}, "OK: created epic #50 in go-tui: https://t/50"},
+		{"create in an epic", []fakegithub.Route{relatives(`"n7":` + epicRelative), created, {Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"IT"}}}}`}, status}, []string{"issue", "create", "--project", "go-tui", "--title", "T", "--epic", "7"}, "OK: created #50 in go-tui"},
+		{"epic add", []fakegithub.Route{relatives(`"n1":` + epicRelative + `,"n2":` + looseRelative), ok("addSubIssue")}, []string{"epic", "add", "1", "2"}, "OK: added 1 ticket(s) to epic #1"},
+		{"epic add moves", []fakegithub.Route{relatives(`"n1":` + epicRelative + `,"n2":{"id":"I2","state":"OPEN","labels":{"nodes":[]},"parent":{"number":9}}`), ok("replaceParent: true")}, []string{"epic", "add", "1", "2", "--move"}, "OK: added 1 ticket(s) to epic #1"},
+		{"epic rm", []fakegithub.Route{relatives(`"n1":` + epicRelative + `,"n2":{"id":"I2","state":"OPEN","labels":{"nodes":[]},"parent":{"number":1}}`), ok("removeSubIssue")}, []string{"epic", "rm", "1", "2"}, "OK: removed 1 ticket(s) from epic #1"},
+		{"epic close", []fakegithub.Route{epicRoute(``), ok("closeIssue")}, []string{"epic", "close", "1", "--reason", "not-planned"}, "OK: closed epic #1"},
+		{"epic promote", []fakegithub.Route{{Match: "children: subIssues", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z") + `,"children":{"nodes":[]}}}}}`}, {Match: "POST api.github.com/repos/o/tracker/issues/1/labels", Body: "[]"}}, []string{"epic", "promote", "1"}, "OK: promoted #1 to an epic"},
+		{"epic demote", []fakegithub.Route{epicRoute(``), {Match: "DELETE api.github.com/repos/o/tracker/issues/1/labels/epic", Body: "[]"}}, []string{"epic", "demote", "1"}, "OK: demoted epic #1"},
+		{"close the last ticket of an epic", []fakegithub.Route{closeWithEpic(), ok("closeIssue")}, []string{"issue", "close", "2", "--reason", "completed"}, "OK: closed #2\nOK: closed epic #1 in go-tui: Crash\n"},
 		{
 			"move",
 			[]fakegithub.Route{ticketRoute("go-tui", "Todo"), ok("addLabelsToLabelable"), {Match: "addProjectV2ItemById", Body: `{"data":{"addProjectV2ItemById":{"item":{"id":"X"}}}}`}, status},
@@ -216,23 +224,56 @@ func TestWriteCommandsReportResults(t *testing.T) {
 	}
 }
 
-func TestSubListOutput(t *testing.T) {
-	route := fakegithub.Route{Match: "subIssues(first: 100) { nodes", Body: `{"data":{"repository":{"isPrivate":true,"issue":{"subIssues":{"nodes":[{"number":3,"title":"Done one","state":"CLOSED"},{"number":4,"title":"Open one","state":"OPEN"}]}}}}}`}
-	empty := fakegithub.Route{Match: "subIssues(first: 100) { nodes", Body: `{"data":{"repository":{"isPrivate":true,"issue":{"subIssues":{"nodes":[]}}}}}`}
+const (
+	epicRelative  = `{"id":"I1","state":"OPEN","labels":{"nodes":[{"name":"epic"}]},"parent":null}`
+	looseRelative = `{"id":"I2","state":"OPEN","labels":{"nodes":[]},"parent":null}`
+)
+
+// relatives answers the read of tickets for the epic checks.
+func relatives(nodes string) fakegithub.Route {
+	return fakegithub.Route{Match: "parent { number }", Body: `{"data":{"repository":{"isPrivate":true,` + nodes + `}}}`}
+}
+
+// epicJSON is ticket 1 as an epic of go-tui in Todo, with the given sub-issue states.
+func epicJSON(subs string) string {
+	return strings.Replace(parentJSON(1, subs), `{"name":"repo:go-tui"}`, `{"name":"repo:go-tui"},{"name":"epic"}`, 1)
+}
+
+func epicRoute(subs string) fakegithub.Route {
+	return parentRoute(epicJSON(subs))
+}
+
+// closeWithEpic answers issue close's read of ticket 2, the last open ticket of epic 1.
+func closeWithEpic() fakegithub.Route {
+	child := strings.Replace(ticketJSON(2, "go-tui", "Todo", "2026-10-01T00:00:00Z"), `"id":"I1"`, `"id":"I2"`, 1)
+	child = strings.Replace(child, `"parent":null`, `"parent":{"number":1,"state":"OPEN","blockedBy":{"nodes":[]},"labels":{"nodes":[{"name":"epic"}]}}`, 1)
+	return fakegithub.Route{Match: "epicParent: parent", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + child + `,"epicParent":` + epicJSON(`{"state":"OPEN"},{"state":"CLOSED"}`) + `}}}}}`}
+}
+
+func TestEpicInspectOutput(t *testing.T) {
+	child := func(number int, state, project, status string) string {
+		node := strings.Replace(ticketJSON(number, project, status, "2026-10-01T00:00:00Z"), `"state":"OPEN"`, `"state":"`+state+`"`, 1)
+		return strings.Replace(node, `"title":"Crash"`, fmt.Sprintf(`"title":"Step %d"`, number), 1) + "}"
+	}
+	route := func(children ...string) fakegithub.Route {
+		epic := epicJSON(`{"state":"CLOSED"},{"state":"OPEN"}`) + `,"body":"Plan","blocking":{"nodes":[]},"subIssues":{"nodes":[{"number":3,"title":"Step 3","state":"CLOSED"}]},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}},"children":{"nodes":[` + strings.Join(children, ",") + `]}}`
+		return fakegithub.Route{Match: "children: subIssues", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + epic + `}}}`}
+	}
+	full := route(child(3, "CLOSED", "go-tui", "Done"), child(4, "OPEN", "lib", "Doing"))
 	tests := []struct {
 		name  string
 		agent string
 		route fakegithub.Route
 		want  []string
 	}{
-		{"agent", "1", route, []string{"3\tCLOSED\tDone one\n4\tOPEN\tOpen one\n", "OK: #1: 1 of 2 done, 1 open\n"}},
-		{"human", "0", route, []string{"Done one", "[OK] #1: 1 of 2 done, 1 open\n"}},
-		{"human empty", "0", empty, []string{"[OK] #1: 0 of 0 done, 0 open\n"}},
+		{"agent", "1", full, []string{"number: 1\n", "labels: epic\n", "body:\nPlan\n", "3\tCLOSED\tDone\tgo-tui\tStep 3\n4\tOPEN\tDoing\tlib\tStep 4\n", "OK: #1: 1 of 2 done, 1 open\n"}},
+		{"human", "0", full, []string{"Step 4", "DOING", "[OK] #1: 1 of 2 done, 1 open\n"}},
+		{"human empty", "0", route(), []string{"[OK] #1: 0 of 0 done, 0 open\n"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("AGENT", tt.agent)
-			stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(tt.route)), "issue", "sub", "list", "1")
+			stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(tt.route)), "epic", "inspect", "1")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -241,7 +282,46 @@ func TestSubListOutput(t *testing.T) {
 					t.Fatalf("stdout = %q, want %q", stdout, want)
 				}
 			}
+			if strings.Contains(stdout, "sub_issue:") {
+				t.Fatalf("the ticket rows replace the sub_issue lines: %q", stdout)
+			}
 		})
+	}
+}
+
+func TestEpicListOutput(t *testing.T) {
+	plain := parentJSON(2, `{"state":"CLOSED"}`)
+	list := func() fakegithub.Route { return listRoute(epicJSON(`{"state":"CLOSED"},{"state":"OPEN"}`), plain) }
+	tests := []struct {
+		name  string
+		agent string
+		route fakegithub.Route
+		want  string
+	}{
+		{"agent", "1", list(), "1\tgo-tui\t1/2\tTodo\tCrash\n"},
+		{"human", "0", list(), "1/2"},
+		{"human empty", "0", listRoute(plain), "0 epics.\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AGENT", tt.agent)
+			outsideRepository(t)
+			stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(tt.route)), "epic", "list", "--all-projects")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(stdout, tt.want) || strings.Contains(stdout, "\n2\t") {
+				t.Fatalf("stdout = %q, want %q", stdout, tt.want)
+			}
+		})
+	}
+	t.Setenv("AGENT", "1")
+	outsideRepository(t)
+	if _, _, err := execute(t, fakeOpener(t, fakegithub.New()), "epic", "list"); err == nil || !strings.Contains(err.Error(), "not inside a registered repository") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, _, err := execute(t, fakeOpener(t, fakegithub.New(fakegithub.Route{Match: "issues(first: 100", Status: 500, Body: "{}"})), "epic", "list", "--all-projects"); err == nil {
+		t.Fatal("a failed list must fail the command")
 	}
 }
 
@@ -259,8 +339,12 @@ func firstRead(json string) fakegithub.Route {
 	return route
 }
 
-func TestSubCloseEligible(t *testing.T) {
+func TestEpicCloseEligible(t *testing.T) {
 	closed, open := `{"state":"CLOSED"}`, `{"state":"OPEN"}`
+	epic := func(number int, subs string) string {
+		return strings.Replace(epicJSON(subs), `"number":1,`, fmt.Sprintf(`"number":%d,`, number), 1)
+	}
+	parentJSON := epic
 	list := func() fakegithub.Route { return listRoute(parentJSON(1, closed), parentJSON(2, closed+","+open)) }
 	claimed := strings.Replace(parentJSON(1, closed), `"name":"Todo"`, `"name":"Doing"`, 1)
 	tests := []struct {
@@ -279,14 +363,14 @@ func TestSubCloseEligible(t *testing.T) {
 			[]fakegithub.Route{boardOnly(), listRoute(parentJSON(1, closed), parentJSON(3, closed)), firstRead(claimed), parentRoute(parentJSON(3, closed)), ok("closeIssue")},
 			[]string{"--project", "go-tui"}, "OK: skipped #1: no longer eligible\nOK: closed #3 in go-tui: Crash\n", 1, 5,
 		},
-		{"nothing eligible", []fakegithub.Route{listRoute(parentJSON(2, open))}, []string{"--all-projects"}, "OK: no eligible parents\n", 0, 1},
+		{"nothing eligible", []fakegithub.Route{listRoute(parentJSON(2, open))}, []string{"--all-projects"}, "OK: no eligible epics\n", 0, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("AGENT", "1")
 			outsideRepository(t)
 			gh := fakegithub.New(tt.routes...)
-			args := append([]string{"issue", "sub", "close-eligible"}, tt.args...)
+			args := append([]string{"epic", "close-eligible"}, tt.args...)
 			stdout, _, err := execute(t, fakeOpener(t, gh), args...)
 			if err != nil {
 				t.Fatal(err)
@@ -307,19 +391,19 @@ func TestSubCloseEligible(t *testing.T) {
 	}
 }
 
-func TestSubCloseEligibleFailures(t *testing.T) {
+func TestEpicCloseEligibleFailures(t *testing.T) {
 	t.Setenv("AGENT", "1")
 	outsideRepository(t)
-	if _, _, err := execute(t, fakeOpener(t, fakegithub.New()), "issue", "sub", "close-eligible", "--project", "x", "--all-projects"); err == nil || !strings.Contains(err.Error(), "not both") {
+	if _, _, err := execute(t, fakeOpener(t, fakegithub.New()), "epic", "close-eligible", "--project", "x", "--all-projects"); err == nil || !strings.Contains(err.Error(), "not both") {
 		t.Fatalf("err = %v", err)
 	}
-	list := listRoute(parentJSON(1, `{"state":"CLOSED"}`))
+	list := listRoute(epicJSON(`{"state":"CLOSED"}`))
 	gh := fakegithub.New(list, fakegithub.Route{Match: "isPrivate issue(number: $number)", Status: 500, Body: "{}"})
-	if _, _, err := execute(t, fakeOpener(t, gh), "issue", "sub", "close-eligible", "--all-projects"); err == nil {
+	if _, _, err := execute(t, fakeOpener(t, gh), "epic", "close-eligible", "--all-projects"); err == nil {
 		t.Fatal("a failed close must fail the command")
 	}
 	gh = fakegithub.New()
-	_, _, err := execute(t, fakeOpener(t, gh), "issue", "sub", "close-eligible")
+	_, _, err := execute(t, fakeOpener(t, gh), "epic", "close-eligible")
 	if err == nil || !strings.Contains(err.Error(), "not inside a registered repository: ") || gh.Count() != 0 {
 		t.Fatalf("closing needs a project or --all-projects outside a repository: err = %v, requests = %d", err, gh.Count())
 	}
@@ -493,7 +577,7 @@ func TestIssueListOutput(t *testing.T) {
 		t.Setenv("AGENT", "0")
 		outsideRepository(t)
 		doing := ticketJSON(1, "go-tui", "Doing", "2026-10-01T00:00:00Z")
-		for _, args := range [][]string{{"issue", "claim", "--next", "--all-projects"}, {"issue", "sub", "close-eligible", "--all-projects"}} {
+		for _, args := range [][]string{{"issue", "claim", "--next", "--all-projects"}, {"epic", "close-eligible", "--all-projects"}} {
 			gh := fakegithub.New(listPage(false, 1, doing), listPage(false, 4, doing))
 			stdout, _, err := execute(t, fakeOpener(t, gh), args...)
 			if err != nil || !strings.HasSuffix(stdout, ". All projects: 0 TODO, 1 DOING, 0 DONE; 4 closed\n") || !strings.HasPrefix(stdout, "[OK] no ") || gh.Count() != 2 {
@@ -1410,5 +1494,55 @@ func TestAttachmentCleanupCommands(t *testing.T) {
 	}
 	if _, _, err = execute(t, fakeOpener(t, fakegithub.New()), "issue", "attachment", "prune"); err == nil {
 		t.Fatal("a failed read must fail the command")
+	}
+}
+
+func TestEpicCommandFailures(t *testing.T) {
+	notFound := fakegithub.Route{Match: "issue(number:", Body: `{"data":{"repository":{"issue":null}},"errors":[{"type":"NOT_FOUND","message":"not found"}]}`}
+	tests := []struct {
+		name   string
+		routes []fakegithub.Route
+		args   []string
+		want   string
+	}{
+		{"create needs a project", nil, []string{"epic", "create", "--title", "T"}, "not inside a registered repository"},
+		{"create body file", nil, []string{"epic", "create", "--title", "T", "--body-file", "missing.md"}, "reading body file"},
+		{"create refuses a reserved label", nil, []string{"epic", "create", "--project", "go-tui", "--title", "T", "--label", "epic"}, `label "epic" makes a ticket an epic`},
+		{"list needs one scope", nil, []string{"epic", "list", "--project", "go-tui", "--all-projects"}, "not both"},
+		{"inspect", []fakegithub.Route{notFound}, []string{"epic", "inspect", "1"}, "ticket #1 not found"},
+		{"add numbers", nil, []string{"epic", "add", "1", "x"}, `invalid ticket number "x"`},
+		{"add", []fakegithub.Route{relatives(`"n1":` + looseRelative + `,"n2":` + looseRelative)}, []string{"epic", "add", "1", "2"}, "ticket #1 is not an epic"},
+		{"rm numbers", nil, []string{"epic", "rm", "1", "x"}, `invalid ticket number "x"`},
+		{"rm", []fakegithub.Route{relatives(`"n1":` + epicRelative + `,"n2":` + looseRelative)}, []string{"epic", "rm", "1", "2"}, "ticket #2 is not in epic #1"},
+		{"close needs a reason", nil, []string{"epic", "close", "1"}, `required flag(s) "reason" not set`},
+		{"close", []fakegithub.Route{epicRoute(`{"state":"OPEN"}`)}, []string{"epic", "close", "1", "--reason", "completed"}, "epic #1 has 1 open ticket(s)"},
+		{"close-eligible list", []fakegithub.Route{{Match: "issues(first: 100", Status: 500, Body: "{}"}}, []string{"epic", "close-eligible", "--all-projects"}, "listing tickets"},
+		{"claim an epic", []fakegithub.Route{epicRoute(``)}, []string{"issue", "claim", "1"}, "ticket #1 is an epic: claim one of its tickets"},
+		{"close an epic as a ticket", []fakegithub.Route{{Match: "epicParent: parent", Body: `{"data":{"repository":{"isPrivate":true,"issue":` + epicJSON(``) + `,"epicParent":null}}}}`}}, []string{"issue", "close", "1", "--reason", "completed"}, "ticket #1 is an epic: use epic close"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AGENT", "1")
+			outsideRepository(t)
+			_, _, err := execute(t, fakeOpener(t, fakegithub.New(tt.routes...)), tt.args...)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestInspectNamesATicketsEpic(t *testing.T) {
+	t.Setenv("AGENT", "1")
+	child := strings.Replace(ticketJSON(2, "go-tui", "Todo", "2026-10-01T00:00:00Z"), `"parent":null`, `"parent":{"number":1,"state":"OPEN","blockedBy":{"nodes":[]},"labels":{"nodes":[{"name":"epic"}]}}`, 1)
+	plain := strings.Replace(ticketJSON(3, "go-tui", "Todo", "2026-10-01T00:00:00Z"), `"parent":null`, `"parent":{"number":1,"state":"OPEN","blockedBy":{"nodes":[]},"labels":{"nodes":[]}}`, 1)
+	extra := `,"body":"","blocking":{"nodes":[]},"subIssues":{"nodes":[]},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}}}`
+	route := fakegithub.Route{Match: "n2: issue(number: 2)", Body: `{"data":{"repository":{"isPrivate":true,"n2":` + child + extra + `,"n3":` + plain + extra + `}}}`}
+	stdout, _, err := execute(t, fakeOpener(t, fakegithub.New(route)), "issue", "inspect", "2", "3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "number: 2\n") || !strings.Contains(stdout, "epic: 1\n") || !strings.Contains(stdout, "parent: 1\n") {
+		t.Fatalf("stdout = %q", stdout)
 	}
 }

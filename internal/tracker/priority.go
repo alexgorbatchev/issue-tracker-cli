@@ -99,18 +99,25 @@ func (t Ticket) OtherLabels() []string {
 	return slices.DeleteFunc(slices.Clone(t.Labels), isPriorityLabel)
 }
 
-// mostUrgentFirst orders tickets by priority and keeps the existing order, oldest
-// first, within each priority. A ticket with no priority comes last.
-func mostUrgentFirst(tickets []Ticket) {
+// mostUrgentFirst orders tickets by priority. Within a priority, the tickets of an
+// active epic, one with a ticket in Doing, come first, so that agents finish an epic
+// before starting the next; otherwise the existing order, oldest first, stays. A
+// ticket with no priority comes last.
+func mostUrgentFirst(tickets []Ticket, activeEpics map[int]bool) {
 	ranks := make(map[int]int, len(tickets))
 	for _, ticket := range tickets {
 		ranks[ticket.Number] = ticket.priorityRank()
 	}
+	active := func(t Ticket) bool { return t.ParentEpic && activeEpics[t.Parent] }
 	slices.SortStableFunc(tickets, func(a, b Ticket) int {
 		ra, rb := ranks[a.Number], ranks[b.Number]
 		switch {
-		case ra == rb:
+		case ra == rb && active(a) == active(b):
 			return 0
+		case ra == rb && active(a):
+			return -1
+		case ra == rb:
+			return 1
 		case ra == unprioritized:
 			return 1
 		case rb == unprioritized:

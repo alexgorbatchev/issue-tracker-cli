@@ -395,32 +395,7 @@ func parseHandoff(ticket Ticket, body string) (Handoff, error) {
 // handoffLabel returns the handoff label's ID, creating the label on first use. A
 // new ticket carries it from creation, so it is never ready work in between.
 func (c *Client) handoffLabel(ctx context.Context) (string, error) {
-	var response struct {
-		Repository struct {
-			ID    string
-			Label *struct{ ID string }
-		}
-	}
-	query := `query($owner: String!, $name: String!, $label: String!) { repository(owner: $owner, name: $name) { id label(name: $label) { id } } }`
-	if err := c.do(ctx, query, c.variables(map[string]any{"label": labelHandoff}), &response); err != nil {
-		return "", fmt.Errorf("reading handoff label: %w", err)
-	}
-	if response.Repository.Label != nil {
-		return response.Repository.Label.ID, nil
-	}
-	var created struct {
-		CreateLabel struct {
-			Label struct{ ID string }
-		}
-	}
-	mutation := `mutation($repository: ID!, $name: String!, $description: String!) {
-  createLabel(input: {repositoryId: $repository, name: $name, color: "8250df", description: $description}) { label { id } }
-}`
-	variables := map[string]any{"repository": response.Repository.ID, "name": labelHandoff, "description": "Work handed to the next agent: issue-tracker handoff take"}
-	if err := c.do(ctx, mutation, variables, &created); err != nil {
-		return "", fmt.Errorf("creating handoff label: %w", err)
-	}
-	return created.CreateLabel.Label.ID, nil
+	return c.ensureLabel(ctx, labelHandoff, "8250df", "Work handed to the next agent: issue-tracker handoff take")
 }
 
 func (c *Client) slotPath(project Project) string {

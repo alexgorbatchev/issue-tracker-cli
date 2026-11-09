@@ -31,13 +31,13 @@
 - A claim is a Git ref named `refs/claims/<number>` in the tracker repository. GitHub refuses to create a ref that exists, so a second claimant fails at once. Refs do not appear on the Tags or Branches pages.
 - A handoff is a ticket with the `handoff` label whose body starts with the branch and commit the work stopped at. `issue-tracker handoff create` checks that the branch on GitHub contains the commit, then takes the ref `refs/handoffs/<owner>/<repo>`, so a repository and its components hold one open handoff. `handoff take` claims it like any ticket, closes it, frees the ref, and prints where to resume; `handoff untake` reopens a taken handoff and takes the ref again; `handoff drop` closes it unclaimed. `issue claim --next` never takes a handoff, and warns about the open ones it passes.
 - Claims never expire on their own. A Doing ticket with no ticket or board activity for `stale_days` is reported as stale and is left for you to release.
-- A ticket is ready when it has a project, is open, does not have the `blocked` label, has no open blockers, has no blocked parent or grandparent, has no open sub-issues, is not in Doing or Done, and is not a handoff. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers. A ticket with sub-issues works as an epic: `issue sub list` shows its progress, and `issue sub close-eligible` closes it once they are all closed.
+- A ticket is ready when it has a project, is open, does not have the `blocked` label, has no open blockers, has no blocked parent or grandparent, has no open sub-issues, is not in Doing or Done, and is not a handoff. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers. An epic, a ticket with the `epic` label, groups tickets from any project and is never ready or claimable, even before it has tickets. Within a priority, `issue claim --next` prefers the tickets of an epic that already has one in Doing. Closing an epic's last open ticket closes the epic; `epic inspect` shows its tickets and progress. Epics do not nest.
 - Closing a ticket adds a link to each pull request. On a public pull request, the back-reference is visible to people with access to the tracker, and anonymous visitors did not see it in testing.
 - Project and board IDs are cached in `~/.cache/issue-tracker/` with owner-only permissions. Ticket data is read live and never stored, and each command makes few GitHub requests, as listed in [GITHUB-RATE-LIMITING.md](GITHUB-RATE-LIMITING.md). When GitHub rate limits a request, the command waits as GitHub asks, or stops and prints when to retry.
 - Images and video upload through `gh` to GitHub's attachment storage, which takes nothing else. Other files, such as logs, become assets of an `attachments` prerelease in the tracker repository, so only people with tracker access can download them. A Markdown reference to an attached file's path, such as `![after](./after.png)`, is replaced with the upload.
 - Files in the `attachments` prerelease stay until removed: `issue attachment rm` deletes a ticket's files, for example a log that leaked a secret, and marks their links removed; `issue attachment prune` finds files no ticket links to anymore and deletes them with `--yes`.
 - Attachments download to `~/.cache/issue-tracker/attachments/<number>/`. A `--dir` inside a Git worktree must be ignored by it, so a pulled screenshot cannot reach a commit by accident.
-- Lists print a table for people, with board statuses in upper case and no Project column when every ticket belongs to the project the list is scoped to, and tab-separated rows with the board's status names when `AGENT=1` is set. A table wider than the terminal shrinks its columns and wraps their text, so every line fits; `COLUMNS` overrides the detected width. An empty list, or a `claim --next` or `close-eligible` with nothing to do, shows people the scope's open tickets by status and its closed count instead, such as `issue-tracker-cli: 0 TODO, 1 DOING, 0 DONE; 37 closed`. Results go to stdout, errors go to stderr, and failures exit with status 1.
+- Lists print a table for people, with board statuses in upper case and no Project column when every ticket belongs to the project the list is scoped to, and tab-separated rows with the board's status names when `AGENT=1` is set. A table wider than the terminal shrinks its columns and wraps their text, so every line fits; `COLUMNS` overrides the detected width. An empty list, or a `claim --next` or `epic close-eligible` with nothing to do, shows people the scope's open tickets by status and its closed count instead, such as `issue-tracker-cli: 0 TODO, 1 DOING, 0 DONE; 37 closed`. Results go to stdout, errors go to stderr, and failures exit with status 1.
 
 # Installation
 
@@ -64,6 +64,11 @@ issue-tracker project add --path services/api
 
 # Create a ticket with a screenshot
 issue-tracker issue create --title "Crash on resize" --body-file bug.md --attach ./crash.png
+
+# Plan work that takes several tickets as an epic, then follow its progress
+issue-tracker epic create --title "Resizable panes"
+issue-tracker issue create --epic 20 --title "Persist pane sizes"
+issue-tracker epic inspect 20
 
 # See what can start now
 issue-tracker issue list --ready
@@ -138,7 +143,7 @@ Set `agent_account` to have agents write as a separate GitHub account while you 
 | `--project <name>` | | Current directory's project | Project for the ticket |
 | `--attach <file>` | | | File to upload; repeatable. Also on `issue edit` and `issue comment add` |
 | `--label <label>` | | | Label to apply; repeatable |
-| `--parent <number>` | | | Parent ticket |
+| `--epic <number>` | | | Epic the ticket belongs to |
 | `--discovered-from <number>` | | | Note the ticket that surfaced this work |
 | `--blocked-by <numbers>` | | | Tickets that must close first |
 | `--blocking <numbers>` | | | Tickets waiting on this one |
@@ -147,7 +152,7 @@ Set `agent_account` to have agents write as a separate GitHub account while you 
 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--next` | | `false` | Claim the most urgent ready ticket, oldest first within a priority |
+| `--next` | | `false` | Claim the most urgent ready ticket; within a priority, tickets of an epic already in progress first, then the oldest |
 | `--project <name>` | | Current directory's project | Limit `--next` to a project |
 | `--all-projects` | | `false` | Let `--next` claim from every project; required outside a registered repository |
 
@@ -158,6 +163,33 @@ Set `agent_account` to have agents write as a separate GitHub account while you 
 | `--pr <ref>` | | | Merged pull request as `88` or `project#88`; repeatable |
 | `--landed-pr <ref>` | | | Closed pull request whose head is on its base branch, for when GitHub does not report it as merged |
 | `--reason <reason>` | | | Close without a pull request: `completed`, `not-planned`, or `duplicate` |
+
+`issue-tracker epic create`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--title <title>` | | Required | Epic title |
+| `--body <text>` | | | Epic text |
+| `--body-file <path>` | | | File holding the text; `-` reads standard input |
+| `--project <name>` | | Current directory's project | Project for the epic |
+| `--add <numbers>` | | | Existing tickets that become the epic's tickets |
+| `--blocked-by <numbers>` | | | Tickets that must close first |
+| `--label <label>` | | | Label to apply; repeatable |
+| `--attach <file>` | | | File to upload; repeatable |
+
+`issue-tracker epic add <epic> <ticket...>`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--move` | | `false` | Take tickets that belong to another parent from it |
+
+`issue-tracker epic close <epic>`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--reason <reason>` | | Required | `completed`, which needs every ticket closed, or `not-planned` |
+
+`issue-tracker epic list` takes `--project`, `--all-projects`, and `--state`; `epic close-eligible` takes `--project`, `--all-projects`, and `--dry-run`. `epic inspect`, `epic rm`, `epic promote`, and `epic demote` take no flags.
 
 `issue-tracker issue attachment pull`
 

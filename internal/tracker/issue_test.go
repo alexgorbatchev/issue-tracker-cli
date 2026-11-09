@@ -15,6 +15,11 @@ import (
 
 var ctx = context.Background()
 
+// closeErr keeps the error of a close, for tests that only check failures.
+func closeErr(_ Ticket, err error) error {
+	return err
+}
+
 const (
 	openSub   = `{"state":"OPEN"}`
 	closedSub = `{"state":"CLOSED"}`
@@ -26,13 +31,14 @@ func TestClosable(t *testing.T) {
 		spec ticketSpec
 		want bool
 	}{
-		{"every sub-issue closed", ticketSpec{number: 1, status: "Todo", subs: closedSub + "," + closedSub}, true},
-		{"one sub-issue open", ticketSpec{number: 1, status: "Todo", subs: closedSub + "," + openSub}, false},
-		{"no sub-issues", ticketSpec{number: 1, status: "Todo"}, false},
-		{"claimed", ticketSpec{number: 1, status: "Doing", subs: closedSub}, false},
-		{"already closed", ticketSpec{number: 1, state: "CLOSED", subs: closedSub}, false},
-		{"open blocker", ticketSpec{number: 1, status: "Todo", subs: closedSub, blockers: `{"number":9,"state":"OPEN"}`}, false},
-		{"labelled blocked", ticketSpec{number: 1, status: "Todo", subs: closedSub, label: "blocked"}, false},
+		{"every sub-issue closed", ticketSpec{number: 1, epic: true, status: "Todo", subs: closedSub + "," + closedSub}, true},
+		{"one sub-issue open", ticketSpec{number: 1, epic: true, status: "Todo", subs: closedSub + "," + openSub}, false},
+		{"no sub-issues", ticketSpec{number: 1, epic: true, status: "Todo"}, false},
+		{"claimed", ticketSpec{number: 1, epic: true, status: "Doing", subs: closedSub}, false},
+		{"already closed", ticketSpec{number: 1, epic: true, state: "CLOSED", subs: closedSub}, false},
+		{"open blocker", ticketSpec{number: 1, epic: true, status: "Todo", subs: closedSub, blockers: `{"number":9,"state":"OPEN"}`}, false},
+		{"labelled blocked", ticketSpec{number: 1, epic: true, status: "Todo", subs: closedSub, label: "blocked"}, false},
+		{"not an epic", ticketSpec{number: 1, status: "Todo", subs: closedSub}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -48,8 +54,8 @@ func TestClosable(t *testing.T) {
 	}
 }
 
-func TestListClosableKeepsOnlyParents(t *testing.T) {
-	first := listRoute(ticketSpec{number: 1, status: "Todo"}, ticketSpec{number: 2, status: "Todo", subs: closedSub})
+func TestListClosableKeepsOnlyFinishedEpics(t *testing.T) {
+	first := listRoute(ticketSpec{number: 1, epic: true, status: "Todo"}, ticketSpec{number: 2, epic: true, status: "Todo", subs: closedSub}, ticketSpec{number: 3, status: "Todo", subs: closedSub})
 	c, gh := newClient(t, first)
 	tickets, total, err := c.ListTickets(ctx, ListOptions{Closable: true, Limit: 1})
 	if err != nil {
@@ -59,50 +65,6 @@ func TestListClosableKeepsOnlyParents(t *testing.T) {
 		t.Fatalf("tickets = %+v, total = %d", tickets, total)
 	}
 	wantCount(t, gh, 1)
-}
-
-func subIssuesRoute(body string) fakegithub.Route {
-	return fakegithub.Route{Match: "subIssues(first: 100) { nodes { number title state } }", Body: body}
-}
-
-func TestListSubIssues(t *testing.T) {
-	body := `{"data":{"repository":{"isPrivate":true,"issue":{"subIssues":{"nodes":[{"number":3,"title":"A","state":"CLOSED"},{"number":4,"title":"B","state":"OPEN"}]}}}}}`
-	c, gh := newClient(t, subIssuesRoute(body))
-	subs, err := c.ListSubIssues(ctx, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(subs) != 2 || subs[0].Number != 3 || subs[1].State != "OPEN" {
-		t.Fatalf("subs = %+v", subs)
-	}
-	wantCount(t, gh, 1)
-}
-
-func TestListSubIssuesFailures(t *testing.T) {
-	public := `{"data":{"repository":{"isPrivate":false,"issue":{"subIssues":{"nodes":[]}}}}}`
-	tests := []struct {
-		name  string
-		route fakegithub.Route
-		want  string
-	}{
-		{"not found", subIssuesRoute(notFoundJSON), "ticket #1 not found"},
-		{"no issue", subIssuesRoute(`{"data":{"repository":{"isPrivate":true,"issue":null}}}`), "ticket #1 not found"},
-		{"server error", fakegithub.Route{Match: "subIssues(first: 100)", Status: 500, Body: "{}"}, "reading sub-issues of #1"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := newClient(t, tt.route)
-			_, err := c.ListSubIssues(ctx, 1)
-			wantError(t, err, tt.want)
-		})
-	}
-	gh := fakegithub.New(subIssuesRoute(public))
-	c, err := New(Options{Repo: Repo{Owner: "o", Name: "tracker"}, CacheDir: t.TempDir(), Transport: gh, Token: "tok", RequirePrivate: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = c.ListSubIssues(ctx, 1)
-	wantError(t, err, "not private")
 }
 
 func TestReady(t *testing.T) {
@@ -891,9 +853,9 @@ func TestCreateTicketAddsItToTheBoardItself(t *testing.T) {
 }
 
 func TestCreateTicketRelations(t *testing.T) {
-	ids := fakegithub.Route{Match: "n1: issue(number: 1)", Body: `{"data":{"repository":{"isPrivate":true,"n1":{"id":"I1"},"n2":{"id":"I2"},"n3":{"id":"I3"}}}}`}
+	ids := fakegithub.Route{Match: "n1: issue(number: 1)", Body: `{"data":{"repository":{"isPrivate":true,"n1":{"id":"I1"},"n2":{"id":"I2"},"n3":{"id":"I3","state":"OPEN","labels":{"nodes":[{"name":"Epic"}]}}}}}`}
 	c, gh := newClient(t, ids, createRoute(), addToBoardRoute(), okRoute("addBlockedBy"))
-	if _, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t", DiscoveredFrom: 4, BlockedBy: []int{1}, Blocking: []int{2}, Parent: 3}); err != nil {
+	if _, err := c.CreateTicket(ctx, CreateOptions{Project: "go-tui", Title: "t", DiscoveredFrom: 4, BlockedBy: []int{1}, Blocking: []int{2}, Epic: 3}); err != nil {
 		t.Fatal(err)
 	}
 	wantCount(t, gh, 4)
@@ -1071,8 +1033,6 @@ func TestEditCommentAndRelationsUseTwoRequests(t *testing.T) {
 		{"comment", func(c *Client) error { return c.AddComment(ctx, 1, "hi", nil) }, "addComment"},
 		{"add blockers", func(c *Client) error { return c.SetBlockers(ctx, 1, []int{2, 3}, true) }, "addBlockedBy"},
 		{"remove blockers", func(c *Client) error { return c.SetBlockers(ctx, 1, []int{2}, false) }, "removeBlockedBy"},
-		{"add sub-issues", func(c *Client) error { return c.SetSubIssues(ctx, 1, []int{2}, true) }, "addSubIssue"},
-		{"remove sub-issues", func(c *Client) error { return c.SetSubIssues(ctx, 1, []int{2}, false) }, "removeSubIssue"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1219,7 +1179,7 @@ func pullRoute(merged bool) fakegithub.Route {
 
 func TestCloseTicketWithMergedPR(t *testing.T) {
 	c, gh := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui", status: "Todo"}), pullRoute(true), okRoute("closeIssue"))
-	if err := c.CloseTicket(ctx, 1, CloseOptions{PRs: []string{"88"}}); err != nil {
+	if _, err := c.CloseTicket(ctx, 1, CloseOptions{PRs: []string{"88"}}); err != nil {
 		t.Fatal(err)
 	}
 	wantCount(t, gh, 3)
@@ -1244,7 +1204,7 @@ func TestCloseTicketWithALandedPR(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			c, gh := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui", status: "Doing"}), landedPullRoute("CLOSED", false), compareRoute(status), okRoute("closeIssue"),
 				fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/git/refs/claims/1", Status: 204})
-			if err := c.CloseTicket(ctx, 1, CloseOptions{LandedPR: "88"}); err != nil {
+			if _, err := c.CloseTicket(ctx, 1, CloseOptions{LandedPR: "88"}); err != nil {
 				t.Fatal(err)
 			}
 			wantCount(t, gh, 5)
@@ -1281,7 +1241,7 @@ func TestCloseRefusesAPRThatDidNotLand(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, gh := newClient(t, tt.routes...)
-			wantError(t, c.CloseTicket(ctx, 1, CloseOptions{LandedPR: tt.value}), tt.want)
+			wantError(t, closeErr(c.CloseTicket(ctx, 1, CloseOptions{LandedPR: tt.value})), tt.want)
 			for _, req := range gh.Requests() {
 				if strings.Contains(req.Description, "closeIssue") {
 					t.Fatal("a refused close must not write")
@@ -1294,7 +1254,7 @@ func TestCloseRefusesAPRThatDidNotLand(t *testing.T) {
 func TestCloseClaimedTicketDeletesClaim(t *testing.T) {
 	c, gh := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui", status: "Doing"}), pullRoute(true), okRoute("closeIssue"),
 		fakegithub.Route{Match: "DELETE api.github.com/repos/o/tracker/git/refs/claims/1", Status: 204})
-	if err := c.CloseTicket(ctx, 1, CloseOptions{PRs: []string{"88"}}); err != nil {
+	if _, err := c.CloseTicket(ctx, 1, CloseOptions{PRs: []string{"88"}}); err != nil {
 		t.Fatal(err)
 	}
 	wantCount(t, gh, 4)
@@ -1303,7 +1263,7 @@ func TestCloseClaimedTicketDeletesClaim(t *testing.T) {
 func TestCloseAcceptsPRFromAnotherProject(t *testing.T) {
 	pulls := fakegithub.Route{Match: `r1: repository(owner: "o", name: "lib") { pullRequest(number: 14)`, Body: `{"data":{"r0":{"pullRequest":{"merged":true,"url":"https://a/88"}},"r1":{"pullRequest":{"merged":true,"url":"https://b/14"}}}}`}
 	c, gh := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui", status: "Todo"}), pulls, okRoute("closeIssue"))
-	if err := c.CloseTicket(ctx, 1, CloseOptions{PRs: []string{"88", "lib#14"}}); err != nil {
+	if _, err := c.CloseTicket(ctx, 1, CloseOptions{PRs: []string{"88", "lib#14"}}); err != nil {
 		t.Fatal(err)
 	}
 	wantCount(t, gh, 3)
@@ -1315,7 +1275,7 @@ func TestCloseAcceptsPRFromAnotherProject(t *testing.T) {
 func TestCloseWithReason(t *testing.T) {
 	for reason, want := range map[string]string{ReasonNotPlanned: "NOT_PLANNED", ReasonDuplicate: "DUPLICATE"} {
 		c, gh := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui", status: "Todo"}), okRoute("closeIssue"))
-		if err := c.CloseTicket(ctx, 1, CloseOptions{Reason: reason}); err != nil {
+		if _, err := c.CloseTicket(ctx, 1, CloseOptions{Reason: reason}); err != nil {
 			t.Fatal(err)
 		}
 		wantCount(t, gh, 2)
@@ -1345,7 +1305,7 @@ func TestCloseRefusals(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, gh := newClient(t, tt.routes...)
-			wantError(t, c.CloseTicket(ctx, 1, tt.opts), tt.want)
+			wantError(t, closeErr(c.CloseTicket(ctx, 1, tt.opts)), tt.want)
 			for _, req := range gh.Requests() {
 				if strings.Contains(req.Description, "closeIssue") {
 					t.Fatal("a refused close must not write")
@@ -1357,7 +1317,7 @@ func TestCloseRefusals(t *testing.T) {
 
 func TestCloseWriteFailure(t *testing.T) {
 	c, _ := newClient(t, ticketRoute(ticketSpec{number: 1, project: "go-tui", status: "Todo"}), fakegithub.Route{Match: "closeIssue", Status: 500, Body: "{}"})
-	wantError(t, c.CloseTicket(ctx, 1, CloseOptions{Reason: ReasonNotPlanned}), "closing ticket")
+	wantError(t, closeErr(c.CloseTicket(ctx, 1, CloseOptions{Reason: ReasonNotPlanned})), "closing ticket")
 }
 
 func TestAttachmentsOnCreate(t *testing.T) {

@@ -225,7 +225,9 @@ func printDetail(w io.Writer, detail tracker.TicketDetail) error {
 	if labels := detail.OtherLabels(); len(labels) > 0 {
 		fmt.Fprintf(&b, "labels: %s\n", strings.Join(labels, ","))
 	}
-	if detail.Parent != 0 {
+	if detail.ParentEpic {
+		fmt.Fprintf(&b, "epic: %d\n", detail.Parent)
+	} else if detail.Parent != 0 {
 		fmt.Fprintf(&b, "parent: %d\n", detail.Parent)
 	}
 	if len(detail.Blockers) > 0 {
@@ -246,31 +248,6 @@ func printDetail(w io.Writer, detail tracker.TicketDetail) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
-}
-
-func doneCount(subs []tracker.SubIssue) int {
-	done := 0
-	for _, sub := range subs {
-		if sub.State == tracker.StateClosed {
-			done++
-		}
-	}
-	return done
-}
-
-func printSubIssues(w io.Writer, subs []tracker.SubIssue) error {
-	rows := make([][]string, 0, len(subs))
-	for _, sub := range subs {
-		rows = append(rows, []string{strconv.Itoa(sub.Number), sub.State, sub.Title})
-	}
-	if cobrahelptree.IsAgentMode() {
-		return tsv(w, rows)
-	}
-	if len(rows) == 0 {
-		// The progress line that follows already says 0 of 0.
-		return nil
-	}
-	return table(w, []string{"#", "State", "Title"}, rows)
 }
 
 func printPaths(w io.Writer, paths []string) error {

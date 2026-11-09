@@ -68,6 +68,8 @@ type ticketSpec struct {
 	priorities []string
 	// handoff adds the handoff label.
 	handoff bool
+	// epic adds the epic label.
+	epic bool
 }
 
 func (s ticketSpec) json() string {
@@ -94,6 +96,9 @@ func (s ticketSpec) json() string {
 	}
 	if s.handoff {
 		labels = strings.TrimPrefix(labels+`,{"name":"handoff"}`, ",")
+	}
+	if s.epic {
+		labels = strings.TrimPrefix(labels+`,{"name":"epic"}`, ",")
 	}
 	board := s.board
 	if board == "" {

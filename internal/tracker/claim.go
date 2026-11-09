@@ -26,6 +26,9 @@ func (c *Client) ClaimTicket(ctx context.Context, number int) (Ticket, error) {
 	if ticket.State != stateOpen {
 		return Ticket{}, fmt.Errorf("ticket #%d is closed", number)
 	}
+	if ticket.Epic() {
+		return Ticket{}, fmt.Errorf("ticket #%d is an epic: claim one of its tickets", number)
+	}
 	return c.claim(ctx, ticket)
 }
 
