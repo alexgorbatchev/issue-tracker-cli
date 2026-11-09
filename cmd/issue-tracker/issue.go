@@ -21,7 +21,7 @@ func newIssueCommand(open opener) *cobra.Command {
 		newIssueEditCommand(open), newIssueInspectCommand(open), newIssueListCommand(open),
 		newIssueMoveCommand(open), newIssueReleaseCommand(open), newIssueReopenCommand(open),
 		newAttachmentCommand(open), newBlockerCommand(open), newCommentCommand(open),
-		newLabelCommand(open), newStatusCommand(open), newSubCommand(open),
+		newLabelCommand(open), newStatusCommand(open),
 	)
 	return cmd
 }
@@ -238,7 +238,14 @@ func newIssueCloseCommand(open opener) *cobra.Command {
 		Short: "Close a ticket after confirming its pull requests merged",
 		Args:  cobra.ExactArgs(1),
 		RunE: withTicket(open, func(cmd *cobra.Command, s *session, number int) (string, error) {
-			return fmt.Sprintf("closed #%d", number), s.client.CloseTicket(cmd.Context(), number, opts)
+			epic, err := s.client.CloseTicket(cmd.Context(), number, opts)
+			if err != nil || epic.Number == 0 {
+				return fmt.Sprintf("closed #%d", number), err
+			}
+			if err := report(cmd.OutOrStdout(), "closed #%d", number); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("closed epic #%d in %s: %s", epic.Number, epic.Project, epic.Title), nil
 		}),
 	}
 	cmd.Flags().StringArrayVar(&opts.PRs, "pr", nil, "Merged pull request as a number or project#number; repeatable")
@@ -286,7 +293,7 @@ func newIssueCreateCommand(open opener) *cobra.Command {
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Project for the ticket; defaults to the current repository's project")
 	cmd.Flags().StringArrayVar(&opts.Attachments, "attach", nil, attachUsage)
 	cmd.Flags().StringArrayVar(&opts.Labels, "label", nil, "Label to apply; repeatable")
-	cmd.Flags().IntVar(&opts.Parent, "parent", 0, "Parent ticket number")
+	cmd.Flags().IntVar(&opts.Epic, "epic", 0, "Epic the ticket belongs to")
 	cmd.Flags().IntVar(&opts.DiscoveredFrom, "discovered-from", 0, "Ticket that surfaced this work; does not block anything")
 	cmd.Flags().IntSliceVar(&blockedBy, "blocked-by", nil, "Tickets that must close first; repeatable")
 	cmd.Flags().IntSliceVar(&blocking, "blocking", nil, "Tickets waiting on this one; repeatable")
@@ -563,89 +570,6 @@ func newBlockerCommand(open opener) *cobra.Command {
 		func(cmd *cobra.Command, s *session, number int, others []int, add bool) error {
 			return s.client.SetBlockers(cmd.Context(), number, others, add)
 		})
-}
-
-func newSubCommand(open opener) *cobra.Command {
-	cmd := relation(open, "sub", "Manage sub-issues", [2]string{"Attach sub-issues", "Detach sub-issues"},
-		func(cmd *cobra.Command, s *session, number int, others []int, add bool) error {
-			return s.client.SetSubIssues(cmd.Context(), number, others, add)
-		})
-	for _, child := range cmd.Commands() {
-		child.Use = child.Name() + " <parent> <child...>"
-	}
-	cmd.AddCommand(newSubListCommand(open), newSubCloseEligibleCommand(open))
-	return cmd
-}
-
-func newSubListCommand(open opener) *cobra.Command {
-	return &cobra.Command{
-		Use:   "list <parent>",
-		Short: "Show a parent's sub-issues and how many are done",
-		Args:  cobra.ExactArgs(1),
-		RunE: withTicket(open, func(cmd *cobra.Command, s *session, number int) (string, error) {
-			subs, err := s.client.ListSubIssues(cmd.Context(), number)
-			if err != nil {
-				return "", err
-			}
-			if err := printSubIssues(cmd.OutOrStdout(), subs); err != nil {
-				return "", err
-			}
-			done := doneCount(subs)
-			return fmt.Sprintf("#%d: %d of %d done, %d open", number, done, len(subs), len(subs)-done), nil
-		}),
-	}
-}
-
-func newSubCloseEligibleCommand(open opener) *cobra.Command {
-	var project string
-	var allProjects, dryRun bool
-	cmd := &cobra.Command{
-		Use:   "close-eligible",
-		Short: "Close parents whose sub-issues are all closed",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := open(cmd)
-			if err != nil {
-				return err
-			}
-			name, err := s.listScope(cmd, project, allProjects)
-			if err != nil {
-				return err
-			}
-			var seen tracker.Tally
-			parents, _, err := s.client.ListTickets(cmd.Context(), tracker.ListOptions{Project: name, Closable: true, Tally: &seen})
-			if err != nil {
-				return err
-			}
-			if len(parents) == 0 {
-				return reportNone(cmd, s, "no eligible parents", name, seen)
-			}
-			for _, parent := range parents {
-				if err := closeParent(cmd, s, parent, dryRun); err != nil {
-					return err
-				}
-			}
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&project, "project", "", "Limit to a project; defaults to the current repository's project")
-	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "Cover every project; needed outside a registered repository")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "List the parents without closing them")
-	return cmd
-}
-
-func closeParent(cmd *cobra.Command, s *session, parent tracker.Ticket, dryRun bool) error {
-	if dryRun {
-		return report(cmd.OutOrStdout(), "would close #%d in %s: %s", parent.Number, parent.Project, parent.Title)
-	}
-	closed, err := s.client.CloseParent(cmd.Context(), parent.Number)
-	if err != nil {
-		return err
-	}
-	if !closed {
-		return report(cmd.OutOrStdout(), "skipped #%d: no longer eligible", parent.Number)
-	}
-	return report(cmd.OutOrStdout(), "closed #%d in %s: %s", parent.Number, parent.Project, parent.Title)
 }
 
 func newCommentCommand(open opener) *cobra.Command {

@@ -49,21 +49,25 @@ const (
 
 // ticketFields is the shared selection for one ticket. Reading blockers, parents,
 // and board status here keeps list and claim commands to a single request.
-var ticketFields = fmt.Sprintf(`id number title state url createdAt updatedAt
-  labels(first: %[3]d) { nodes { name } }
+var ticketFields = fmt.Sprintf(`%[3]s
   blockedBy(first: %[1]d) { nodes { number state } }
   parent {
-    number state blockedBy(first: %[1]d) { nodes { state } }
+    number state blockedBy(first: %[1]d) { nodes { state } } labels(first: %[4]d) { nodes { name } }
     parent { number state blockedBy(first: %[1]d) { nodes { state } } }
   }
-  subIssueStates: subIssues(first: %[2]d) { nodes { state } }
+  subIssueStates: subIssues(first: %[2]d) { nodes { state } }`, nestedLimit, subIssuesLimit, boardTicketFields, labelsLimit)
+
+// boardTicketFields is what routes a ticket and gives its board status, without its
+// relations. An epic reads its tickets with these.
+var boardTicketFields = fmt.Sprintf(`id number title state url createdAt updatedAt
+  labels(first: %[1]d) { nodes { name } }
   projectItems(first: 5) {
     nodes {
       id updatedAt project { id }
       fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
-      component: fieldValueByName(name: %[4]q) { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      component: fieldValueByName(name: %[2]q) { ... on ProjectV2ItemFieldSingleSelectValue { name } }
     }
-  }`, nestedLimit, subIssuesLimit, labelsLimit, componentField)
+  }`, labelsLimit, componentField)
 
 type issueRef struct {
 	Number int
@@ -75,6 +79,17 @@ type ancestorNode struct {
 	Number    int
 	State     string
 	BlockedBy struct{ Nodes []issueRef }
+	Labels    labelNames
+}
+
+// labelNames is a label connection read for names only.
+type labelNames struct{ Nodes []struct{ Name string } }
+
+// has compares the way GitHub does, because label names ignore case there.
+func (l labelNames) has(name string) bool {
+	return slices.ContainsFunc(l.Nodes, func(label struct{ Name string }) bool {
+		return strings.EqualFold(label.Name, name)
+	})
 }
 
 func (a *ancestorNode) blocked() bool {
@@ -92,7 +107,7 @@ type ticketNode struct {
 	URL       string
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	Labels    struct{ Nodes []struct{ Name string } }
+	Labels    labelNames
 	BlockedBy struct{ Nodes []issueRef }
 	Parent    *struct {
 		ancestorNode
@@ -123,6 +138,7 @@ type Ticket struct {
 	Labels        []string
 	Status        string
 	Parent        int
+	ParentEpic    bool
 	Blockers      []int
 	ParentBlocked bool
 	SubIssues     int
@@ -157,13 +173,14 @@ func (t *Ticket) useBoard(boardID string) bool {
 
 // Ready reports whether a ticket can be picked up: routed to a project, open,
 // unblocked, with no blocked ancestor and no open sub-issues, not in progress, and
-// not a handoff.
+// neither a handoff nor an epic.
 // An unrouted ticket waits for someone to give it a project. A parent waits for its
-// children, so the work gets claimed rather than its container. The blocked label
-// covers waits with no ticket to name, such as a person's input.
+// children, so the work gets claimed rather than its container, and an epic is a
+// container even before it has tickets. The blocked label covers waits with no
+// ticket to name, such as a person's input.
 func (t Ticket) Ready() bool {
 	return t.Project != "" && t.State == stateOpen && len(t.Blockers) == 0 && !t.ParentBlocked && t.OpenSubIssues == 0 &&
-		t.Status != StatusDoing && t.Status != StatusDone && !t.labelled(labelBlocked) && !t.Handoff()
+		t.Status != StatusDoing && t.Status != StatusDone && !t.labelled(labelBlocked) && !t.Handoff() && !t.Epic()
 }
 
 // Handoff reports a ticket that hands work to the next agent. It is picked up with
@@ -177,11 +194,11 @@ func (t Ticket) Created() time.Time {
 	return t.created
 }
 
-// Closable reports an open parent whose sub-issues are all closed. A claimed parent
-// stays open, because closing it would take the ticket from whoever holds it, and so
-// does a blocked one, because something still has to happen first.
+// Closable reports an open epic whose tickets are all closed. A claimed epic stays
+// open, because closing it would take the ticket from whoever holds it, and so does
+// a blocked one, because something still has to happen first.
 func (t Ticket) Closable() bool {
-	return t.State == stateOpen && t.SubIssues > 0 && t.OpenSubIssues == 0 && t.Status != StatusDoing &&
+	return t.Epic() && t.State == stateOpen && t.SubIssues > 0 && t.OpenSubIssues == 0 && t.Status != StatusDoing &&
 		len(t.Blockers) == 0 && !t.labelled(labelBlocked)
 }
 
@@ -215,7 +232,7 @@ func (n ticketNode) ticket() Ticket {
 		t.Labels = append(t.Labels, label.Name)
 	}
 	if n.Parent != nil {
-		t.Parent = n.Parent.Number
+		t.Parent, t.ParentEpic = n.Parent.Number, n.Parent.Labels.has(labelEpic)
 		t.ParentBlocked = n.Parent.blocked() || n.Parent.Parent.blocked()
 	}
 	for _, item := range n.ProjectItems.Nodes {
@@ -349,6 +366,7 @@ type ListOptions struct {
 	Search    string
 	Ready     bool
 	Closable  bool
+	Epic      bool
 	Handoff   bool
 	Stale     bool
 	StaleDays int
@@ -356,6 +374,20 @@ type ListOptions struct {
 	Now       time.Time
 	// Tally, when set, counts every ticket the listing reads, before filtering.
 	Tally *Tally
+
+	// activeEpics, when set, collects the epics with a ticket in Doing among every
+	// ticket the listing reads, before filtering.
+	activeEpics map[int]bool
+}
+
+// observe records what a listing learns from a ticket before filtering it.
+func (o ListOptions) observe(t Ticket) {
+	if o.Tally != nil {
+		o.Tally.add(t)
+	}
+	if o.activeEpics != nil && t.ParentEpic && t.State == stateOpen && t.Status == StatusDoing {
+		o.activeEpics[t.Parent] = true
+	}
 }
 
 // Tally counts the tickets a listing read before filtering them: open tickets by
@@ -393,7 +425,7 @@ func (t *Tally) read(states []string) {
 
 // clientFiltered reports a filter GitHub does not apply, so its count excludes it.
 func (o ListOptions) clientFiltered() bool {
-	return o.Status != "" || o.Label != "" || o.Priority != "" || o.Ready || o.Closable || o.Handoff || o.Stale || o.Unrouted
+	return o.Status != "" || o.Label != "" || o.Priority != "" || o.Ready || o.Closable || o.Epic || o.Handoff || o.Stale || o.Unrouted
 }
 
 func (o ListOptions) matches(t Ticket) bool {
@@ -409,6 +441,8 @@ func (o ListOptions) matches(t Ticket) bool {
 	case o.Ready && !t.Ready():
 		return false
 	case o.Closable && !t.Closable():
+		return false
+	case o.Epic && !t.Epic():
 		return false
 	case o.Handoff && !t.Handoff():
 		return false
@@ -488,8 +522,9 @@ func (c *Client) withProject(ctx context.Context, name string, read func(*metada
 // in all, which exceeds the tickets returned when Limit cuts the list. GitHub
 // counts what it filters on the first page. A client-side filter has no such
 // count, so it reads every page whatever the limit. A repository's list includes
-// its components' tickets. Ready tickets come most urgent first, then oldest
-// first, so that the next claim takes the most urgent work.
+// its components' tickets. Ready tickets come most urgent first, then within a
+// priority the tickets of an epic with a ticket in Doing, then oldest first, so that
+// the next claim takes the most urgent work and finishes a started epic.
 func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, int, error) {
 	if opts.Limit < 0 {
 		return nil, 0, fmt.Errorf("invalid limit %d: expected 0 or more", opts.Limit)
@@ -508,11 +543,12 @@ func (c *Client) ListTickets(ctx context.Context, opts ListOptions) ([]Ticket, i
 	// no request.
 	limit := opts.Limit
 	opts.Limit = 0
+	opts.activeEpics = map[int]bool{}
 	tickets, total, err := c.oldestTickets(ctx, opts)
 	if err != nil {
 		return nil, 0, err
 	}
-	mostUrgentFirst(tickets)
+	mostUrgentFirst(tickets, opts.activeEpics)
 	if limit > 0 && len(tickets) > limit {
 		tickets = tickets[:limit]
 	}
@@ -595,9 +631,7 @@ func (c *Client) listTickets(ctx context.Context, opts ListOptions, states []str
 			if err != nil {
 				return nil, 0, false, fmt.Errorf("listing tickets: %w", err)
 			}
-			if opts.Tally != nil {
-				opts.Tally.add(ticket)
-			}
+			opts.observe(ticket)
 			if !opts.matches(ticket) {
 				continue
 			}
@@ -660,9 +694,7 @@ func (c *Client) boardOnlyTickets(ctx context.Context, meta *metadata, project P
 			if project.Component() && ticket.Project != project.Name {
 				continue
 			}
-			if opts.Tally != nil {
-				opts.Tally.add(ticket)
-			}
+			opts.observe(ticket)
 			if opts.matches(ticket) {
 				tickets = append(tickets, ticket)
 			}
@@ -1061,16 +1093,30 @@ func findAttachments(body string, comments []Comment, patterns ...*regexp.Regexp
 
 // issueIDs resolves ticket numbers to node IDs in one request.
 func (c *Client) issueIDs(ctx context.Context, numbers []int) (map[int]string, error) {
+	nodes, err := readNodes[struct{ ID string }](ctx, c, numbers, "id")
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[int]string, len(nodes))
+	for number, node := range nodes {
+		ids[number] = node.ID
+	}
+	return ids, nil
+}
+
+// readNodes reads several tickets with the given fields in one request. A ticket
+// GitHub does not have fails the read.
+func readNodes[N any](ctx context.Context, c *Client, numbers []int, fields string) (map[int]N, error) {
 	if len(numbers) == 0 {
-		return map[int]string{}, nil
+		return map[int]N{}, nil
 	}
 	var selection strings.Builder
 	for _, number := range numbers {
-		fmt.Fprintf(&selection, " n%[1]d: issue(number: %[1]d) { id }", number)
+		fmt.Fprintf(&selection, " n%[1]d: issue(number: %[1]d) { %s }", number, fields)
 	}
 	query := `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { isPrivate` + selection.String() + ` } }`
 	var response struct {
-		Repository map[string]any
+		Repository map[string]json.RawMessage
 	}
 	if err := c.do(ctx, query, c.variables(nil), &response); err != nil {
 		if hasGraphQLType(err, graphQLNotFoundType) {
@@ -1078,20 +1124,28 @@ func (c *Client) issueIDs(ctx context.Context, numbers []int) (map[int]string, e
 		}
 		return nil, fmt.Errorf("reading tickets: %w", err)
 	}
-	isPrivate, _ := response.Repository["isPrivate"].(bool)
+	var isPrivate bool
+	if raw := response.Repository["isPrivate"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &isPrivate); err != nil {
+			return nil, fmt.Errorf("reading tracker visibility: %w", err)
+		}
+	}
 	if err := c.checkPrivate(isPrivate); err != nil {
 		return nil, err
 	}
-	ids := make(map[int]string, len(numbers))
+	nodes := make(map[int]N, len(numbers))
 	for _, number := range numbers {
-		node, _ := response.Repository["n"+strconv.Itoa(number)].(map[string]any)
-		id, _ := node["id"].(string)
-		if id == "" {
+		raw := response.Repository["n"+strconv.Itoa(number)]
+		if len(raw) == 0 || string(raw) == "null" {
 			return nil, fmt.Errorf("ticket #%d not found in %s", number, c.repo)
 		}
-		ids[number] = id
+		var node N
+		if err := json.Unmarshal(raw, &node); err != nil {
+			return nil, fmt.Errorf("reading ticket #%d: %w", number, err)
+		}
+		nodes[number] = node
 	}
-	return ids, nil
+	return nodes, nil
 }
 
 func statusMutation(alias string, project Project, itemID, status string) (string, error) {
@@ -1128,13 +1182,16 @@ type CreateOptions struct {
 	Title          string
 	Body           string
 	DiscoveredFrom int
-	Parent         int
-	BlockedBy      []int
-	Blocking       []int
-	Labels         []string
-	Attachments    []string
+	// Epic is the epic the ticket belongs to, or zero.
+	Epic        int
+	BlockedBy   []int
+	Blocking    []int
+	Labels      []string
+	Attachments []string
 	// labelIDs are labels the ticket carries from creation, such as a handoff's.
 	labelIDs []string
+	// children are tickets that become the new ticket's sub-issues, for a new epic.
+	children []int
 }
 
 // CreateTicket creates a ticket on its project board with status Todo. A failure
@@ -1155,13 +1212,27 @@ func (c *Client) CreateTicket(ctx context.Context, opts CreateOptions) (Ticket, 
 	if err != nil {
 		return Ticket{}, err
 	}
-	related := append(append([]int{}, opts.BlockedBy...), opts.Blocking...)
-	if opts.Parent != 0 {
-		related = append(related, opts.Parent)
+	related := slices.Concat(opts.BlockedBy, opts.Blocking, opts.children)
+	if opts.Epic != 0 {
+		related = append(related, opts.Epic)
 	}
-	ids, err := c.issueIDs(ctx, related)
+	relatives, err := c.relatives(ctx, uniqueNumbers(related))
 	if err != nil {
 		return Ticket{}, err
+	}
+	if opts.Epic != 0 {
+		if err := relatives[opts.Epic].checkEpic(opts.Epic); err != nil {
+			return Ticket{}, err
+		}
+	}
+	for _, child := range opts.children {
+		if err := relatives[child].checkNewChild(child); err != nil {
+			return Ticket{}, err
+		}
+	}
+	ids := make(map[int]string, len(relatives))
+	for number, relative := range relatives {
+		ids[number] = relative.ID
 	}
 	var created createdTicket
 	err = c.withFreshIDs(ctx, func(meta *metadata) error {
@@ -1200,8 +1271,8 @@ func (c *Client) insertTicket(ctx context.Context, meta *metadata, project Proje
 		"repositoryId": meta.RepositoryID, "title": opts.Title, "body": createBody(opts),
 		"labelIds": append([]string{project.LabelID}, opts.labelIDs...),
 	}
-	if opts.Parent != 0 {
-		input["parentIssueId"] = ids[opts.Parent]
+	if opts.Epic != 0 {
+		input["parentIssueId"] = ids[opts.Epic]
 	}
 	var response struct {
 		CreateIssue struct{ Issue createdTicket }
@@ -1268,6 +1339,9 @@ func (c *Client) linkCreated(ctx context.Context, project Project, created creat
 	}
 	for i, number := range opts.Blocking {
 		fields = append(fields, blockMutation("blocking"+strconv.Itoa(i), ids[number], created.ID))
+	}
+	for i, number := range opts.children {
+		fields = append(fields, subIssueMutation("child"+strconv.Itoa(i), "addSubIssue", created.ID, ids[number], false))
 	}
 	if err := c.write(ctx, fields); err != nil {
 		return err
@@ -1340,43 +1414,6 @@ func (c *Client) SetBlockers(ctx context.Context, number int, blockers []int, ad
 			return blockMutation(alias, issueID, otherID)
 		}
 		return fmt.Sprintf(`%s: removeBlockedBy(input: {issueId: %q, blockingIssueId: %q}) { clientMutationId }`, alias, issueID, otherID)
-	})
-}
-
-// ListSubIssues returns a ticket's sub-issues.
-func (c *Client) ListSubIssues(ctx context.Context, number int) ([]SubIssue, error) {
-	var response struct {
-		Repository struct {
-			IsPrivate bool
-			Issue     *struct {
-				SubIssues struct{ Nodes []SubIssue }
-			}
-		}
-	}
-	query := fmt.Sprintf(`query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) { isPrivate issue(number: $number) { subIssues(first: %d) { nodes { number title state } } } }
-}`, subIssuesLimit)
-	err := c.do(ctx, query, c.variables(map[string]any{"number": number}), &response)
-	if hasGraphQLType(err, graphQLNotFoundType) || (err == nil && response.Repository.Issue == nil) {
-		return nil, fmt.Errorf("ticket #%d not found in %s", number, c.repo)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("reading sub-issues of #%d: %w", number, err)
-	}
-	if err := c.checkPrivate(response.Repository.IsPrivate); err != nil {
-		return nil, err
-	}
-	return response.Repository.Issue.SubIssues.Nodes, nil
-}
-
-// SetSubIssues attaches or detaches sub-issues of a parent ticket.
-func (c *Client) SetSubIssues(ctx context.Context, parent int, children []int, add bool) error {
-	name := "removeSubIssue"
-	if add {
-		name = "addSubIssue"
-	}
-	return c.relate(ctx, parent, children, func(alias, issueID, otherID string) string {
-		return fmt.Sprintf(`%s: %s(input: {issueId: %q, subIssueId: %q}) { clientMutationId }`, alias, name, issueID, otherID)
 	})
 }
 
@@ -1505,11 +1542,45 @@ func (c *Client) readBoardItem(ctx context.Context, project Project, contentID s
 	return "", errors.New("ticket is on the board, but its item cannot be read yet")
 }
 
+// ensureLabel returns a label's ID, creating the label on first use.
+func (c *Client) ensureLabel(ctx context.Context, name, color, description string) (string, error) {
+	var response struct {
+		Repository struct {
+			ID    string
+			Label *struct{ ID string }
+		}
+	}
+	query := `query($owner: String!, $name: String!, $label: String!) { repository(owner: $owner, name: $name) { id label(name: $label) { id } } }`
+	if err := c.do(ctx, query, c.variables(map[string]any{"label": name}), &response); err != nil {
+		return "", fmt.Errorf("reading %s label: %w", name, err)
+	}
+	if response.Repository.Label != nil {
+		return response.Repository.Label.ID, nil
+	}
+	var created struct {
+		CreateLabel struct {
+			Label struct{ ID string }
+		}
+	}
+	mutation := `mutation($repository: ID!, $name: String!, $color: String!, $description: String!) {
+  createLabel(input: {repositoryId: $repository, name: $name, color: $color, description: $description}) { label { id } }
+}`
+	variables := map[string]any{"repository": response.Repository.ID, "name": name, "color": color, "description": description}
+	if err := c.do(ctx, mutation, variables, &created); err != nil {
+		return "", fmt.Errorf("creating %s label: %w", name, err)
+	}
+	return created.CreateLabel.Label.ID, nil
+}
+
 // AddLabels adds labels to a ticket. GitHub creates a name it does not know yet.
 func (c *Client) AddLabels(ctx context.Context, number int, labels []string) error {
 	if err := checkPlainLabels(labels); err != nil {
 		return err
 	}
+	return c.addLabels(ctx, number, labels)
+}
+
+func (c *Client) addLabels(ctx context.Context, number int, labels []string) error {
 	body, err := json.Marshal(map[string][]string{"labels": labels})
 	if err != nil {
 		return fmt.Errorf("encoding labels: %w", err)
@@ -1526,6 +1597,10 @@ func (c *Client) RemoveLabels(ctx context.Context, number int, labels []string) 
 	if err := checkPlainLabels(labels); err != nil {
 		return err
 	}
+	return c.removeLabels(ctx, number, labels)
+}
+
+func (c *Client) removeLabels(ctx context.Context, number int, labels []string) error {
 	for _, label := range labels {
 		path := fmt.Sprintf("repos/%s/issues/%d/labels/%s", c.repo, number, url.PathEscape(label))
 		if err := c.rest.DoWithContext(ctx, http.MethodDelete, path, nil, nil); err != nil {
@@ -1535,11 +1610,18 @@ func (c *Client) RemoveLabels(ctx context.Context, number int, labels []string) 
 	return nil
 }
 
-// checkPlainLabels keeps routing labels under project add and issue move.
+// checkPlainLabels keeps routing labels under project add and issue move, and the
+// labels that make a ticket an epic or a handoff under their own commands, which
+// keep the rules those tickets follow.
 func checkPlainLabels(labels []string) error {
 	for _, label := range labels {
-		if strings.HasPrefix(label, labelPrefix) {
+		switch {
+		case strings.HasPrefix(label, labelPrefix):
 			return fmt.Errorf("label %q routes a ticket: use issue move instead", label)
+		case strings.EqualFold(label, labelEpic):
+			return fmt.Errorf("label %q makes a ticket an epic: use epic create, epic promote, or epic demote instead", label)
+		case strings.EqualFold(label, labelHandoff):
+			return fmt.Errorf("label %q makes a ticket a handoff: use handoff create instead", label)
 		}
 	}
 	return nil
@@ -1630,26 +1712,51 @@ type CloseOptions struct {
 	Comment  string
 }
 
-// CloseTicket closes a ticket after confirming every pull request merged.
-func (c *Client) CloseTicket(ctx context.Context, number int, opts CloseOptions) error {
-	ticket, err := c.readTicket(ctx, number)
-	if err != nil {
-		return err
-	}
-	return c.closeTicket(ctx, ticket, opts)
+// closeFields read a ticket with its parent in full, so that closing the last open
+// ticket of an epic can close the epic without another read.
+var closeFields = ticketFields + `
+  epicParent: parent { ` + ticketFields + ` }`
+
+type closeNode struct {
+	ticketNode
+	EpicParent *ticketNode
 }
 
-// CloseParent closes a parent as completed and reports whether it did. The list that
-// found the parent can be out of date, so this decides from a fresh read.
-func (c *Client) CloseParent(ctx context.Context, number int) (bool, error) {
-	ticket, err := c.readTicket(ctx, number)
+// CloseTicket closes a ticket after confirming every pull request merged. When it
+// was the last open ticket of its epic, the epic closes too, as completed, unless it
+// is claimed or blocked. It returns that epic, or a zero ticket.
+func (c *Client) CloseTicket(ctx context.Context, number int, opts CloseOptions) (Ticket, error) {
+	node, err := readIssue[closeNode](ctx, c, number, closeFields)
 	if err != nil {
-		return false, err
+		return Ticket{}, err
 	}
-	if !ticket.Closable() {
-		return false, nil
+	ticket, err := c.routed(ctx, node.ticket())
+	if err != nil {
+		return Ticket{}, fmt.Errorf("reading ticket #%d: %w", number, err)
 	}
-	return true, c.closeTicket(ctx, ticket, CloseOptions{Reason: ReasonCompleted})
+	if ticket.Epic() {
+		return Ticket{}, fmt.Errorf("ticket #%d is an epic: use epic close", number)
+	}
+	if err := c.closeTicket(ctx, ticket, opts); err != nil {
+		return Ticket{}, err
+	}
+	if node.EpicParent == nil {
+		return Ticket{}, nil
+	}
+	epic, err := c.routed(ctx, node.EpicParent.ticket())
+	if err != nil {
+		return Ticket{}, fmt.Errorf("closed #%d, but reading its epic #%d failed: %w", number, epic.Number, err)
+	}
+	if ticket.State == stateOpen {
+		epic.OpenSubIssues--
+	}
+	if !epic.Closable() {
+		return Ticket{}, nil
+	}
+	if err := c.closeTicket(ctx, epic, CloseOptions{Reason: ReasonCompleted}); err != nil {
+		return Ticket{}, fmt.Errorf("closed #%d, but closing its epic #%d failed: %w", number, epic.Number, err)
+	}
+	return epic, nil
 }
 
 func (c *Client) closeTicket(ctx context.Context, ticket Ticket, opts CloseOptions) error {

@@ -18,7 +18,7 @@ func newRootCommand(open opener) *cobra.Command {
 		},
 	}
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
-	rootCmd.AddCommand(newAuthCommand(), newProjectCommand(open), newIssueCommand(open), newHandoffCommand(open))
+	rootCmd.AddCommand(newAuthCommand(), newProjectCommand(open), newIssueCommand(open), newEpicCommand(open), newHandoffCommand(open))
 	setupHelp(rootCmd)
 	return rootCmd
 }

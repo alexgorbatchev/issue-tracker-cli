@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-07 07:17
+  last_modified: 2026-11-09 13:11
   status: current
 ---
 
@@ -25,6 +25,8 @@ Set `AGENT=1` on every invocation, or export it for the session. Read exit statu
 7. To stop without finishing, run `issue-tracker issue release <number>`.
 
 To hand unfinished work to the next agent, push the branch, then run `issue-tracker handoff create --title "..." --body-file notes.md` in its checkout; it records the current branch and `HEAD`. A project holds one open handoff. The receiving agent runs `issue-tracker handoff take`, which claims and closes the handoff in one step and prints the branch and commit to resume from. An agent that took a handoff it cannot work on runs `issue-tracker handoff untake <number>` to give it back. Run `issue-tracker handoff show` to read a handoff without taking it, and `issue-tracker handoff drop --reason "..."` to close one nobody should take.
+
+To plan work that takes several tickets, run `issue-tracker epic create --title "..."`, then `issue-tracker issue create --epic <number>` for each piece of work. Agents claim an epic's tickets, never the epic, and closing its last open ticket closes the epic. Run `issue-tracker epic inspect <number>` to see an epic's tickets and progress. An epic holds tickets only: an epic never belongs to another ticket, and none of its tickets is an epic.
 
 Read and follow the `WARN:` line printed for public projects: keep ticket text, attachments, ticket numbers, and the tracker repository name out of that project's commits, pull requests, and branch names.
 
@@ -56,7 +58,7 @@ Metadata caches are isolated by tracker repository and effective authentication 
 
 ## Project resolution
 
-Inside a registered repository, the current repository's git remote selects the project, so `--project` is optional. Inside a registered component's directory, or below it, the component is selected; when components are nested, the deepest one wins. Elsewhere in the repository, the repository's project is selected, and its lists, claims, and counts include its components' tickets. When `GH_REPO` is set, it names the repository and the directory is ignored. An explicit `--project` always wins. Outside a registered repository, `issue list`, `issue claim --next`, and `issue sub close-eligible` need `--project` or `--all-projects`, and `issue create` and `project inspect` need an explicit project. They fail naming the reason: a GitHub repository that is not registered, one whose name another owner's repository already holds, a repository on another host, a checkout with no GitHub remote, or no git checkout. Each error ends with how that command takes a project. See Errors.
+Inside a registered repository, the current repository's git remote selects the project, so `--project` is optional. Inside a registered component's directory, or below it, the component is selected; when components are nested, the deepest one wins. Elsewhere in the repository, the repository's project is selected, and its lists, claims, and counts include its components' tickets. When `GH_REPO` is set, it names the repository and the directory is ignored. An explicit `--project` always wins. Outside a registered repository, `issue list`, `issue claim --next`, `epic list`, and `epic close-eligible` need `--project` or `--all-projects`, and `issue create`, `epic create`, and `project inspect` need an explicit project. They fail naming the reason: a GitHub repository that is not registered, one whose name another owner's repository already holds, a repository on another host, a checkout with no GitHub remote, or no git checkout. Each error ends with how that command takes a project. See Errors.
 
 ## Commands
 
@@ -113,7 +115,7 @@ GitHub rewrites `#N` references in a moved issue's body and comments to `owner/r
 
 ### issue-tracker issue list
 
-Prints one tab-separated line per ticket, oldest first: number, status, priority, project, comma-separated labels, title. With `--ready`, tickets come most urgent first and oldest first within a priority. A stale ticket's status is followed by ` (stale)`. The priority column holds `P0` to `P3`, or nothing, and priority labels are left out of the labels column. See Priority.
+Prints one tab-separated line per ticket, oldest first: number, status, priority, project, comma-separated labels, title. With `--ready`, tickets come most urgent first; within a priority, the tickets of an epic that has a ticket in Doing come first, then the oldest. A stale ticket's status is followed by ` (stale)`. The priority column holds `P0` to `P3`, or nothing, and priority labels are left out of the labels column. See Priority.
 
 - `--project` string: limit to a project. Defaults to the current repository's project.
 - `--all-projects` bool: list every project. Required outside a registered repository unless `--project` or `--unrouted` is given.
@@ -123,7 +125,7 @@ Prints one tab-separated line per ticket, oldest first: number, status, priority
 - `--label` string: only tickets with this label, ignoring case as GitHub does.
 - `--priority` string: only tickets whose priority is this: `P0`, `P1`, `P2`, or `P3`, ignoring case.
 - `--search` string: only tickets matching this GitHub search text in their title, body, or comments. GitHub serves 1,000 results per search query, so a longer result continues with another query from the last creation time, and `--limit 0` delivers every match once. The one exception is more than 1,000 matches created in the same second, which fails with the error listed under Errors and prints no tickets. Leave `sort:` out of the search text, because continuing depends on creation order.
-- `--ready` bool: only tickets that can be picked up now: with a project, open, without the `blocked` label, with no open blockers, no blocked parent or grandparent, no open sub-issues, not in Doing or Done, and not a handoff. A parent with open sub-issues is left out so that its children get claimed instead; `issue claim <number>` can still claim it. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers.
+- `--ready` bool: only tickets that can be picked up now: with a project, open, without the `blocked` label, with no open blockers, no blocked parent or grandparent, no open sub-issues, not in Doing or Done, not a handoff, and not an epic. An epic is left out even before it has tickets, and a parent with open sub-issues so that its children get claimed instead; `issue claim <number>` can still claim a parent that is not an epic. An epic counts as active when one of its tickets among the tickets read is in Doing, so `--project` sees only that project's tickets of an epic. The `blocked` label applies only to the ticket that carries it; a parent or grandparent counts as blocked only through open blockers.
 - `--handoff` bool: only handoffs, the tickets with the `handoff` label. Cannot be combined with `--ready`.
 - `--stale` bool: only Doing tickets with no ticket or board activity within the stale window.
 - `--stale-days` int: stale window in days, overriding the configured value.
@@ -131,7 +133,7 @@ Prints one tab-separated line per ticket, oldest first: number, status, priority
 
 ### issue-tracker issue inspect <number...>
 
-Reads up to 50 tickets in one request, in the order given; a repeated number is shown once. For each ticket, prints `number`, `title`, `state`, `status`, `project`, `url`, then `priority`, `labels`, `parent`, `blocked_by`, `blocking`, `sub_issue`, and `attachment` lines when present, then `body:` followed by the body, then each comment as `comment: <author> <time>` followed by its text. A blank line separates tickets. The `WARN:` line for a public project comes first, once per project, followed by a `WARN:` line for each ticket with more than one priority label.
+Reads up to 50 tickets in one request, in the order given; a repeated number is shown once. For each ticket, prints `number`, `title`, `state`, `status`, `project`, `url`, then `priority`, `labels`, `epic` or `parent`, `blocked_by`, `blocking`, `sub_issue`, and `attachment` lines when present, then `body:` followed by the body, then each comment as `comment: <author> <time>` followed by its text. `epic` names the ticket's epic; `parent` names a parent that is not an epic. A blank line separates tickets. The `WARN:` line for a public project comes first, once per project, followed by a `WARN:` line for each ticket with more than one priority label.
 
 ### issue-tracker issue create
 
@@ -142,8 +144,8 @@ Creates a ticket on its project's board with status Todo. If a later step fails,
 - `--body-file` string: file holding the text; `-` reads standard input. Bodies hold at most 65,536 characters.
 - `--project` string: project. Defaults to the current repository's project.
 - `--attach` stringArray: file to upload. Repeatable. See Attachments.
-- `--label` stringArray: label to apply. Repeatable.
-- `--parent` int: parent ticket number.
+- `--label` stringArray: label to apply. Repeatable. The `epic` and `handoff` labels are refused; see Errors.
+- `--epic` int: epic the ticket belongs to. It must be an open epic.
 - `--discovered-from` int: adds a line naming the ticket that surfaced this work. It does not block anything.
 - `--blocked-by` intSlice: tickets that must close first. Repeatable.
 - `--blocking` intSlice: tickets waiting on this one. Repeatable.
@@ -159,9 +161,9 @@ Changes the title or body, and attaches files to the body. Attaching without `--
 
 ### issue-tracker issue claim [number]
 
-Atomically takes a ticket and sets it to Doing. Pass a number or `--next`. Claims never expire: they end with `issue close` or `issue release`.
+Atomically takes a ticket and sets it to Doing. Pass a number or `--next`. Claims never expire: they end with `issue close` or `issue release`. An epic cannot be claimed; claim one of its tickets.
 
-- `--next` bool: claim the most urgent ready ticket, oldest first within a priority, moving past tickets other agents win. Prints `OK: no ready tickets` when none remain. Handoffs are never claimed this way; for each open handoff it read, it prints `WARN: open handoff #<number> in <project>, <age> old: review it with issue-tracker handoff show --project <project>` on stderr, and still claims.
+- `--next` bool: claim the most urgent ready ticket, then within a priority one of an epic that has a ticket in Doing, then the oldest, moving past tickets other agents win. Prints `OK: no ready tickets` when none remain. Handoffs are never claimed this way; for each open handoff it read, it prints `WARN: open handoff #<number> in <project>, <age> old: review it with issue-tracker handoff show --project <project>` on stderr, and still claims.
 - `--project` string: limit `--next` to a project. Defaults to the current repository's project.
 - `--all-projects` bool: let `--next` claim from every project. Required outside a registered repository unless `--project` is given.
 
@@ -171,7 +173,7 @@ Gives up a claim and returns the ticket to Todo.
 
 ### issue-tracker issue close <number>
 
-Closes a ticket, sets it to Done, and removes its claim. Pass one of `--pr`, `--landed-pr`, or `--reason`.
+Closes a ticket, sets it to Done, and removes its claim. Pass one of `--pr`, `--landed-pr`, or `--reason`. An epic is refused; use `epic close`. When the ticket was the last open ticket of its epic, the epic closes too, as completed, and a second line `closed epic #<number> in <project>: <title>` follows `closed #<number>`; an epic in Doing, with open blockers, or with the `blocked` label stays open.
 
 - `--pr` stringArray: merged pull request. Repeatable. A bare number belongs to the ticket's project; `project#number` names another registered project. The command refuses to close when any pull request is unmerged. Links to the pull requests are added to the ticket.
 - `--landed-pr` string: closed pull request that GitHub does not report as merged, as a number or `project#number`. The command closes the ticket as completed only when the pull request's head commit is on its base branch, and records the pull request and commit on the ticket. It refuses an open pull request, a merged one, which takes `--pr`, and a head that is not on the base branch.
@@ -187,11 +189,11 @@ Reassigns a ticket to another project and keeps its status. Moving between a rep
 
 ### issue-tracker issue label add <number> <label...>
 
-Adds labels. GitHub creates a label it does not know yet. `repo:` labels are refused, because `issue move` owns them.
+Adds labels. GitHub creates a label it does not know yet. `repo:` labels are refused, because `issue move` owns them, and so are `epic`, which the `epic` commands own, and `handoff`, which `handoff create` owns, in any case.
 
 ### issue-tracker issue label rm <number> <label...>
 
-Removes labels.
+Removes labels. The same labels are refused.
 
 ### issue-tracker issue status set <number> <status>
 
@@ -233,25 +235,66 @@ Marks a ticket blocked by other tickets.
 
 Removes blockers.
 
-### issue-tracker issue sub add <parent> <child...>
+### issue-tracker epic
 
-Attaches sub-issues to a parent.
+Groups tickets under epics. An epic is a ticket with the `epic` label, routed to its project and on its board, whose sub-issues are its tickets. Its tickets can belong to any project. An epic is never ready work and cannot be claimed, and it stays in Todo until it closes. An epic never belongs to another ticket, and none of its tickets is an epic.
 
-### issue-tracker issue sub rm <parent> <child...>
+### issue-tracker epic create
 
-Detaches sub-issues.
+Creates an epic in Todo on its project's board. The create sets the `epic` label, which is created on first use, so the epic is never ready work. Prints `created epic #<number> in <project>: <url>`. Every ticket in `--add` is checked before anything is written.
 
-### issue-tracker issue sub list <parent>
+- `--title` string: epic title. Required.
+- `--body` string: epic text.
+- `--body-file` string: file holding the text; `-` reads standard input. Bodies hold at most 65,536 characters.
+- `--project` string: project. Defaults to the current repository's project.
+- `--add` intSlice: existing ticket that becomes one of the epic's tickets. Repeatable. A ticket that is an epic or already has a parent is refused.
+- `--blocked-by` intSlice: tickets that must close first. Repeatable. The epic's tickets are not ready while it has open blockers.
+- `--label` stringArray: label to apply. Repeatable.
+- `--attach` stringArray: file to upload. Repeatable. See Attachments.
 
-Shows a parent's sub-issues and progress. Prints one tab-separated line per sub-issue: number, state, title. Then prints `#<parent>: <done> of <total> done, <open> open`. A sub-issue closed for any reason counts as done.
+### issue-tracker epic list
 
-### issue-tracker issue sub close-eligible
+Prints one tab-separated line per epic, oldest first: number, project, progress as `<done>/<total>`, status, title. A ticket closed for any reason counts as done. Inside a registered repository it covers that project; elsewhere it needs `--project` or `--all-projects`.
 
-Closes open parents whose sub-issues are all closed, as completed, with no pull request check. Prints `closed #<number> in <project>: <title>` for each, or `no eligible parents`. Skips a parent that is in Doing, has open blockers, or has the `blocked` label. Each parent is read again just before closing; one that stopped being eligible prints `skipped #<number>: no longer eligible`. A failed close stops the command. Inside a registered repository it covers that project; elsewhere it needs `--project` or `--all-projects`.
+- `--project` string: limit to a project.
+- `--all-projects` bool: list every project. Required outside a registered repository unless `--project` is given.
+- `--state` string: `open`, `closed`, or `all`. Default: open.
+
+### issue-tracker epic inspect <epic>
+
+Prints the epic as `issue inspect` does, without its `sub_issue` lines, then one tab-separated line per ticket: number, state, status, project, title. Then prints `#<epic>: <done> of <total> done, <open> open`. A ticket closed for any reason counts as done. Reads everything in one request.
+
+### issue-tracker epic add <epic> <ticket...>
+
+Makes tickets the epic's tickets. Prints `added <n> ticket(s) to epic #<epic>`; a ticket already in the epic is left alone and not counted. The epic must be open. A ticket that is an epic, or that belongs to another parent, is refused before anything is written.
+
+- `--move` bool: take tickets that belong to another parent from it.
+
+### issue-tracker epic rm <epic> <ticket...>
+
+Detaches tickets from the epic. Prints `removed <n> ticket(s) from epic #<epic>`. Every ticket must belong to the epic.
+
+### issue-tracker epic close <epic>
+
+Closes an epic and sets it to Done. Prints `closed epic #<epic>`.
+
+- `--reason` string: `completed`, which needs every ticket of the epic closed, or `not-planned`, which leaves its open tickets as they are. Required.
+
+### issue-tracker epic close-eligible
+
+Closes open epics whose tickets are all closed, as completed. Closing an epic's last ticket with `issue close` already closes it, so this covers tickets closed in the GitHub web UI. Prints `closed #<number> in <project>: <title>` for each, or `no eligible epics`. Skips an epic that is in Doing, has open blockers, or has the `blocked` label. Each epic is read again just before closing; one that stopped being eligible prints `skipped #<number>: no longer eligible`. A failed close stops the command. Inside a registered repository it covers that project; elsewhere it needs `--project` or `--all-projects`.
 
 - `--all-projects` bool: cover every project. Required outside a registered repository unless `--project` is given.
-- `--dry-run` bool: print `would close #<number> in <project>: <title>` for each parent and close nothing.
+- `--dry-run` bool: print `would close #<number> in <project>: <title>` for each epic and close nothing.
 - `--project` string: limit to a project.
+
+### issue-tracker epic promote <ticket>
+
+Makes an open ticket an epic by adding the `epic` label. Its sub-issues become the epic's tickets. Prints `promoted #<number> to an epic`. Refuses an epic, a closed ticket, a handoff, a ticket in Doing, a ticket that belongs to another ticket, and a ticket with a sub-issue that is an epic.
+
+### issue-tracker epic demote <epic>
+
+Makes an epic an ordinary ticket by removing the `epic` label. Prints `demoted epic #<epic>`. Refuses an epic that still has tickets; detach them with `epic rm` first.
 
 ### issue-tracker handoff
 
@@ -349,6 +392,15 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `label repo:<name> holds the <n> tickets of removed project <registration>: rename the label on GitHub before registering <owner/repo>`: another repository's project was removed under this name, and registering this one would move its tickets here. Ask the user to rename the label.
 - `label repo:<name> has no registration and holds <n> tickets, perhaps of a project removed before removals were recorded: ...`: which repository the label's tickets belong to is unknown. Ask the user whether they belong to this repository: if so, they set the description the message names; otherwise they rename the label.
 - `label repo:<name> holds <n> tickets and its description "<text>" is not a registration: ...`: a hand-made label with this name already holds tickets. Ask the user to rename it.
+- `ticket #<number> is an epic: claim one of its tickets`: epics are never claimed. Run `epic inspect <number>` and claim an open ticket of the epic.
+- `ticket #<number> is an epic: use epic close`: close an epic with `epic close`.
+- `epic #<number> has <n> open ticket(s): close them first, or close the epic as not-planned`: nothing was written.
+- `ticket #<number> is not an epic: run epic promote <number> first`: `issue create --epic` and `epic add` take only an epic. Nothing was written. Promote the ticket, or name the right epic.
+- `epic #<number> is closed: reopen it first`: nothing was written.
+- `ticket #<number> is an epic: epics do not nest`, `ticket #<number> belongs to #<parent>: epics do not nest`, or `sub-issue #<number> of #<epic> is an epic: epics do not nest`: nothing was written.
+- `ticket #<number> already belongs to #<parent>: pass --move to move it`: nothing was written. Rerun `epic add` with `--move` when the ticket should leave its parent. From `epic create --add`, create the epic without that ticket, then run `epic add --move`.
+- `closed #<number>, but closing its epic #<epic> failed: <reason>`: the ticket closed and its epic stayed open. Run `epic close-eligible` later to close it.
+- `label "<label>" makes a ticket an epic: use epic create, epic promote, or epic demote instead` or `label "<label>" makes a ticket a handoff: use handoff create instead`: nothing was written.
 - `ticket is already claimed`: another agent holds the ticket. Pick another. From `handoff take`, another agent took the handoff first.
 - `no open handoff in <project>`: `handoff take` or `handoff drop` found no open handoff, or `handoff drop --free-slot` found no slot to free either. Nothing was changed.
 - `<project> already has open handoff #<number>: take or drop it first`: a project holds one open handoff. Nothing was written. Read it with `handoff show`, then take it, or ask the user before dropping it.
@@ -359,7 +411,7 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `no branch or commit to hand off: ...`: `handoff create` ran outside a checkout of the project's repository, or in one with no current branch or commits, without `--branch` and `--sha`. Pass them, or run it in the checkout.
 - `handoff #<number> has no "Branch:" and "Commit:" lines at the top of its body: drop it and create it again`: the handoff's body was edited by hand. Ask the user before dropping it.
 - `project <name> is registered but its board is missing or inaccessible to <account>`: the project registration exists, but the selected account cannot resolve its board, even after re-reading the tracker's projects from GitHub once. Ask the tracker owner to verify that the board exists and that this account has Write access under the board's Settings, Manage access. A missing or inaccessible board is distinct from an unregistered project; repeating `project add` does not grant access.
-- `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or <remedy>`: a command ran in a repository that is not a project. `<remedy>` is `pass --project <name>, or --all-projects for every project` for `issue list`, `issue claim --next`, and `issue sub close-eligible`, `pass --project <name>` for `issue create`, and `name a project` for `project inspect`. Follow it, or ask the user whether to register the repository.
+- `<owner/repo> is not a registered project: register it with issue-tracker project add <owner/repo>, or <remedy>`: a command ran in a repository that is not a project. `<remedy>` is `pass --project <name>, or --all-projects for every project` for `issue list`, `issue claim --next`, `epic list`, and `epic close-eligible`, `pass --project <name>` for `issue create`, and `name a project` for `project inspect`. Follow it, or ask the user whether to register the repository.
 - `<owner/repo> is not a registered project, and cannot be: project <name> already belongs to <other/repo>: <remedy>`: the name this repository would be registered under is held by another registration, such as a component or a repository registered before other owners' repositories got `<owner>/<name>`. Follow the remedy.
 - `not inside a registered repository: <reason>: <remedy>`: the command ran where no github.com repository was found. The reason is `no git checkout here`, `this checkout has no git remote`, `no git remote points to a GitHub host the GitHub CLI is logged in to`, `<host>/<owner>/<repo> is on <host>, and projects are github.com repositories`, or, for any other failure, git's or the GitHub CLI's own reason on one line, such as a missing git or a checkout git refuses under its `safe.directory` rule. Follow the remedy, or ask the user to fix git first when the reason is about git itself.
 - `ticket #<number> has no project: give it a repo: label on GitHub or run issue move <number> <project>`: the ticket is unrouted, and no claim was created. Ask the user which project owns it, or pick another ticket.
