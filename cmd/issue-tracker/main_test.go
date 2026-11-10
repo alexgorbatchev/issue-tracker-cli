@@ -1330,9 +1330,25 @@ func TestSkillDocumentsCommandInterface(t *testing.T) {
 	if !strings.Contains(string(data), `name: "issue-tracker"`) {
 		t.Fatal("the skill's frontmatter name must equal the --skill value")
 	}
+	documentation := string(data)
+	references, err := filepath.Glob(filepath.Join(filepath.Dir(path), "references", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reference := range references {
+		link := "(references/" + filepath.Base(reference) + ")"
+		if !strings.Contains(string(data), link) {
+			t.Errorf("skill does not route to %s", reference)
+		}
+		content, err := os.ReadFile(reference)
+		if err != nil {
+			t.Fatal(err)
+		}
+		documentation += "\n" + string(content)
+	}
 	root := newRootCommand(noSession)
-	if omissions := cobrahelptree.SkillOmissions(root, techCatalog, string(data)); len(omissions) > 0 {
-		t.Fatalf("SKILL.md is missing:\n%s", strings.Join(omissions, "\n"))
+	if omissions := cobrahelptree.SkillOmissions(root, techCatalog, documentation); len(omissions) > 0 {
+		t.Fatalf("skill bundle is missing:\n%s", strings.Join(omissions, "\n"))
 	}
 }
 

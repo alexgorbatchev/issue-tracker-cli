@@ -1,6 +1,6 @@
 ---
 created_on: 2026-11-01 10:52
-last_modified: 2026-11-03 13:41
+last_modified: 2026-11-10 14:43
 status: current
 ---
 
@@ -44,10 +44,10 @@ CLI that manages projects and tickets held in one private GitHub repository, wit
 - **Hermetic Unit Tests:** All unit tests must remain offline. Use `internal/fakegithub` as the transport.
 
 ## Agent Skill
-- The skill lives only at `skills/issue-tracker/SKILL.md`. Never embed it in the binary.
+- The skill bundle lives under `skills/issue-tracker/`: `SKILL.md` holds the common workflow and routes to conditional references. Never embed it in the binary.
 - `issue-tracker skill` prints install instructions through `HelpOptions.Skill`, and every agent help screen starts with an alert to read it.
 - Set versions only through `-ldflags` at release time. `currentVersion` falls back to the module version `go install` records, so never hardcode one.
-- Update the skill in the same change as any command, argument, flag, default, environment variable, output, error, or side-effect change. Verify it against the implementation, update `last_modified`, and run `just check`. `TestSkillDocumentsCommandInterface` compares it with the live command tree.
+- Update the skill in the same change as any command, argument, flag, default, environment variable, output, error, or side-effect change. Verify it against the implementation, update `last_modified`, and run `just check`. `TestSkillDocumentsCommandInterface` verifies reference routing and compares the complete bundle with the live command tree.
 - Write affirmative usage instructions and factual contracts in the skill. Keep development instructions and prohibitions in this file.
 
 ## Boundaries
