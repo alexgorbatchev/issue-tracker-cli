@@ -35,7 +35,7 @@ func warn(w io.Writer, format string, args ...any) error {
 }
 
 func warnPublic(w io.Writer, project string) error {
-	return warn(w, "%s is public: keep ticket text, attachments, numbers, and the tracker name out of its commits, PRs, and branch names", project)
+	return warn(w, "%s is public: keep ticket text, attachments, and tracker identity private; use bare ticket numbers in branch names, not commit messages or PR text", project)
 }
 
 // cellStyle pads cells so that wrapped text stays clear of the borders.

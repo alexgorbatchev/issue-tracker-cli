@@ -178,7 +178,7 @@ func TestWriteCommandsReportResults(t *testing.T) {
 		want   string
 	}{
 		{"claim", []fakegithub.Route{ticketRoute("go-tui", "Todo"), claimRef, status}, []string{"issue", "claim", "1"}, "OK: claimed #1 in go-tui: Crash"},
-		{"claim public warns", []fakegithub.Route{ticketRoute("lib", "Todo"), claimRef, status}, []string{"issue", "claim", "1"}, "WARN: lib is public"},
+		{"claim public warns", []fakegithub.Route{ticketRoute("lib", "Todo"), claimRef, status}, []string{"issue", "claim", "1"}, "WARN: lib is public: keep ticket text, attachments, and tracker identity private; use bare ticket numbers in branch names, not commit messages or PR text"},
 		{"claim next", []fakegithub.Route{boardOnly(), listRoute(ticketJSON(1, "go-tui", "Todo", "2026-10-01T00:00:00Z")), claimRef, status}, []string{"issue", "claim", "--next", "--project", "go-tui"}, "OK: claimed #1"},
 		{"claim next empty", []fakegithub.Route{listRoute()}, []string{"issue", "claim", "--next", "--all-projects"}, "OK: no ready tickets"},
 		{"release", []fakegithub.Route{ticketRoute("go-tui", "Doing"), drop, status}, []string{"issue", "release", "1"}, "OK: released #1"},
