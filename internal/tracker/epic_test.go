@@ -36,6 +36,20 @@ func relativeJSON(epic bool, state string, parent int) string {
 	return fmt.Sprintf(`{"id":"ID%d","state":%q,"labels":{"nodes":[%s]},"parent":%s}`, parent, state, labels, parentJSON)
 }
 
+// epicWith is an open epic that already holds total tickets.
+func epicWith(total int) string {
+	return fmt.Sprintf(`{"id":"ID0","state":"OPEN","labels":{"nodes":[{"name":"epic"}]},"parent":null,"subIssuesSummary":{"total":%d}}`, total)
+}
+
+// manyTickets numbers n tickets from 1000.
+func manyTickets(n int) []int {
+	tickets := make([]int, n)
+	for i := range tickets {
+		tickets[i] = 1000 + i
+	}
+	return tickets
+}
+
 var (
 	openEpic   = relativeJSON(true, "OPEN", 0)
 	closedEpic = relativeJSON(true, "CLOSED", 0)
@@ -120,6 +134,7 @@ func TestCreateEpicRefusesBeforeCreating(t *testing.T) {
 		want   string
 	}{
 		{"reserved label", nil, EpicOptions{Project: "go-tui", Title: "t", Labels: []string{"handoff"}}, `label "handoff" makes a ticket a handoff`},
+		{"too many tickets", nil, EpicOptions{Project: "go-tui", Title: "t", Add: manyTickets(101)}, "the epic would have 101 tickets, over GitHub's limit of 100 per epic"},
 		{"label read fails", []fakegithub.Route{{Match: "label(name: $label)", Status: 500, Body: "{}"}}, EpicOptions{Project: "go-tui", Title: "t"}, "reading epic label"},
 		{"nested epic", []fakegithub.Route{epicLabelRoute(), relativesRoute(map[int]string{7: openEpic})}, EpicOptions{Project: "go-tui", Title: "t", Add: []int{7}}, "ticket #7 is an epic: epics do not nest"},
 		{"ticket with a parent", []fakegithub.Route{epicLabelRoute(), relativesRoute(map[int]string{7: relativeJSON(false, "OPEN", 3)})}, EpicOptions{Project: "go-tui", Title: "t", Add: []int{7}}, "ticket #7 already belongs to #3: create the epic without it, then run epic add --move"},
@@ -161,6 +176,7 @@ func TestCreateTicketInAnEpicNeedsAnOpenEpic(t *testing.T) {
 	}{
 		{"not an epic", loose, "ticket #3 is not an epic: run epic promote 3 first"},
 		{"closed epic", closedEpic, "epic #3 is closed: reopen it first"},
+		{"full epic", epicWith(100), "epic #3 would have 101 tickets, over GitHub's limit of 100 per epic: start another epic for the rest, or detach closed tickets with epic rm"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -192,6 +208,16 @@ func TestAddToEpic(t *testing.T) {
 	}
 }
 
+func TestAddToEpicFillsAnEpicToGitHubsLimit(t *testing.T) {
+	// Tickets already in the epic take no new room.
+	c, gh := newClient(t, relativesRoute(map[int]string{1: epicWith(99), 2: loose, 3: relativeJSON(false, "OPEN", 1)}), okRoute("addSubIssue"))
+	added, err := c.AddToEpic(ctx, 1, []int{2, 3}, false)
+	if err != nil || added != 1 {
+		t.Fatalf("added = %d, err = %v", added, err)
+	}
+	wantCount(t, gh, 2)
+}
+
 func TestAddToEpicWritesNothingWhenEverythingIsThere(t *testing.T) {
 	c, gh := newClient(t, relativesRoute(map[int]string{1: openEpic, 3: relativeJSON(false, "OPEN", 1)}))
 	added, err := c.AddToEpic(ctx, 1, []int{3}, false)
@@ -214,6 +240,7 @@ func TestAddToEpicFailures(t *testing.T) {
 		{"itself", map[int]string{1: openEpic}, []int{1}, false, "epic #1 cannot contain itself"},
 		{"nested", map[int]string{1: openEpic, 2: openEpic}, []int{2}, false, "ticket #2 is an epic: epics do not nest"},
 		{"other parent", map[int]string{1: openEpic, 2: relativeJSON(false, "OPEN", 9)}, []int{2}, false, "ticket #2 already belongs to #9: pass --move to move it"},
+		{"over the limit", map[int]string{1: epicWith(99), 2: loose, 3: loose}, []int{2, 3}, false, "epic #1 would have 101 tickets, over GitHub's limit of 100 per epic"},
 		{"write fails", map[int]string{1: openEpic, 2: loose}, []int{2}, true, "adding tickets to epic #1"},
 	}
 	for _, tt := range tests {

@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-09 13:11
+  last_modified: 2026-11-09 16:08
   status: current
 ---
 
@@ -26,7 +26,7 @@ Set `AGENT=1` on every invocation, or export it for the session. Read exit statu
 
 To hand unfinished work to the next agent, push the branch, then run `issue-tracker handoff create --title "..." --body-file notes.md` in its checkout; it records the current branch and `HEAD`. A project holds one open handoff. The receiving agent runs `issue-tracker handoff take`, which claims and closes the handoff in one step and prints the branch and commit to resume from. An agent that took a handoff it cannot work on runs `issue-tracker handoff untake <number>` to give it back. Run `issue-tracker handoff show` to read a handoff without taking it, and `issue-tracker handoff drop --reason "..."` to close one nobody should take.
 
-To plan work that takes several tickets, run `issue-tracker epic create --title "..."`, then `issue-tracker issue create --epic <number>` for each piece of work. Agents claim an epic's tickets, never the epic, and closing its last open ticket closes the epic. Run `issue-tracker epic inspect <number>` to see an epic's tickets and progress. An epic holds tickets only: an epic never belongs to another ticket, and none of its tickets is an epic.
+To plan work that takes several tickets, run `issue-tracker epic create --title "..."`, then `issue-tracker issue create --epic <number>` for each piece of work. Agents claim an epic's tickets, never the epic, and closing its last open ticket closes the epic. Run `issue-tracker epic inspect <number>` to see an epic's tickets and progress. An epic holds at most 100 tickets, GitHub's limit per parent, so split larger work into several epics. An epic holds tickets only: an epic never belongs to another ticket, and none of its tickets is an epic.
 
 Read and follow the `WARN:` line printed for public projects: keep ticket text, attachments, ticket numbers, and the tracker repository name out of that project's commits, pull requests, and branch names.
 
@@ -145,7 +145,7 @@ Creates a ticket on its project's board with status Todo. If a later step fails,
 - `--project` string: project. Defaults to the current repository's project.
 - `--attach` stringArray: file to upload. Repeatable. See Attachments.
 - `--label` stringArray: label to apply. Repeatable. The `epic` and `handoff` labels are refused; see Errors.
-- `--epic` int: epic the ticket belongs to. It must be an open epic.
+- `--epic` int: epic the ticket belongs to. It must be an open epic with fewer than 100 tickets.
 - `--discovered-from` int: adds a line naming the ticket that surfaced this work. It does not block anything.
 - `--blocked-by` intSlice: tickets that must close first. Repeatable.
 - `--blocking` intSlice: tickets waiting on this one. Repeatable.
@@ -237,7 +237,7 @@ Removes blockers.
 
 ### issue-tracker epic
 
-Groups tickets under epics. An epic is a ticket with the `epic` label, routed to its project and on its board, whose sub-issues are its tickets. Its tickets can belong to any project. An epic is never ready work and cannot be claimed, and it stays in Todo until it closes. An epic never belongs to another ticket, and none of its tickets is an epic.
+Groups tickets under epics. An epic is a ticket with the `epic` label, routed to its project and on its board, whose sub-issues are its tickets. Its tickets can belong to any project. An epic is never ready work and cannot be claimed, and it stays in Todo until it closes. An epic never belongs to another ticket, and none of its tickets is an epic. An epic holds at most 100 tickets, open or closed, because GitHub allows 100 sub-issues per parent; `epic create --add`, `epic add`, and `issue create --epic` refuse to go past that before writing anything. Plan larger work as several epics.
 
 ### issue-tracker epic create
 
@@ -247,7 +247,7 @@ Creates an epic in Todo on its project's board. The create sets the `epic` label
 - `--body` string: epic text.
 - `--body-file` string: file holding the text; `-` reads standard input. Bodies hold at most 65,536 characters.
 - `--project` string: project. Defaults to the current repository's project.
-- `--add` intSlice: existing ticket that becomes one of the epic's tickets. Repeatable. A ticket that is an epic or already has a parent is refused.
+- `--add` intSlice: existing ticket that becomes one of the epic's tickets. Repeatable. A ticket that is an epic or already has a parent is refused, and so are more than 100 tickets.
 - `--blocked-by` intSlice: tickets that must close first. Repeatable. The epic's tickets are not ready while it has open blockers.
 - `--label` stringArray: label to apply. Repeatable.
 - `--attach` stringArray: file to upload. Repeatable. See Attachments.
@@ -266,7 +266,7 @@ Prints the epic as `issue inspect` does, without its `sub_issue` lines, then one
 
 ### issue-tracker epic add <epic> <ticket...>
 
-Makes tickets the epic's tickets. Prints `added <n> ticket(s) to epic #<epic>`; a ticket already in the epic is left alone and not counted. The epic must be open. A ticket that is an epic, or that belongs to another parent, is refused before anything is written.
+Makes tickets the epic's tickets. Prints `added <n> ticket(s) to epic #<epic>`; a ticket already in the epic is left alone and not counted. The epic must be open. A ticket that is an epic, or that belongs to another parent, is refused before anything is written, and so is any addition that would take the epic past 100 tickets. Tickets already in the epic take no new room.
 
 - `--move` bool: take tickets that belong to another parent from it.
 
@@ -398,6 +398,7 @@ Put long output such as logs in a file and attach it rather than pasting it into
 - `ticket #<number> is not an epic: run epic promote <number> first`: `issue create --epic` and `epic add` take only an epic. Nothing was written. Promote the ticket, or name the right epic.
 - `epic #<number> is closed: reopen it first`: nothing was written.
 - `ticket #<number> is an epic: epics do not nest`, `ticket #<number> belongs to #<parent>: epics do not nest`, or `sub-issue #<number> of #<epic> is an epic: epics do not nest`: nothing was written.
+- `epic #<number> would have <n> tickets, over GitHub's limit of 100 per epic: start another epic for the rest, or detach closed tickets with epic rm`, or `the epic would have <n> tickets, ...` from `epic create --add`: nothing was written. GitHub counts closed tickets too. Create another epic for the remaining work, or detach closed tickets with `epic rm` when their history in this epic does not matter.
 - `ticket #<number> already belongs to #<parent>: pass --move to move it`: nothing was written. Rerun `epic add` with `--move` when the ticket should leave its parent. From `epic create --add`, create the epic without that ticket, then run `epic add --move`.
 - `closed #<number>, but closing its epic #<epic> failed: <reason>`: the ticket closed and its epic stayed open. Run `epic close-eligible` later to close it.
 - `label "<label>" makes a ticket an epic: use epic create, epic promote, or epic demote instead` or `label "<label>" makes a ticket a handoff: use handoff create instead`: nothing was written.

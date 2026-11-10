@@ -293,7 +293,7 @@ func newIssueCreateCommand(open opener) *cobra.Command {
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Project for the ticket; defaults to the current repository's project")
 	cmd.Flags().StringArrayVar(&opts.Attachments, "attach", nil, attachUsage)
 	cmd.Flags().StringArrayVar(&opts.Labels, "label", nil, "Label to apply; repeatable")
-	cmd.Flags().IntVar(&opts.Epic, "epic", 0, "Epic the ticket belongs to")
+	cmd.Flags().IntVar(&opts.Epic, "epic", 0, "Epic the ticket belongs to; it must have room under GitHub's limit of 100 tickets per epic")
 	cmd.Flags().IntVar(&opts.DiscoveredFrom, "discovered-from", 0, "Ticket that surfaced this work; does not block anything")
 	cmd.Flags().IntSliceVar(&blockedBy, "blocked-by", nil, "Tickets that must close first; repeatable")
 	cmd.Flags().IntSliceVar(&blocking, "blocking", nil, "Tickets waiting on this one; repeatable")
