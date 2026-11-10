@@ -53,7 +53,7 @@ func newEpicCreateCommand(open opener) *cobra.Command {
 	}
 	addBodyFlags(cmd, &opts.Body, &bodyFile)
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Project for the epic; defaults to the current repository's project")
-	cmd.Flags().IntSliceVar(&opts.Add, "add", nil, "Existing ticket that becomes one of the epic's tickets; repeatable")
+	cmd.Flags().IntSliceVar(&opts.Add, "add", nil, "Existing ticket that becomes one of the epic's tickets; repeatable, at most 100, GitHub's limit per epic")
 	cmd.Flags().IntSliceVar(&opts.BlockedBy, "blocked-by", nil, "Tickets that must close first; repeatable")
 	cmd.Flags().StringArrayVar(&opts.Labels, "label", nil, "Label to apply; repeatable")
 	cmd.Flags().StringArrayVar(&opts.Attachments, "attach", nil, attachUsage)
@@ -154,7 +154,7 @@ func newEpicAddCommand(open opener) *cobra.Command {
 	var move bool
 	cmd := &cobra.Command{
 		Use:   "add <epic> <ticket...>",
-		Short: "Make tickets the epic's tickets",
+		Short: "Make tickets the epic's tickets, up to GitHub's limit of 100 per epic",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: withTicket(open, func(cmd *cobra.Command, s *session, epic int) (string, error) {
 			tickets, err := parseNumbers(cmd.Flags().Args()[1:])

@@ -23,13 +23,14 @@ func (t Ticket) Epic() bool {
 
 // relative is a ticket read for the checks that relate it to an epic.
 type relative struct {
-	ID     string
-	State  string
-	Labels labelNames
-	Parent *struct{ Number int }
+	ID               string
+	State            string
+	Labels           labelNames
+	Parent           *struct{ Number int }
+	SubIssuesSummary struct{ Total int }
 }
 
-var relativeFields = fmt.Sprintf(`id state labels(first: %d) { nodes { name } } parent { number }`, labelsLimit)
+var relativeFields = fmt.Sprintf(`id state labels(first: %d) { nodes { name } } parent { number } subIssuesSummary { total }`, labelsLimit)
 
 func (r relative) epic() bool {
 	return r.Labels.has(labelEpic)
@@ -49,6 +50,21 @@ func (r relative) checkEpic(number int) error {
 	}
 	if r.State != stateOpen {
 		return fmt.Errorf("epic #%d is closed: reopen it first", number)
+	}
+	return nil
+}
+
+// checkRoom refuses adding tickets past GitHub's limit of sub-issues per parent,
+// which counts closed tickets too.
+func (r relative) checkRoom(number, adding int) error {
+	return checkCapacity(fmt.Sprintf("epic #%d", number), r.SubIssuesSummary.Total+adding)
+}
+
+// checkCapacity refuses an epic that would hold more tickets than GitHub allows one
+// parent, before anything is written.
+func checkCapacity(name string, total int) error {
+	if total > subIssuesLimit {
+		return fmt.Errorf("%s would have %d tickets, over GitHub's limit of %d per epic: start another epic for the rest, or detach closed tickets with epic rm", name, total, subIssuesLimit)
 	}
 	return nil
 }
@@ -87,18 +103,23 @@ func (c *Client) CreateEpic(ctx context.Context, opts EpicOptions) (Ticket, erro
 	if err := checkPlainLabels(opts.Labels); err != nil {
 		return Ticket{}, err
 	}
+	children := uniqueNumbers(opts.Add)
+	if err := checkCapacity("the epic", len(children)); err != nil {
+		return Ticket{}, err
+	}
 	labelID, err := c.ensureLabel(ctx, labelEpic, epicLabelColor, epicLabelDescription)
 	if err != nil {
 		return Ticket{}, err
 	}
 	return c.CreateTicket(ctx, CreateOptions{
 		Project: opts.Project, Title: opts.Title, Body: opts.Body, BlockedBy: opts.BlockedBy,
-		Labels: opts.Labels, Attachments: opts.Attachments, labelIDs: []string{labelID}, children: uniqueNumbers(opts.Add),
+		Labels: opts.Labels, Attachments: opts.Attachments, labelIDs: []string{labelID}, children: children,
 	})
 }
 
 // AddToEpic makes tickets the epic's tickets and reports how many it added. A
-// ticket already in the epic is left alone. Move takes a ticket from another
+// ticket already in the epic is left alone, and an epic never holds more than
+// GitHub's limit of sub-issues per parent. Move takes a ticket from another
 // parent; without it, such a ticket fails the command before anything changes.
 func (c *Client) AddToEpic(ctx context.Context, epic int, tickets []int, move bool) (int, error) {
 	tickets = uniqueNumbers(tickets)
@@ -124,6 +145,9 @@ func (c *Client) AddToEpic(ctx context.Context, epic int, tickets []int, move bo
 		}
 		replace := child.parent() != 0
 		fields = append(fields, subIssueMutation("m"+strconv.Itoa(len(fields)), "addSubIssue", relatives[epic].ID, child.ID, replace))
+	}
+	if err := relatives[epic].checkRoom(epic, len(fields)); err != nil {
+		return 0, err
 	}
 	if err := c.write(ctx, fields); err != nil {
 		return 0, fmt.Errorf("adding tickets to epic #%d: %w", epic, err)

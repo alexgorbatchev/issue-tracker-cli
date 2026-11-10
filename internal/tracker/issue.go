@@ -1224,6 +1224,9 @@ func (c *Client) CreateTicket(ctx context.Context, opts CreateOptions) (Ticket, 
 		if err := relatives[opts.Epic].checkEpic(opts.Epic); err != nil {
 			return Ticket{}, err
 		}
+		if err := relatives[opts.Epic].checkRoom(opts.Epic, 1); err != nil {
+			return Ticket{}, err
+		}
 	}
 	for _, child := range opts.children {
 		if err := relatives[child].checkNewChild(child); err != nil {
