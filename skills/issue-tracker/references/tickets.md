@@ -2,6 +2,7 @@
 
 ## Contents
 
+- [Lifecycle reconciliation](#lifecycle-reconciliation)
 - [Priority](#priority)
 - [issue-tracker issue list](#issue-tracker-issue-list)
 - [issue-tracker issue inspect <number...>](#issue-tracker-issue-inspect-number)
@@ -18,6 +19,14 @@
 - [issue-tracker issue comment add <number>](#issue-tracker-issue-comment-add-number)
 - [issue-tracker issue blocker add <number> <blocker...>](#issue-tracker-issue-blocker-add-number-blocker)
 - [issue-tracker issue blocker rm <number> <blocker...>](#issue-tracker-issue-blocker-rm-number-blocker)
+
+## Lifecycle reconciliation
+
+- Record verified integration as a comment immediately: repository, landed revision or merged PR, validation evidence, and outstanding cleanup with exact resources, ownership, prerequisites, and next action. Keep incomplete work open. After interruption, compare this checkpoint with actual repository and resource state and resume only what remains.
+- Let the engineering workflow own process, artifact, branch, and worktree cleanup. If cleanup needs a decision, record it and preserve the resources; continue independent authorized work. Track a repair separately when it is independently actionable, with a discovery link and concrete acceptance criteria, rather than closing unfinished work by relabelling it.
+- Represent ticket dependencies with `issue blocker add` and remove relationships only when the dependency no longer applies. Use the `blocked` label for a non-ticket blocker and record the exact unblock condition in a comment; remove the label when that condition is verified resolved. Reconcile dependencies when work completes so newly eligible tickets can be selected.
+- Before closing a duplicate with `--reason duplicate`, link the surviving ticket in a comment and preserve unique requirements, evidence, and dependency relationships on the survivor. Close resolved work only after verifying its acceptance criteria and required cleanup. Closing the last open ticket may also close its epic; verify the result rather than issuing redundant writes.
+- Before releasing unfinished work, record scope, completed steps, validation, remaining actions, blockers, branch/commit, retained resources, and ownership. Read [handoffs](handoffs.md) when another execution must resume it. A stale marker is a review signal: claims persist until close or release, so confirm a worker has relinquished ownership before reclaiming its ticket or resources.
 
 ## Priority
 

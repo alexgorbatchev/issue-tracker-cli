@@ -1,6 +1,15 @@
 # Handoffs
 
-To hand unfinished work to the next agent, push the branch, then run `issue-tracker handoff create --title "..." --body-file notes.md` in its checkout; it records the current branch and `HEAD`. A project holds one open handoff. The receiving agent runs `issue-tracker handoff take`, which claims and closes the handoff in one step and prints the branch and commit to resume from. An agent that took a handoff it cannot work on runs `issue-tracker handoff untake <number>` to give it back. Run `issue-tracker handoff show` to read a handoff without taking it, and `issue-tracker handoff drop --reason "..."` to close one nobody should take.
+To hand unfinished work to the next agent when publication is authorized, push the branch, then run `issue-tracker handoff create --title "..." --body-file notes.md` in its checkout; it records the current branch and `HEAD`. A project holds one open handoff. The receiving agent runs `issue-tracker handoff take`, which claims and closes the handoff in one step and prints the branch and commit to resume from. An agent that took a handoff it cannot work on runs `issue-tracker handoff untake <number>` to give it back. Run `issue-tracker handoff show` to read a handoff without taking it, and `issue-tracker handoff drop --reason "..."` to close one nobody should take.
+
+
+## Checkpoint and ownership
+
+Include the authorized scope, underlying ticket, completed delivery and validation evidence, remaining work, cleanup resources and ownership, active restrictions, blockers, and exact next action. Use `--ticket <number>` to link the underlying task. Record integration separately from pending cleanup so the receiver can verify what already landed.
+
+Create the handoff before releasing the underlying ticket. Taking a handoff closes only the handoff; claim the underlying ticket separately before modifying its work. Verify branch and revision warnings against the repository and retained resources before resuming. A handoff that points to already integrated work can still carry required cleanup.
+
+Handoff creation requires a published branch containing the recorded commit. Honor publication restrictions: when publication is unavailable or unauthorized, preserve local work and record its location and recovery requirements on the underlying ticket instead. Confirm that checkpoint is durable before releasing ownership. Use an existing project handoff without overwriting another worker's state; the one-slot limit does not authorize dropping it. Inspect partial-success output before retrying any operation.
 
 
 ## issue-tracker handoff
