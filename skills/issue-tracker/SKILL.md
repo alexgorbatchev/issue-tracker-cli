@@ -4,20 +4,20 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: "Alex Gorbatchev"
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-10 18:25
+  last_modified: 2026-11-12 10:15
   status: current
 ---
 
 ## Execution rules
 
-Set `AGENT=1` on every invocation, or export it for the session. Read exit status as well as stdout: failures exit nonzero and print `ERR:` to stderr. Successful writes print one `OK:` line. Values `1`, `true`, and `yes` enable agent output, with case and surrounding whitespace ignored.
+Set `AGENT=1` on every invocation, or export it for the session. Read exit status as well as stdout: failures exit nonzero and print `ERR:` to stderr. Successful writes print `OK:` result lines; commands may print several results or additional content. Read each command's reference for its output contract. Values `1`, `true`, and `yes` enable agent output, with case and surrounding whitespace ignored.
 
-Tickets live in a private tracker repository; code and pull requests stay in their project repositories. Inside a registered checkout, the CLI selects its project; use `--project` to override it. Read the projects reference for components or ambiguous routing.
+Tickets live in a private tracker repository; code and pull requests stay in their project repositories. Inside a registered checkout, the CLI selects its project; use `--project` to override it. Read [projects](references/projects.md) for components, ambiguous routing, or an unregistered repository; follow its registration workflow before creating project work.
 
 ## Workflow
 
-1. Resume owned unfinished work from its ticket and handoff before selecting new work. Confirm ownership from the claim and durable execution record; Doing or a stale marker alone does not identify the current worker. Claims never expire. Read [handoffs](references/handoffs.md) before transferring or recovering work.
-2. For a specified ticket, run `issue-tracker issue claim <number>`. When queue execution is authorized, run `issue-tracker issue claim --next --project <project>` within that scope; use `--all-projects` only for an authorized cross-project queue. Claims are atomic: another worker's claim fails with `ticket is already claimed`. Continue eligible authorized work or report that specific conflict; `OK: no ready tickets` ends selection.
+1. Resume owned unfinished work from its ticket and handoff before selecting new work. Establish ownership from a durable record of this worker's successful claim and subsequent lifecycle actions. Claims never expire and contain no worker identity; Doing, a stale marker, or an existing claim alone does not establish ownership. Resume verified owned work without claiming it again. When ownership is uncertain, resolve it with the recorded worker or user before modifying or releasing that work; continue independent authorized work. Read [handoffs](references/handoffs.md) before transferring or recovering work.
+2. For a specified ticket not already verified as owned, run `issue-tracker issue claim <number>`. When queue execution is authorized, run `issue-tracker issue claim --next --project <project>` within that scope; use `--all-projects` only for an authorized cross-project queue. Claims are atomic: any existing claim, including your own, makes a new claim fail with `ticket is already claimed`. Reconcile that conflict against the ownership record above; continue eligible authorized work or report unresolved ownership; `OK: no ready tickets` ends selection. After a successful claim, record the ticket, worker/session identity, and claim result in a durable execution record before starting work; keep that record current through release, close, or handoff.
 3. Run `issue-tracker issue inspect <number>` to read the ticket, or pass several numbers to read related tickets in one call, and `issue-tracker issue attachment pull <number>` to download its screenshots.
 4. Work in the repository named by the ticket's project. A claim works from any directory, so a ticket for a dependency can be claimed from the application that needs it. Name new ticket branches `<type>/<number>-<short-description>`, using the repository's branch type convention, for example `fix/123-empty-input`. Include the claimed ticket's number in public and private repositories. Preserve existing published branch names when resuming work.
 5. Record independently tracked discoveries with `issue-tracker issue create --title "..." --discovered-from <number>`; perform repairs covered by existing authorization. Read [ticket lifecycle](references/tickets.md#lifecycle-reconciliation) for blockers, duplicates, completion evidence, and pending cleanup.
