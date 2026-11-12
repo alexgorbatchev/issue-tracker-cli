@@ -34,8 +34,15 @@ func warn(w io.Writer, format string, args ...any) error {
 	return err
 }
 
-func warnPublic(w io.Writer, project string) error {
-	return warn(w, "%s is public: keep ticket text, attachments, and tracker identity private; use bare ticket numbers in branch names, not commit messages or PR text", project)
+func warnVisibility(w io.Writer, project string, visibility tracker.Visibility) error {
+	if visibility == tracker.VisibilityPrivate {
+		return nil
+	}
+	description := "is public"
+	if visibility != tracker.VisibilityPublic {
+		description = "has unknown visibility (repository missing or inaccessible); treat as public until privacy is confirmed"
+	}
+	return warn(w, "%s %s: keep ticket text, attachments, and tracker identity private; use bare ticket numbers in branch names, not commit messages or PR text", project, description)
 }
 
 // cellStyle pads cells so that wrapped text stays clear of the borders.
@@ -162,10 +169,10 @@ func projectPath(project tracker.Project) string {
 }
 
 func visibility(project tracker.Project) string {
-	if project.Public {
-		return "public"
+	if project.Visibility == "" {
+		return string(tracker.VisibilityUnknown)
 	}
-	return "private"
+	return string(project.Visibility)
 }
 
 func printSummary(w io.Writer, summary tracker.ProjectSummary) error {
@@ -183,14 +190,14 @@ func joinNumbers(numbers []int) string {
 	return strings.Join(parts, ",")
 }
 
-// printDetails warns once for each public project, then prints the tickets
+// printDetails warns once for each public or unknown project, then prints the tickets
 // separated by blank lines.
 func printDetails(w io.Writer, details []tracker.TicketDetail) error {
 	warned := map[string]bool{}
 	for _, detail := range details {
-		if detail.PublicRepo && !warned[detail.Project] {
+		if detail.Project != "" && detail.Visibility != tracker.VisibilityPrivate && !warned[detail.Project] {
 			warned[detail.Project] = true
-			if err := warnPublic(w, detail.Project); err != nil {
+			if err := warnVisibility(w, detail.Project, detail.Visibility); err != nil {
 				return err
 			}
 		}

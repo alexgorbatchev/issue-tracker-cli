@@ -54,7 +54,7 @@ Prints one tab-separated line per ticket, oldest first: number, status, priority
 
 ## issue-tracker issue inspect <number...>
 
-Reads up to 50 tickets in one request, in the order given; a repeated number is shown once. For each ticket, prints `number`, `title`, `state`, `status`, `project`, `url`, then `priority`, `labels`, `epic` or `parent`, `blocked_by`, `blocking`, `sub_issue`, and `attachment` lines when present, then `body:` followed by the body, then each comment as `comment: <author> <time>` followed by its text. `epic` names the ticket's epic; `parent` names a parent that is not an epic. A blank line separates tickets. The `WARN:` line for a public project comes first, once per project, followed by a `WARN:` line for each ticket with more than one priority label.
+Reads up to 50 tickets in one request, in the order given; a repeated number is shown once. For each ticket, prints `number`, `title`, `state`, `status`, `project`, `url`, then `priority`, `labels`, `epic` or `parent`, `blocked_by`, `blocking`, `sub_issue`, and `attachment` lines when present, then `body:` followed by the body, then each comment as `comment: <author> <time>` followed by its text. `epic` names the ticket's epic; `parent` names a parent that is not an epic. A blank line separates tickets. The `WARN:` line for a public project or one with unknown visibility comes first, once per project, followed by a `WARN:` line for each ticket with more than one priority label.
 
 
 ## issue-tracker issue create

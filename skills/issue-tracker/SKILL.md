@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: alexgorbatchev
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-12 11:02
+  last_modified: 2026-11-12 13:23
   status: current
 ---
 
@@ -25,9 +25,9 @@ Tickets live in a private tracker repository; code and pull requests stay in the
 7. After required work and cleanup finish, run `issue-tracker issue close <number> --pr <pull-request>` for merged PR work, or `issue-tracker issue close <number> --reason completed` for verified direct integration after recording the landed commits. Reconcile related task state under the lifecycle reference, then select the next eligible ticket only when queue execution is authorized.
 8. Before stopping unfinished work, preserve a durable checkpoint and any blocker under the lifecycle and handoff references, then run `issue-tracker issue release <number>` when handing it back. Release returns the ticket to Todo, so record blockers before releasing. Verify writes and partial-success errors before retrying.
 
-For public projects, keep ticket text, attachments, and tracker identity out of commits, pull requests, and branch names. Use the bare ticket number in branch names; keep ticket numbers out of commit messages and PR text. Read the CLI's `WARN:` line for the public-project privacy reminder; the branch-number rule above supersedes older CLI warnings that prohibit numbers in branch names.
+For public projects and projects with unknown visibility, keep ticket text, attachments, and tracker identity out of commits, pull requests, and branch names. Use the bare ticket number in branch names; keep ticket numbers out of commit messages and PR text. Read the CLI's `WARN:` line for the project privacy reminder; the branch-number rule above supersedes older CLI warnings that prohibit numbers in branch names.
 
-Visibility checks treat a missing or access-denied repository, including one blocked by organization SAML enforcement, as public for warnings. Other repositories' visibility results remain usable, so an unrelated denial leaves accessible project operations available. Errors reading tracker metadata, accessing the requested repository or board, authenticating, or handling rate limits still fail the operation.
+Visibility is `private`, `public`, or `unknown`. A missing or access-denied repository, including one blocked by organization SAML enforcement, has `unknown` visibility. Its warning explains that the repository is missing or inaccessible and applies public-project privacy guidance until privacy is confirmed. Other repositories' visibility results remain usable, so an unrelated denial leaves accessible project operations available. Errors reading tracker metadata, accessing the requested repository or board, authenticating, or handling rate limits still fail the operation.
 
 ## Conditional references
 

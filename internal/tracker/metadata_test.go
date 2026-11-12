@@ -38,7 +38,7 @@ func TestRefreshBuildsProjectsAndCachesThem(t *testing.T) {
 		t.Fatalf("projects = %+v; labels without a matching repository must not register", projects)
 	}
 	project := projects[0]
-	if project.Name != "go-tui" || project.BoardID != "B1" || project.StatusOptions["Done"] != "D" || project.Public {
+	if project.Name != "go-tui" || project.BoardID != "B1" || project.StatusOptions["Done"] != "D" || project.Visibility != VisibilityPrivate {
 		t.Fatalf("project = %+v", project)
 	}
 	wantCount(t, gh, 2)
@@ -83,7 +83,7 @@ func TestRefreshFollowsBothConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(projects) != 2 || !projects[1].Public {
+	if len(projects) != 2 || projects[1].Visibility != VisibilityPublic {
 		t.Fatalf("projects = %+v", projects)
 	}
 	requests := gh.Requests()
@@ -92,14 +92,14 @@ func TestRefreshFollowsBothConnections(t *testing.T) {
 	}
 }
 
-func TestUnresolvableRepositoryCountsAsPublic(t *testing.T) {
+func TestUnresolvableRepositoryHasUnknownVisibility(t *testing.T) {
 	gh := fakegithub.New(metadataRoute(), visibilityRoute(`{"data":{"r0":null},"errors":[{"type":"NOT_FOUND","path":["r0"],"message":"gone"}]}`))
 	projects, err := clientWith(t, gh, nil).Projects(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !projects[0].Public {
-		t.Fatal("an unknown repository must count as public")
+	if projects[0].Visibility != VisibilityUnknown {
+		t.Fatal("an unresolved repository must have unknown visibility")
 	}
 }
 

@@ -20,9 +20,9 @@ func testMetadata() *metadata {
 	return &metadata{
 		RepositoryID: "REPO", OwnerID: "OWNER", HeadOID: "headsha", IsPrivate: true,
 		Projects: []Project{
-			{Name: "go-tui", Repo: "o/go-tui", LabelID: "L1", BoardID: "B1", BoardURL: "https://b/1", StatusFieldID: "F1", StatusOptions: statusOptions()},
-			{Name: "lib", Repo: "o/lib", Public: true, LabelID: "L2", BoardID: "B2", BoardURL: "https://b/2", StatusFieldID: "F2", StatusOptions: statusOptions()},
-			{Name: "bare", Repo: "o/bare", LabelID: "L3"},
+			{Name: "go-tui", Repo: "o/go-tui", Visibility: VisibilityPrivate, LabelID: "L1", BoardID: "B1", BoardURL: "https://b/1", StatusFieldID: "F1", StatusOptions: statusOptions()},
+			{Name: "lib", Repo: "o/lib", Visibility: VisibilityPublic, LabelID: "L2", BoardID: "B2", BoardURL: "https://b/2", StatusFieldID: "F2", StatusOptions: statusOptions()},
+			{Name: "bare", Repo: "o/bare", Visibility: VisibilityPrivate, LabelID: "L3"},
 		},
 	}
 }

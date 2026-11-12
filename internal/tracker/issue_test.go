@@ -705,7 +705,7 @@ func TestInspectTicket(t *testing.T) {
 	if want := []string{"https://github.com/user-attachments/assets/aaa-1", "https://github.com/user-attachments/files/9/report.pdf"}; fmt.Sprint(detail.Attachments) != fmt.Sprint(want) {
 		t.Fatalf("attachments = %v; other hosts must never match", detail.Attachments)
 	}
-	if fmt.Sprint(detail.Blocking) != "[8]" || len(detail.SubIssues) != 1 || !detail.PublicRepo {
+	if fmt.Sprint(detail.Blocking) != "[8]" || len(detail.SubIssues) != 1 || detail.Visibility != VisibilityPublic {
 		t.Fatalf("detail = %+v", detail)
 	}
 	wantCount(t, gh, 2)
@@ -754,7 +754,7 @@ func TestInspectTicketsReadsEveryTicketInOneRequest(t *testing.T) {
 	if len(details) != 2 || details[0].Number != 8 || details[1].Number != 7 {
 		t.Fatalf("details = %+v, want #8 then #7 once each", details)
 	}
-	if len(details[0].Comments) != 1 || details[0].Comments[0].Body != "later" || details[0].PublicRepo || !details[1].PublicRepo || details[1].Status != "Doing" {
+	if len(details[0].Comments) != 1 || details[0].Comments[0].Body != "later" || details[0].Visibility != VisibilityPrivate || details[1].Visibility != VisibilityPublic || details[1].Status != "Doing" {
 		t.Fatalf("details = %+v", details)
 	}
 	if query := gh.Requests()[0].Description; strings.Count(query, ": issue(number:") != 2 {

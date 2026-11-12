@@ -159,8 +159,8 @@ func reportNone(cmd *cobra.Command, s *session, message, project string, seen tr
 }
 
 func reportClaim(cmd *cobra.Command, s *session, ticket tracker.Ticket) error {
-	if project, err := s.client.ResolveProject(cmd.Context(), ticket.Project); err == nil && project.Public {
-		if err := warnPublic(cmd.OutOrStdout(), project.Name); err != nil {
+	if project, err := s.client.ResolveProject(cmd.Context(), ticket.Project); err == nil {
+		if err := warnVisibility(cmd.OutOrStdout(), project.Name, project.Visibility); err != nil {
 			return err
 		}
 	}
