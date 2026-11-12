@@ -1,10 +1,10 @@
 ---
 name: "issue-tracker"
 description: "Use when managing tickets or projects with the issue-tracker CLI."
-author: "Alex Gorbatchev"
+author: alexgorbatchev
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-12 10:15
+  last_modified: 2026-11-12 11:02
   status: current
 ---
 
