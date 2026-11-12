@@ -236,8 +236,8 @@ func handoffScope(cmd *cobra.Command, open opener, name string) (*session, strin
 func printHandoff(cmd *cobra.Command, s *session, handoff tracker.Handoff, now time.Time) error {
 	w := cmd.OutOrStdout()
 	ticket := handoff.Ticket
-	if project, err := s.client.ResolveProject(cmd.Context(), ticket.Project); err == nil && project.Public {
-		if err := warnPublic(w, project.Name); err != nil {
+	if project, err := s.client.ResolveProject(cmd.Context(), ticket.Project); err == nil {
+		if err := warnVisibility(w, project.Name, project.Visibility); err != nil {
 			return err
 		}
 	}

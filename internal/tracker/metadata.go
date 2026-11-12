@@ -21,13 +21,22 @@ const (
 	componentField = "Component"
 )
 
+// Visibility is a repository's privacy as established by GitHub.
+type Visibility string
+
+const (
+	VisibilityUnknown Visibility = "unknown"
+	VisibilityPrivate Visibility = "private"
+	VisibilityPublic  Visibility = "public"
+)
+
 // Project is a code repository registered with the tracker, or a component: one
 // directory of a registered repository with its own label on the repository's board.
 type Project struct {
 	Name          string            `json:"name"`
 	Repo          string            `json:"repo"`
 	Path          string            `json:"path,omitempty"`
-	Public        bool              `json:"public"`
+	Visibility    Visibility        `json:"visibility"`
 	LabelID       string            `json:"label_id"`
 	BoardID       string            `json:"board_id,omitempty"`
 	BoardURL      string            `json:"board_url,omitempty"`
@@ -313,6 +322,14 @@ func (c *Client) metadata(ctx context.Context) (*metadata, error) {
 	if err := c.checkPrivate(cached.IsPrivate); err != nil {
 		return nil, err
 	}
+	for _, project := range cached.Projects {
+		switch project.Visibility {
+		case VisibilityPrivate, VisibilityPublic, VisibilityUnknown:
+		default:
+			// Old boolean caches cannot distinguish public from unavailable.
+			return c.refreshMetadata(ctx)
+		}
+	}
 	c.meta = &cached
 	return c.meta, nil
 }
@@ -447,8 +464,8 @@ func (c *Client) refreshMetadata(ctx context.Context) (*metadata, error) {
 	return meta, nil
 }
 
-// readVisibility records which projects are public. A repository GitHub cannot
-// resolve or access counts as public so that the copying warning errs on the safe side.
+// readVisibility preserves unresolved repositories as unknown while retaining
+// usable results from the other fields in the batch.
 func (c *Client) readVisibility(ctx context.Context, meta *metadata) error {
 	if len(meta.Projects) == 0 {
 		return nil
@@ -463,7 +480,7 @@ func (c *Client) readVisibility(ctx context.Context, meta *metadata) error {
 		fmt.Fprintf(&query, " r%d: repository(owner: %q, name: %q) { isPrivate }", i, repo.Owner, repo.Name)
 	}
 	query.WriteString(" }")
-	response := map[string]*struct{ IsPrivate bool }{}
+	response := map[string]*struct{ IsPrivate *bool }{}
 	if err := c.do(ctx, query.String(), nil, &response); err != nil {
 		var gqlErr *api.GraphQLError
 		if !errors.As(err, &gqlErr) || len(gqlErr.Errors) == 0 {
@@ -480,7 +497,14 @@ func (c *Client) readVisibility(ctx context.Context, meta *metadata) error {
 	}
 	for i := range meta.Projects {
 		node := response["r"+strconv.Itoa(i)]
-		meta.Projects[i].Public = node == nil || !node.IsPrivate
+		visibility := VisibilityUnknown
+		if node != nil && node.IsPrivate != nil {
+			visibility = VisibilityPublic
+			if *node.IsPrivate {
+				visibility = VisibilityPrivate
+			}
+		}
+		meta.Projects[i].Visibility = visibility
 	}
 	return nil
 }

@@ -27,12 +27,16 @@ func TestVisibilityKeepsAccessibleRepositories(t *testing.T) {
 					t.Fatalf("projects = %+v", projects)
 				}
 				for _, project := range projects {
-					if project.Public != (project.Name == "lib") {
+					want := VisibilityPrivate
+					if project.Name == "lib" {
+						want = VisibilityUnknown
+					}
+					if project.Visibility != want {
 						t.Fatalf("visibility = %+v", project)
 					}
 				}
 				cached, err := c.lookupProject(ctx, "lib")
-				if err != nil || !cached.Public {
+				if err != nil || cached.Visibility != VisibilityUnknown {
 					t.Fatalf("cached unavailable project = %+v, %v", cached, err)
 				}
 				wantCount(t, gh, 2)
@@ -84,7 +88,7 @@ func TestVisibilityDiscardsDeniedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(projects) != 2 || !projects[0].Public || !projects[1].Public {
+	if len(projects) != 2 || projects[0].Visibility != VisibilityUnknown || projects[1].Visibility != VisibilityUnknown {
 		t.Fatalf("failed fields cannot establish privacy: %+v", projects)
 	}
 	wantCount(t, gh, 2)
@@ -105,12 +109,12 @@ func TestAddProjectWithUnrelatedDeniedVisibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project.Name != "new" || project.Repo != "o/new" || project.LabelID != "LN" || project.BoardID != "BN" || project.Public {
+	if project.Name != "new" || project.Repo != "o/new" || project.LabelID != "LN" || project.BoardID != "BN" || project.Visibility != VisibilityPrivate {
 		t.Fatalf("registered project = %+v", project)
 	}
 	unavailable, err := c.lookupProject(ctx, "go-tui")
-	if err != nil || !unavailable.Public {
-		t.Fatalf("unavailable project must retain public warnings: %+v, %v", unavailable, err)
+	if err != nil || unavailable.Visibility != VisibilityUnknown {
+		t.Fatalf("unavailable project must retain unknown visibility: %+v, %v", unavailable, err)
 	}
 	wantCount(t, gh, 9)
 }
@@ -132,6 +136,57 @@ func TestAddProjectStillRequiresTargetAccess(t *testing.T) {
 			_, err := clientWith(t, gh, nil).AddProject(ctx, Repo{"o", "new"})
 			wantError(t, err, "target denied")
 			wantCount(t, gh, tt.calls)
+		})
+	}
+}
+
+func TestVisibilityStatesAndCache(t *testing.T) {
+	for _, tt := range []struct {
+		name, body string
+		want       Visibility
+	}{
+		{"private", `{"data":{"r0":{"isPrivate":true}}}`, VisibilityPrivate},
+		{"public", `{"data":{"r0":{"isPrivate":false}}}`, VisibilityPublic},
+		{"missing repository", `{"data":{"r0":null}}`, VisibilityUnknown},
+		{"missing alias", `{"data":{}}`, VisibilityUnknown},
+		{"missing privacy", `{"data":{"r0":{}}}`, VisibilityUnknown},
+		{"null privacy", `{"data":{"r0":{"isPrivate":null}}}`, VisibilityUnknown},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := fakegithub.New(metadataRoute(), visibilityRoute(tt.body))
+			c := clientWith(t, gh, nil)
+			projects, err := c.Projects(ctx)
+			if err != nil || len(projects) != 1 || projects[0].Visibility != tt.want {
+				t.Fatalf("projects = %+v, error = %v", projects, err)
+			}
+			c.meta = nil
+			project, err := c.ResolveProject(ctx, "go-tui")
+			if err != nil || project.Visibility != tt.want {
+				t.Fatalf("cached project = %+v, error = %v", project, err)
+			}
+			wantCount(t, gh, 2)
+		})
+	}
+}
+
+func TestVisibilityRefreshesLegacyCache(t *testing.T) {
+	for _, value := range []string{`"public":true`, `"public":false`, `"visibility":"invalid"`} {
+		t.Run(value, func(t *testing.T) {
+			gh := fakegithub.New(metadataRoute(), visibilityRoute(`{"data":{"r0":null}}`))
+			c := clientWith(t, gh, nil)
+			if err := os.WriteFile(c.cachePath(), []byte(`{"is_private":true,"projects":[{"name":"go-tui","repo":"o/go-tui",`+value+`}]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			project, err := c.ResolveProject(ctx, "go-tui")
+			if err != nil || project.Visibility != VisibilityUnknown {
+				t.Fatalf("project = %+v, error = %v", project, err)
+			}
+			c.meta = nil
+			project, err = c.ResolveProject(ctx, "go-tui")
+			if err != nil || project.Visibility != VisibilityUnknown {
+				t.Fatalf("refreshed cache = %+v, error = %v", project, err)
+			}
+			wantCount(t, gh, 2)
 		})
 	}
 }

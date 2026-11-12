@@ -40,6 +40,11 @@ func execute(t *testing.T, open opener, args ...string) (string, string, error) 
 // fakeOpener returns an opener backed by gh with two cached projects.
 func fakeOpener(t *testing.T, gh *fakegithub.GitHub) opener {
 	t.Helper()
+	return fakeVisibilityOpener(t, gh, `{"data":{"r0":{"isPrivate":true},"r1":{"isPrivate":false}}}`)
+}
+
+func fakeVisibilityOpener(t *testing.T, gh *fakegithub.GitHub, visibility string) opener {
+	t.Helper()
 	cache := t.TempDir()
 	seed := fakegithub.New(
 		fakegithub.Route{Match: "labels(first: 100, query", Body: `{"data":{"repository":{
@@ -49,7 +54,7 @@ func fakeOpener(t *testing.T, gh *fakegithub.GitHub) opener {
 				{"id":"B1","title":"go-tui","url":"https://b/1","field":{"id":"F","options":[{"id":"t","name":"Todo"},{"id":"g","name":"Doing"},{"id":"d","name":"Done"}]}},
 				{"id":"B2","title":"lib","url":"https://b/2","field":{"id":"F","options":[{"id":"t","name":"Todo"},{"id":"g","name":"Doing"},{"id":"d","name":"Done"}]}}
 			]}}}}`},
-		fakegithub.Route{Match: "r0: repository", Body: `{"data":{"r0":{"isPrivate":true},"r1":{"isPrivate":false}}}`},
+		fakegithub.Route{Match: "r0: repository", Body: visibility},
 	)
 	client, err := tracker.New(tracker.Options{Repo: tracker.Repo{Owner: "o", Name: "tracker"}, CacheDir: cache, Transport: seed, Token: "tok"})
 	if err != nil {

@@ -855,7 +855,7 @@ type TicketDetail struct {
 	Blocking    []int
 	SubIssues   []SubIssue
 	Attachments []string
-	PublicRepo  bool
+	Visibility  Visibility
 }
 
 // SubIssue is a child ticket.
@@ -1021,7 +1021,7 @@ func (c *Client) detail(ctx context.Context, number int, issue detailNode) (Tick
 		return TicketDetail{}, fmt.Errorf("reading ticket #%d: %w", number, err)
 	}
 	detail := TicketDetail{
-		Ticket: ticket, Body: issue.Body, Blocking: openNumbers(issue.Blocking.Nodes),
+		Ticket: ticket, Visibility: VisibilityUnknown, Body: issue.Body, Blocking: openNumbers(issue.Blocking.Nodes),
 		SubIssues: issue.SubIssues.Nodes, Comments: issue.Comments.comments(),
 	}
 	if issue.Comments.PageInfo.HasNextPage {
@@ -1035,7 +1035,9 @@ func (c *Client) detail(ctx context.Context, number int, issue detailNode) (Tick
 	if detail.Project != "" {
 		if meta, err := c.metadata(ctx); err == nil {
 			project, ok := meta.project(detail.Project)
-			detail.PublicRepo = !ok || project.Public
+			if ok {
+				detail.Visibility = project.Visibility
+			}
 		}
 	}
 	return detail, nil

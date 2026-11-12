@@ -29,12 +29,12 @@ With `--path`, registers that directory of an already registered repository as a
 
 ## issue-tracker project inspect [project]
 
-Prints `project`, `repository`, `path`, `visibility`, `board`, `open`, and `closed`. `path` is `.` for a whole repository. A repository's counts include its components' tickets. Defaults to the current repository's project.
+Prints `project`, `repository`, `path`, `visibility`, `board`, `open`, and `closed`. `path` is `.` for a whole repository. Visibility is `private`, `public`, or `unknown`. A repository's counts include its components' tickets. Defaults to the current repository's project.
 
 
 ## issue-tracker project list
 
-Prints one tab-separated line per project: name, repository, visibility, board URL, path. The path is `.` for a whole repository. A component shows its repository's board.
+Prints one tab-separated line per project: name, repository, visibility, board URL, path. The path is `.` for a whole repository. A component shows its repository's board. Visibility is `private`, `public`, or `unknown`; `unknown` means the repository is missing, inaccessible, or its privacy could not be established.
 
 
 ## issue-tracker project rm <project>
