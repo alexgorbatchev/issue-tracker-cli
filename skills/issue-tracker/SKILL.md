@@ -4,7 +4,7 @@ description: "Use when managing tickets or projects with the issue-tracker CLI."
 author: alexgorbatchev
 metadata:
   created_on: 2026-11-01 10:52
-  last_modified: 2026-11-12 13:23
+  last_modified: 2026-11-20 12:00
   status: current
 ---
 
@@ -13,6 +13,14 @@ metadata:
 Set `AGENT=1` on every invocation, or export it for the session. Read exit status as well as stdout: failures exit nonzero and print `ERR:` to stderr. Successful writes print `OK:` result lines; commands may print several results or additional content. Read each command's reference for its output contract. Values `1`, `true`, and `yes` enable agent output, with case and surrounding whitespace ignored.
 
 Tickets live in a private tracker repository; code and pull requests stay in their project repositories. Inside a registered checkout, the CLI selects its project; use `--project` to override it. Read [projects](references/projects.md) for components, ambiguous routing, or an unregistered repository; follow its registration workflow before creating project work.
+
+## Ticket every unit of work
+
+A ticket is the durable record that outlives the session, worktree, or machine running the work; work started without one is lost with its environment.
+
+- Before starting a unit of work or delegating it to a subagent, worker, or background thread, create or select its ticket. This covers implementation, investigation that will change something, review or audit sweeps, skill, prompt, and instruction changes, deploys, and cleanups, including requests made directly in conversation. Record work too small for its own ticket as a comment on the active ticket it serves.
+- Name the ticket in each delegation. The delegate claims it, records progress, partial results, and their locations (worktree, branch, local commits, artifacts) on the ticket as it goes, and closes or releases it.
+- After losing an environment, start recovery from open claimed tickets, resolving ownership under workflow step 1. Keep each ticket's latest checkpoint sufficient to resume without the lost session.
 
 ## Workflow
 
